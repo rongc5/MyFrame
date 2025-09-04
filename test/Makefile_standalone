@@ -1,0 +1,92 @@
+CXX = g++
+CXXFLAGS = -std=c++11 -Wall -I../include -DENABLE_SSL
+LIBS = -lssl -lcrypto
+
+TARGETS = test_https_standalone test_wss_standalone \
+          simple_http_server simple_https_server simple_wss_server \
+          https_server_standalone wss_server_standalone \
+          test_https_client_fw test_wss_client_fw \
+          https_server_framework https_server_working \
+          multi_protocol_server simple_wss_server
+
+all: $(TARGETS)
+
+test_https_standalone: test_https_standalone.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LIBS)
+
+test_wss_standalone: test_wss_standalone.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LIBS)
+
+simple_https_server: simple_https_server.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -L../lib -lmyframe -lsign $(LIBS) -pthread
+
+simple_wss_server: simple_wss_server.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -L../lib -lmyframe -lsign $(LIBS) -pthread
+
+https_server_standalone: https_server_standalone.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -L../lib -lmyframe -lsign $(LIBS) -pthread
+
+wss_server_standalone: wss_server_standalone.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -L../lib -lmyframe -lsign $(LIBS) -pthread
+
+test_https_client_fw: test_https_client_fw.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -L../lib -lmyframe -lsign $(LIBS)
+
+test_wss_client_fw: test_wss_client_fw.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -L../lib -lmyframe -lsign $(LIBS)
+
+https_server_framework: https_server_framework.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -L../lib -lmyframe -lsign $(LIBS) -pthread
+
+https_server_working: https_server_working.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -L../lib -lmyframe -lsign $(LIBS) -pthread
+
+multi_protocol_server: multi_protocol_server.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -L../lib -lmyframe -lsign $(LIBS) -pthread
+
+simple_wss_server: simple_wss_server.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -L../lib -lmyframe -lsign $(LIBS) -pthread
+
+clean:
+	rm -f $(TARGETS)
+
+test-https: test_https_standalone
+	@echo "Running HTTPS test (default port 7777)..."
+	./test_https_standalone
+
+test-wss: test_wss_standalone
+	@echo "Running WSS test (default port 7777)..."
+	./test_wss_standalone
+
+run-https-server: simple_https_server
+	@echo "Starting HTTPS server on port 7777..."
+	./simple_https_server
+
+run-wss-server: simple_wss_server
+	@echo "Starting WSS server on port 7778..."
+	./simple_wss_server
+
+help:
+	@echo "Available targets:"
+	@echo "  all               - Build all programs"
+	@echo "  test-https        - Build and run HTTPS client test"
+	@echo "  test-wss          - Build and run WSS client test"
+	@echo "  run-https-server  - Build and run HTTPS server"
+	@echo "  run-wss-server    - Build and run WSS server"
+	@echo "  https_server_standalone - Framework HTTPS-only server"
+	@echo "  wss_server_standalone    - Framework WSS-only server"
+	@echo "  test_https_client_fw     - Framework HTTPS client"
+	@echo "  test_wss_client_fw       - Framework WSS client"
+	@echo "  clean             - Remove compiled binaries"
+	@echo ""
+	@echo "Usage examples:"
+	@echo "  # 启动服务器"
+	@echo "  make run-https-server              # HTTPS服务器 (端口7777)"
+	@echo "  make run-wss-server                # WSS服务器 (端口7778)"
+	@echo "  # 测试客户端"
+	@echo "  make test-https                    # 测试HTTPS客户端"
+	@echo "  ./test_wss_standalone 7778         # 测试WSS客户端"
+
+.PHONY: all clean test-https test-wss help
+simple_http_server: simple_http_server.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -L../lib -lmyframe -lsign $(LIBS) -pthread

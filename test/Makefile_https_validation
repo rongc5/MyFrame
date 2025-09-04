@@ -1,0 +1,79 @@
+# HTTPS证书验证测试框架 Makefile
+CXX = g++
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2
+INCLUDES = -I../include -I../core
+LIBS = -lssl -lcrypto -lpthread
+FRAMEWORK_LIBS = ../lib/libmyframe.a ../lib/libsign.a
+
+# 目标文件
+TARGETS = https_server_validation https_client_validation https_validation_framework
+
+# 默认目标
+all: $(TARGETS)
+
+# HTTPS验证服务器 (依赖MyFrame框架)
+https_server_validation: https_server_validation.cpp
+	$(CXX) $(CXXFLAGS) -DENABLE_SSL $(INCLUDES) $< $(FRAMEWORK_LIBS) $(LIBS) -o $@
+
+# HTTPS验证客户端 (独立程序)
+https_client_validation: https_client_validation.cpp
+	$(CXX) $(CXXFLAGS) $< $(LIBS) -o $@
+
+# HTTPS验证框架主程序 (独立程序)
+https_validation_framework: https_validation_framework.cpp
+	$(CXX) $(CXXFLAGS) $< $(LIBS) -o $@
+
+# 生成证书
+certs:
+	./ssl_cert_generator.sh
+
+# 运行基础测试
+test: all certs
+	./run_https_validation_tests.sh
+
+# 运行完整框架测试
+test-framework: all certs
+	./https_validation_framework
+
+# 启动验证服务器
+server: https_server_validation certs
+	./https_server_validation 8443
+
+# 启动双向认证服务器
+server-mtls: https_server_validation certs
+	./https_server_validation --client-cert 8444
+
+# 运行客户端测试
+client: https_client_validation certs
+	./https_client_validation --ca ca.pem 127.0.0.1 8443
+
+# 清理
+clean:
+	rm -f $(TARGETS)
+	rm -f *.o *.log
+	rm -f ca.key ca.pem server.key server.crt client.key client.crt invalid.key invalid.crt
+
+# 清理所有生成文件
+distclean: clean
+	rm -f *.crt *.key *.pem *.csr *.srl
+
+.PHONY: all test test-framework server server-mtls client certs clean distclean
+
+# 帮助信息
+help:
+	@echo "HTTPS证书验证测试框架 Makefile"
+	@echo ""
+	@echo "目标:"
+	@echo "  all              编译所有程序"
+	@echo "  certs            生成测试证书"
+	@echo "  test             运行基础验证测试"
+	@echo "  test-framework   运行完整框架测试"
+	@echo "  server           启动HTTPS验证服务器"
+	@echo "  server-mtls      启动双向认证服务器"
+	@echo "  client           运行客户端验证测试"
+	@echo "  clean            清理编译文件"
+	@echo "  distclean        清理所有生成文件"
+	@echo "  help             显示此帮助"
+	@echo ""
+	@echo "说明:"
+	@echo "  本框架实现了与OpenSSL标准客户端/服务端相同的证书验证机制"

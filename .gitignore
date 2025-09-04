@@ -1,0 +1,72 @@
+# Build directories
+build/
+lib/
+include/
+
+# Object files
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.app
+test/test_*
+test/simple_*
+test/https_*
+test/quick_*
+test/ssl_*
+test/standard_*
+test/debug_*
+test/comparison_*
+test/wss_*
+examples/http_*
+examples/https_*
+examples/ws_*
+examples/multi_*
+examples/wss_*
+
+# Utils build artifacts
+utils/str2sign/core/*.o
+utils/str2sign/core/*.a
+utils/str2sign/lib/
+utils/str2sign/test/app
+utils/str2sign/test/*.o
+utils/encode/core/*.o
+utils/encode/core/*.a
+utils/encode/lib/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+CTestTestfile.cmake
+
+# Debug and profiling
+core
+*.log
+*.tmp
+*.temp
+
+# SSL certificates and keys (if any test certs)
+*.pem
+*.crt
+*.key
+*.cer
+
+# Temporary files
+.tmp/
+temp/
