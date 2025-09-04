@@ -56,7 +56,7 @@ Makefile
 CTestTestfile.cmake
 
 # Debug and profiling
-core
+# core  # 注释掉这行，允许core源代码目录被追踪
 *.log
 *.tmp
 *.temp

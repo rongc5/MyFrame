@@ -1,29 +1,22 @@
 cmake_minimum_required(VERSION 3.16)
 
-# Test executables mirroring test/Makefile outputs
-
-set(TEST_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_server_simple.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_dual_protocol.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/simple_https_client.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/simple_wss_client.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/simple_ws_client.cpp
-)
-
-# Common include dirs: use binary headers copied by top-level, and repo include for convenience
+# Common include dirs
 include_directories(
     ${CMAKE_CURRENT_BINARY_DIR}/../include
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 
-function(add_myframe_test name src)
-    add_executable(${name} ${src})
-    target_link_libraries(${name} myframe OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
+
+# Helper to add executable if source exists
+function(maybe_add_exe name src)
+    if (EXISTS "${src}")
+        add_executable(${name} ${src})
+        target_link_libraries(${name} myframe OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+        set_target_properties(${name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/test)
+    endif()
 endfunction()
 
-add_myframe_test(test_server_simple ${CMAKE_CURRENT_SOURCE_DIR}/test_server_simple.cpp)
-add_myframe_test(test_dual_protocol ${CMAKE_CURRENT_SOURCE_DIR}/test_dual_protocol.cpp)
-add_myframe_test(simple_https_client ${CMAKE_CURRENT_SOURCE_DIR}/simple_https_client.cpp)
-add_myframe_test(simple_wss_client   ${CMAKE_CURRENT_SOURCE_DIR}/simple_wss_client.cpp)
-add_myframe_test(simple_ws_client    ${CMAKE_CURRENT_SOURCE_DIR}/simple_ws_client.cpp)
-
+maybe_add_exe(multi_protocol_server ${CMAKE_CURRENT_SOURCE_DIR}/multi_protocol_server.cpp)
+# client.cpp 依赖私有CommonMsg定义，默认不构建

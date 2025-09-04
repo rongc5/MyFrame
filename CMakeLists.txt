@@ -13,51 +13,65 @@ find_package(OpenSSL REQUIRED)
 # Find Threads
 find_package(Threads REQUIRED)
 
-# Include directories
+## Include directories
 include_directories(include)
 include_directories(utils/btree)
 include_directories(utils/encode)
 include_directories(utils/rapidjson)
-include_directories(utils/str2sign/include)
 
 
-# Core source files (exclude base_thread.cpp as it's merged into base_net_thread)
-file(GLOB CORE_SOURCES 
+
+## Core source files (minimal set)
+file(GLOB CORE_SOURCES
     "core/*.cpp"
 )
-list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/base_thread.cpp")
 
-# Ensure utils/str2sign and utils/encode are built
-add_custom_target(build_sign ALL
-    COMMAND bash -lc "./build.sh all"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign
-)
-
+## Ensure utils/encode is built (optional signer is handled below)
 add_custom_target(build_encode ALL
     COMMAND bash -lc "./build.sh all" 
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/utils/encode
 )
 
+# Optional utils/str2sign
+set(STR2SIGN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign)
+if (EXISTS "${STR2SIGN_DIR}/build.sh" AND EXISTS "${STR2SIGN_DIR}/core.mk" AND EXISTS "${STR2SIGN_DIR}/core")
+    add_custom_target(build_sign ALL
+        COMMAND bash -lc "./build.sh all"
+        WORKING_DIRECTORY ${STR2SIGN_DIR}
+    )
+    set(HAVE_SIGN_LIB TRUE)
+else()
+    message(WARNING "utils/str2sign not found; skipping sign library build")
+    set(HAVE_SIGN_LIB FALSE)
+endif()
+
 # Create library
 add_library(myframe STATIC ${CORE_SOURCES})
-add_dependencies(myframe build_sign build_encode)
+add_dependencies(myframe build_encode)
+if (HAVE_SIGN_LIB)
+    add_dependencies(myframe build_sign)
+endif()
 
 # Link libraries 
 target_link_libraries(myframe 
-    ${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign/lib/libsign.a
     ${CMAKE_CURRENT_SOURCE_DIR}/utils/encode/lib/libencode.a
     Threads::Threads 
     OpenSSL::SSL 
     OpenSSL::Crypto
 )
+if (HAVE_SIGN_LIB)
+    target_link_libraries(myframe ${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign/lib/libsign.a)
+endif()
 
 
 # Copy headers to include directory in build folder
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include)
 file(COPY core/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include
      FILES_MATCHING PATTERN "*.h")
-file(COPY utils/str2sign/include/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include
-     FILES_MATCHING PATTERN "*.h")
+if (HAVE_SIGN_LIB AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign/include")
+    file(COPY utils/str2sign/include/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include
+         FILES_MATCHING PATTERN "*.h")
+endif()
 file(COPY utils/encode/include/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include
      FILES_MATCHING PATTERN "*.h")
 

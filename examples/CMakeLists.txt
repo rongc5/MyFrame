@@ -24,9 +24,6 @@ target_link_libraries(https_server ${COMMON_LIBS})
 add_executable(wss_server simple_wss_server.cpp)
 target_link_libraries(wss_server ${COMMON_LIBS})
 
-# Multi-Protocol Server Example
-add_executable(multi_protocol_server multi_protocol_server.cpp)
-target_link_libraries(multi_protocol_server ${COMMON_LIBS})
 
 # HTTP Client Example
 add_executable(http_client simple_http_client.cpp)
@@ -42,7 +39,7 @@ target_link_libraries(ws_client ${COMMON_LIBS})
 
 # Set output directory
 set_target_properties(
-    http_server https_server wss_server multi_protocol_server
+    http_server https_server wss_server
     http_client https_client ws_client
     PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
