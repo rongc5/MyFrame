@@ -47,3 +47,4 @@ private:
 // Factory helpers (defined in http1_client.cpp)
 std::shared_ptr<IRequestFactory> make_http1_factory();
 std::shared_ptr<IRequestFactory> make_ws_factory();
+std::shared_ptr<IRequestFactory> make_http2_factory();
