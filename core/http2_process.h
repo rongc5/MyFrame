@@ -55,6 +55,9 @@ private:
         // Outbound response body (pending due to flow control)
         std::string out_body;
         size_t out_off{0};
+        // Scheduler state (deficit round-robin)
+        int32_t sched_deficit{0};
+        uint32_t sched_quantum{16384}; // base quantum in bytes (scaled by weight)
     };
     std::unordered_map<uint32_t, StreamState> _streams;
 
@@ -65,6 +68,7 @@ private:
     uint32_t _peer_max_frame_size{16384};
     unsigned long _send_rr{0};
 
-    void try_send_data(uint32_t stream_id);
+    uint32_t try_send_data(uint32_t stream_id);
     void pump_all_streams();
+    void update_quantum(StreamState& st);
 };

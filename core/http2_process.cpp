@@ -81,6 +81,7 @@ bool http2_process::parse_frames(size_t& consumed) {
             if (sid == 0 || len < 5) throw CMyCommonException("http2: PRIORITY invalid");
             uint32_t dep = read32(payload) & 0x7fffffffu; uint8_t w = payload[4];
             StreamState& st = _streams[sid]; st.dependency = dep; st.weight = (uint8_t)(w + 1);
+            update_quantum(st);
         } else if (type == WINDOW_UPDATE) {
             if (len != 4) throw CMyCommonException("http2: WINDOW_UPDATE len");
             uint32_t inc = read32(payload) & 0x7fffffffu; if (inc == 0) throw CMyCommonException("http2: WINDOW_UPDATE zero");
@@ -365,7 +366,8 @@ void http2_process::send_response(uint32_t stream_id, const HttpResponse& rsp) {
     } else {
         st.out_body = std::move(body);
         st.out_off = 0;
-        try_send_data(stream_id);
+        update_quantum(st);
+        (void)try_send_data(stream_id);
     }
 }
 
@@ -395,24 +397,28 @@ void http2_process::finish_stream(uint32_t stream_id) {
     send_response(stream_id, rsp);
 }
 
-void http2_process::try_send_data(uint32_t stream_id) {
+uint32_t http2_process::try_send_data(uint32_t stream_id) {
     auto it = _streams.find(stream_id);
-    if (it == _streams.end()) return;
+    if (it == _streams.end()) return 0;
     StreamState& st = it->second;
-    if (st.out_off >= st.out_body.size()) return;
+    if (st.out_off >= st.out_body.size()) return 0;
     // loop to send multiple frames within allowance to reduce wakeups
     int frames_sent = 0;
     const int kMaxFramesPerPump = 8;
+    uint32_t total_sent = 0;
     while (st.out_off < st.out_body.size() && _conn_send_window > 0 && st.send_window > 0 && frames_sent < kMaxFramesPerPump) {
+        if (st.sched_deficit <= 0) break;
         uint32_t remaining = (uint32_t)(st.out_body.size() - st.out_off);
         uint32_t allowance = (uint32_t)std::min<int32_t>(_conn_send_window, st.send_window);
         allowance = std::min<uint32_t>(allowance, _peer_max_frame_size);
+        allowance = std::min<uint32_t>(allowance, (uint32_t)st.sched_deficit);
         if (allowance == 0) break;
         uint32_t chunk = std::min<uint32_t>(allowance, remaining);
         std::string payload = st.out_body.substr(st.out_off, chunk);
         st.out_off += chunk;
         _conn_send_window -= (int32_t)chunk;
         st.send_window -= (int32_t)chunk;
+        st.sched_deficit -= (int32_t)chunk;
         uint8_t fl = (st.out_off >= st.out_body.size()) ? FLAG_END_STREAM : 0;
         std::string hdr = make_frame_header(chunk, DATA, fl, stream_id);
         std::string frame = hdr + payload;
@@ -421,18 +427,47 @@ void http2_process::try_send_data(uint32_t stream_id) {
         PDEBUG("[h2] SEND DATA stream=%u chunk=%u conn_win=%d stream_win=%d end=%d", stream_id, chunk, _conn_send_window, st.send_window, fl ? 1 : 0);
 #endif
         frames_sent++;
+        total_sent += chunk;
     }
+    return total_sent;
 }
 
 void http2_process::pump_all_streams() {
     if (_streams.empty()) return;
-    // build a stable snapshot of stream ids
     std::vector<uint32_t> ids; ids.reserve(_streams.size());
     for (auto& kv : _streams) ids.push_back(kv.first);
     size_t n = ids.size(); if (n == 0) return;
     size_t start = (_send_rr++) % n;
+    // First, add quantum to each stream's deficit
     for (size_t i = 0; i < n; ++i) {
-        uint32_t sid = ids[(start + i) % n];
-        try_send_data(sid);
+        StreamState& st = _streams[ids[i]];
+        update_quantum(st);
+        // add quantum each round, cap to avoid overflow
+        int64_t d = (int64_t)st.sched_deficit + (int64_t)st.sched_quantum;
+        if (d > INT32_MAX) d = INT32_MAX;
+        st.sched_deficit = (int32_t)d;
     }
+    // Then, serve in round-robin order consuming deficits
+    bool progress = true;
+    int rounds = 0;
+    while (progress && rounds < 2) { // limit rounds to prevent long loops
+        progress = false;
+        for (size_t i = 0; i < n; ++i) {
+            uint32_t sid = ids[(start + i) % n];
+            uint32_t sent = try_send_data(sid);
+            if (sent) progress = true;
+        }
+        rounds++;
+    }
+}
+
+void http2_process::update_quantum(StreamState& st) {
+    // weight is 1..256, default 16: scale quantum around peer_max_frame_size
+    // quantum = base (peer_max_frame_size) * (weight / 16)
+    uint32_t base = _peer_max_frame_size ? _peer_max_frame_size : 16384;
+    uint32_t w = st.weight ? st.weight : 16;
+    uint64_t q = (uint64_t)base * (uint64_t)w / 16u;
+    if (q < 1024) q = 1024; // minimal quantum to make progress
+    if (q > 1u<<30) q = 1u<<30; // cap
+    st.sched_quantum = (uint32_t)q;
 }
