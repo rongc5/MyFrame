@@ -71,4 +71,14 @@ private:
     uint32_t try_send_data(uint32_t stream_id);
     void pump_all_streams();
     void update_quantum(StreamState& st);
+
+    // HPACK dynamic table for encoder (per-connection)
+    struct DynHdr { std::string name; std::string value; size_t sz; };
+    std::vector<DynHdr> _enc_dyn; // newest at front (index 1)
+    size_t _enc_tbl_size{0};
+    size_t _enc_tbl_max{4096}; // default per RFC
+    void enc_dyn_evict();
+    void enc_dyn_add(const std::string& name, const std::string& value);
+    // return 1-based index in dynamic table if exact (name,value) match found; 0 if not
+    uint32_t enc_dyn_find_pair(const std::string& name, const std::string& value) const;
 };

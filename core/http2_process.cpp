@@ -60,6 +60,10 @@ bool http2_process::parse_frames(size_t& consumed) {
                         if (val < 16384) val = 16384;
                         if (val > 16777215u) val = 16777215u;
                         _peer_max_frame_size = val;
+                    } else if (id == SETTINGS_HEADER_TABLE_SIZE) {
+                        // peer's decoder dynamic table size for our encoder
+                        _enc_tbl_max = val;
+                        enc_dyn_evict();
                     }
                 }
                 // flow-control related settings may unblock sending
@@ -346,12 +350,21 @@ void http2_process::send_response(uint32_t stream_id, const HttpResponse& rsp) {
     // other headers (optional, non-pseudo)
     for (auto& kv : rsp.headers) {
         if (kv.first == "Content-Type" || kv.first == "content-type" || kv.first == "content-length") continue;
-        // HTTP/2 requires lowercase header field-names. Transform name to lowercase.
+        // HTTP/2 requires lowercase header field-names. Values keep original case.
         std::string lname = kv.first; for (auto& c : lname) c = (char)tolower(c);
+        const std::string& lval = kv.second;
+        // Try dynamic table exact (name,value)
+        uint32_t dyn_idx = enc_dyn_find_pair(lname, lval);
+        if (dyn_idx) {
+            encode_integer(block, dyn_idx, 7, 0x80); // Indexed Header Field
+            continue;
+        }
+        // Otherwise, encode with incremental indexing and add to dynamic table
         uint32_t name_idx = static_index_of_name(lname);
         encode_integer(block, name_idx ? name_idx : 0, 4, 0x00);
         if (!name_idx) { encode_string(block, lname, true); }
-        encode_string(block, kv.second, true);
+        encode_string(block, lval, true);
+        enc_dyn_add(lname, lval);
     }
     // HEADERS frame with END_HEADERS (use Huffman for strings), no END_STREAM here
     std::string hdr = make_frame_header((uint32_t)block.size(), HEADERS, FLAG_END_HEADERS, stream_id);
@@ -470,4 +483,36 @@ void http2_process::update_quantum(StreamState& st) {
     if (q < 1024) q = 1024; // minimal quantum to make progress
     if (q > 1u<<30) q = 1u<<30; // cap
     st.sched_quantum = (uint32_t)q;
+}
+
+void http2_process::enc_dyn_evict() {
+    while (_enc_tbl_size > _enc_tbl_max && !_enc_dyn.empty()) {
+        DynHdr& last = _enc_dyn.back();
+        if (_enc_tbl_size >= last.sz) _enc_tbl_size -= last.sz; else _enc_tbl_size = 0;
+        _enc_dyn.pop_back();
+    }
+}
+
+void http2_process::enc_dyn_add(const std::string& name, const std::string& value) {
+    size_t sz = 32 + name.size() + value.size();
+    if (sz > _enc_tbl_max) {
+        // cannot fit even alone; clear table per RFC 7541 4.2
+        _enc_dyn.clear(); _enc_tbl_size = 0; return;
+    }
+    while (_enc_tbl_size + sz > _enc_tbl_max && !_enc_dyn.empty()) {
+        DynHdr& last = _enc_dyn.back();
+        if (_enc_tbl_size >= last.sz) _enc_tbl_size -= last.sz; else _enc_tbl_size = 0;
+        _enc_dyn.pop_back();
+    }
+    _enc_dyn.insert(_enc_dyn.begin(), DynHdr{name, value, sz});
+    _enc_tbl_size += sz;
+}
+
+uint32_t http2_process::enc_dyn_find_pair(const std::string& name, const std::string& value) const {
+    for (size_t i = 0; i < _enc_dyn.size(); ++i) {
+        if (_enc_dyn[i].name == name && _enc_dyn[i].value == value) {
+            return (uint32_t)(i + 1); // dynamic table index is 1-based, newest at 1
+        }
+    }
+    return 0;
 }
