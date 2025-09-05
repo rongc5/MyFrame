@@ -227,7 +227,13 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
     }
 
     // Validate pseudo-header ordering and populate per-stream state
-    StreamState& st = _streams[stream_id];
+    auto itst = _streams.find(stream_id);
+    if (itst == _streams.end()) {
+        StreamState init;
+        init.send_window = (int32_t)_peer_initial_window_size; // initialize per current peer setting
+        itst = _streams.emplace(stream_id, std::move(init)).first;
+    }
+    StreamState& st = itst->second;
     bool seen_regular = false;
     bool seen_method = !st.method.empty();
     bool seen_path   = !st.path.empty();
