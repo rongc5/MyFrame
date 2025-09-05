@@ -72,7 +72,14 @@ public:
         if (ret == 1) {
             _handshake_done = true;
             _last_hs = SSL_HANDSHAKE_DONE;
-            PDEBUG("[ssl] Handshake completed successfully");
+            // Log ALPN result if any
+            const unsigned char* sel = nullptr; unsigned int slen = 0;
+            SSL_get0_alpn_selected(_ssl, &sel, &slen);
+            if (slen > 0) {
+                PDEBUG("[ssl] Handshake completed successfully (ALPN='%.*s')", (int)slen, sel);
+            } else {
+                PDEBUG("[ssl] Handshake completed successfully (ALPN=none)");
+            }
             return SSL_HANDSHAKE_DONE;
         }
 
@@ -146,6 +153,8 @@ private:
     SSL* _ssl;
     bool _handshake_done;
     SSL_HANDSHAKE_STATUS _last_hs;
+    // selected ALPN cached if needed later
+    // std::string _alpn_selected;
 };
 #endif
 

@@ -3,40 +3,14 @@
 #include <string>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <cstring>
 #include "log_helper.h"
 
-#if defined(SSL_CTX_set_alpn_select_cb)
-// ALPN选择回调：优先选择 h2，否则回退 http/1.1
-static inline int myframe_alpn_select_cb(SSL* /*ssl*/, const unsigned char** out,
-                                         unsigned char* outlen,
-                                         const unsigned char* in,
-                                         unsigned int inlen,
-                                         void* /*arg*/)
-{
-    static const unsigned char H2[]     = "h2";          // 不包含长度前缀
-    static const unsigned char HTTP11[] = "http/1.1";    // 不包含长度前缀
+// forward decl for ALPN callback context cast
+class ssl_context;
 
-    auto find_proto = [&](const unsigned char* want, unsigned int want_len) -> bool {
-        for (unsigned int i = 0; i < inlen;) {
-            unsigned int l = in[i++];
-            if (i + l > inlen) break;
-            if (l == want_len && std::memcmp(&in[i], want, l) == 0) {
-                return true;
-            }
-            i += l;
-        }
-        return false;
-    };
-
-    if (find_proto(H2, (unsigned int)(sizeof(H2) - 1))) {
-        *out = H2; *outlen = (unsigned char)(sizeof(H2) - 1); return SSL_TLSEXT_ERR_OK;
-    }
-    if (find_proto(HTTP11, (unsigned int)(sizeof(HTTP11) - 1))) {
-        *out = HTTP11; *outlen = (unsigned char)(sizeof(HTTP11) - 1); return SSL_TLSEXT_ERR_OK;
-    }
-    return SSL_TLSEXT_ERR_NOACK;
-}
-#endif
+// forward declaration of ALPN callback
+static int myframe_alpn_select_cb(SSL*, const unsigned char**, unsigned char*, const unsigned char*, unsigned int, void*);
 
 struct ssl_config {
     std::string _cert_file;
@@ -96,10 +70,16 @@ public:
         if (!conf._cipher_list.empty()) {
             if (SSL_CTX_set_cipher_list(_ctx, conf._cipher_list.c_str()) != 1) { ERR_print_errors_fp(stderr); return false; }
         }
-        // 启用 ALPN，优先 h2 回退 http/1.1
-#if defined(SSL_CTX_set_alpn_select_cb)
-        SSL_CTX_set_alpn_select_cb(_ctx, myframe_alpn_select_cb, nullptr);
-#endif
+        // 启用 ALPN，优先 h2 回退 http/1.1；可由环境限制
+        _allow_h2 = true; _allow_h11 = true;
+        // 从环境变量覆盖：MYFRAME_SSL_ALPN (例如: "h2,http/1.1" 或 "http/1.1")
+        const char* env_alpn = ::getenv("MYFRAME_SSL_ALPN");
+        if (env_alpn && *env_alpn) {
+            std::string s(env_alpn); for (auto& c : s) c = (char)tolower(c);
+            _allow_h2  = (s.find("h2") != std::string::npos);
+            _allow_h11 = (s.find("http/1.1") != std::string::npos) || (s.find("http1.1") != std::string::npos);
+        }
+        SSL_CTX_set_alpn_select_cb(_ctx, myframe_alpn_select_cb, this);
         // Enforce protocol range if provided (expects CSV like "TLSv1.2,TLSv1.3")
 #if defined(TLS1_VERSION)
         if (!conf._protocols.empty()) {
@@ -152,8 +132,58 @@ public:
 
 private:
     SSL_CTX* _ctx; bool _inited;
+public:
+    bool _allow_h2{true};
+    bool _allow_h11{true};
 };
 
 struct ssl_context_singleton {
     static ssl_context* get_instance_ex() { static ssl_context g; return &g; }
 };
+
+// ALPN选择回调：优先选择 h2，否则回退 http/1.1（允许受 ssl_context 配置限制）
+static inline int myframe_alpn_select_cb(SSL* /*ssl*/, const unsigned char** out,
+                                         unsigned char* outlen,
+                                         const unsigned char* in,
+                                         unsigned int inlen,
+                                         void* arg)
+{
+    static const unsigned char H2[]     = "h2";          // 不包含长度前缀
+    static const unsigned char HTTP11[] = "http/1.1";    // 不包含长度前缀
+    bool allow_h2 = true, allow_h11 = true;
+    if (arg) {
+        ssl_context* self = reinterpret_cast<ssl_context*>(arg);
+        allow_h2  = self->_allow_h2;
+        allow_h11 = self->_allow_h11;
+    }
+
+    auto find_proto = [&](const unsigned char* want, unsigned int want_len) -> bool {
+#ifdef DEBUG
+        // Debug print offered protocols
+        PDEBUG("[alpn] offered list (%u bytes)", inlen);
+        for (unsigned int i = 0; i < inlen;) {
+            unsigned int l = in[i++];
+            if (i + l > inlen) break;
+            PDEBUG("[alpn] offered '%.*s'", (int)l, &in[i]);
+            i += l;
+        }
+#endif
+        for (unsigned int i = 0; i < inlen;) {
+            unsigned int l = in[i++];
+            if (i + l > inlen) break;
+            if (l == want_len && std::memcmp(&in[i], want, l) == 0) {
+                return true;
+            }
+            i += l;
+        }
+        return false;
+    };
+
+    if (allow_h2 && find_proto(H2, (unsigned int)(sizeof(H2) - 1))) {
+        *out = H2; *outlen = (unsigned char)(sizeof(H2) - 1); return SSL_TLSEXT_ERR_OK;
+    }
+    if (allow_h11 && find_proto(HTTP11, (unsigned int)(sizeof(HTTP11) - 1))) {
+        *out = HTTP11; *outlen = (unsigned char)(sizeof(HTTP11) - 1); return SSL_TLSEXT_ERR_OK;
+    }
+    return SSL_TLSEXT_ERR_NOACK;
+}

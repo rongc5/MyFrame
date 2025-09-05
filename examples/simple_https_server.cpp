@@ -20,13 +20,21 @@ public:
         if (req.url == "/hello") {
             res.body = "Hello from HTTPS Server!\nFramework: MyFrame\nProtocol: HTTPS\nPort: 7777";
         } 
+        else if (req.url == "/big") {
+            // 大响应体用于验证 HTTP/2 分片与流控
+            size_t sz = 1024 * 1024; // 1MB
+            const char* env = ::getenv("MYFRAME_BIG_SIZE");
+            if (env && *env) { sz = std::max<size_t>(1, strtoull(env, nullptr, 10)); }
+            res.body.assign(sz, 'A');
+            res.set_header("Content-Type", "application/octet-stream");
+        }
         else if (req.url == "/api/status") {
             res.set_header("Content-Type", "application/json");
             res.body = "{\"status\":\"running\",\"protocol\":\"https\",\"framework\":\"myframe\",\"port\":7777}";
         }
         else if (req.url == "/") {
             res.set_header("Content-Type", "text/html");
-            res.body = "<html><body><h1>HTTPS Test Server</h1><p>Try <a href='/hello'>/hello</a></p></body></html>";
+            res.body = "<html><body><h1>HTTPS Test Server</h1><p>Try <a href='/hello'>/hello</a> or <a href='/big'>/big</a></p></body></html>";
         }
         else {
             res.body = "HTTPS Server OK - Try /hello or /api/status";

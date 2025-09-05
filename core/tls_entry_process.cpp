@@ -85,8 +85,10 @@ bool tls_entry_process::ensure_ssl_installed() {
 
     // 切到探测（TLS 之上继续探测 HTTP/WS/自定义）
     std::unique_ptr<protocol_detect_process> detector(new protocol_detect_process(get_base_net(), _app_handler, true));
-    detector->add_probe(std::unique_ptr<IProtocolProbe>(new WsProbe()));
-    detector->add_probe(std::unique_ptr<IProtocolProbe>(new HttpProbe()));
+    detector->add_probe(std::unique_ptr<IProtocolProbe>(new WsProbe(_app_handler)));
+    // Prefer HTTP/2 when client sends h2 preface
+    detector->add_probe(std::unique_ptr<IProtocolProbe>(new Http2Probe(_app_handler)));
+    detector->add_probe(std::unique_ptr<IProtocolProbe>(new HttpProbe(_app_handler)));
     #ifdef HAS_CUSTOM_PROBE
     detector->add_probe(std::unique_ptr<IProtocolProbe>(new CustomProbe()));
     #endif
@@ -98,9 +100,9 @@ bool tls_entry_process::ensure_ssl_installed() {
 }
 
 size_t tls_entry_process::process_recv_buf(const char* buf, size_t len) {
-    // 安装SSL并切换到TLS之上的协议探测；应保留已有明文缓冲，
-    // 让后续数据由 SslCodec 解码后再进入新探测流程。
+    // 安装SSL并切换到TLS之上的协议探测；此处应清理当前用户缓冲中已窥视到的明文字节，
+    // 因为这些字节仍留在内核缓冲（我们在探测阶段使用了 MSG_PEEK），SSL 将在后续 RECV 中读取它们。
     (void)buf; (void)len;
     if (!ensure_ssl_installed()) return len;
-    return 0; // 不消费，保留缓冲区
+    return len; // 消费用户缓冲，避免后续 over‑TLS 探测被明文阻塞
 }

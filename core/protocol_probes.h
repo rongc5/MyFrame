@@ -8,6 +8,8 @@
 #include "app_ws_data_process.h"
 #include "tls_entry_process.h"
 #include "custom_stream_process.h"
+#include "http2_process.h"
+#include "http2_frame.h"
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
@@ -76,6 +78,20 @@ public:
     create(std::shared_ptr<base_net_obj> conn) const override {
         std::fprintf(stderr, "[detect] TlsProbe selected (TLS handshake)\n");
         return std::unique_ptr<base_data_process>(new tls_entry_process(conn, _app));
+    }
+};
+
+class Http2Probe : public IProtocolProbe {
+public:
+    explicit Http2Probe(IAppHandler* app = 0) : IProtocolProbe(app) {}
+    bool match(const char* buf, size_t len) const override {
+        if (len < h2::CONNECTION_PREFACE_LEN) return false;
+        return std::memcmp(buf, h2::CONNECTION_PREFACE, h2::CONNECTION_PREFACE_LEN) == 0;
+    }
+    std::unique_ptr<base_data_process>
+    create(std::shared_ptr<base_net_obj> conn) const override {
+        std::fprintf(stderr, "[detect] Http2Probe selected (HTTP/2 preface)\n");
+        return std::unique_ptr<base_data_process>(new http2_process(conn, _app));
     }
 };
 

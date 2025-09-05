@@ -53,9 +53,10 @@ size_t protocol_detect_process::process_recv_buf(const char* buf, size_t buf_len
                 // 让新流程预处理这批数据，但按探测缓冲长度告知上层擦除
                 if (holder->process()) {
                     (void)holder->process()->process_recv_buf(buf, buf_len);
+                    return buf_len;
                 }
             }
-            return buf_len;
+            return 0;
         }
     }
     // Update total sniffed bytes and enforce limit

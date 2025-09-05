@@ -1,7 +1,7 @@
 #include "../include/server.h"
 #include "../include/app_handler.h"
 #include "../include/multi_protocol_factory.h"
-#include "../include/ssl_context.h"
+#include "../core/ssl_context.h"
 #include <iostream>
 #include <signal.h>
 #include <atomic>
@@ -20,6 +20,16 @@ public:
         if (req.url == "/hello") {
             res.body = "🚀 MULTI-PROTOCOL SERVER!\nFramework: MyFrame\nProtocols: HTTPS + WSS\nMode: Multi-Protocol Detection";
         } 
+        else if (req.url == "/big") {
+            size_t sz = 1024 * 1024; // 1MB 默认
+            const char* env = ::getenv("MYFRAME_BIG_SIZE");
+            if (env && *env) {
+                unsigned long long v = strtoull(env, nullptr, 10);
+                if (v > 0) sz = (size_t)v;
+            }
+            res.set_header("Content-Type", "application/octet-stream");
+            res.body.assign(sz, 'B');
+        }
         else if (req.url == "/api/status") {
             res.set_header("Content-Type", "application/json");
             res.body = "{\"status\":\"running\",\"protocols\":[\"https\",\"wss\"],\"framework\":\"myframe\",\"multi_protocol\":true}";
@@ -35,8 +45,9 @@ public:
                       "<h1>🚀 MyFrame Multi-Protocol Server</h1>"
                       "<p><strong>Framework:</strong> MyFrame</p>"
                       "<p><strong>Protocols:</strong> HTTPS + WSS (Same Port)</p>"
-                      "<p><strong>HTTPS端点:</strong> https://127.0.0.1:7782/hello</p>"
-                      "<p><strong>WSS端点:</strong> wss://127.0.0.1:7782/websocket</p>"
+                      "<p><strong>HTTPS端点:</strong> /hello</p>"
+                      "<p><strong>大响应:</strong> /big (env MYFRAME_BIG_SIZE controls size)</p>"
+                      "<p><strong>WSS端点:</strong> /websocket</p>"
                       "</body></html>";
         }
         else {

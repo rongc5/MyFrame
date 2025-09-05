@@ -4,6 +4,12 @@ project(MyFrame)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Debug logging option (controls PDEBUG)
+option(MYFRAME_DEBUG_LOG "Enable verbose PDEBUG logging" OFF)
+if (MYFRAME_DEBUG_LOG)
+  add_definitions(-DDEBUG)
+endif()
+
 # Enable SSL support
 add_definitions(-DENABLE_SSL)
 
