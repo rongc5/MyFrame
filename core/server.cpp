@@ -27,7 +27,7 @@ void server::start() {
     // 防止任何写关闭触发的 SIGPIPE 终止进程
     signal(SIGPIPE, SIG_IGN);
     // 创建并启动 worker 线程（每个worker尽量拥有独立的业务工厂实例）
-    int worker_count = _threads > 1 ? _threads - 1 : 1;
+    int worker_count = _threads > 1 ? _threads - 1 : 0;
     for (int i = 0; i < worker_count; ++i) {
         IFactory* factory_for_thread = _factory.get();
 

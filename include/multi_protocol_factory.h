@@ -1,7 +1,7 @@
 // Multi-protocol connection factory public API
 #pragma once
 
-#include "app_handler.h"
+#include "core/app_handler.h"
 #include "factory_base.h"
 #include <vector>
 #include <cstdint>

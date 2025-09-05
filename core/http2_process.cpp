@@ -339,9 +339,11 @@ void http2_process::send_response(uint32_t stream_id, const HttpResponse& rsp) {
     // other headers (optional, non-pseudo)
     for (auto& kv : rsp.headers) {
         if (kv.first == "Content-Type" || kv.first == "content-type" || kv.first == "content-length") continue;
-        uint32_t name_idx = static_index_of_name(kv.first);
+        // HTTP/2 requires lowercase header field-names. Transform name to lowercase.
+        std::string lname = kv.first; for (auto& c : lname) c = (char)tolower(c);
+        uint32_t name_idx = static_index_of_name(lname);
         encode_integer(block, name_idx ? name_idx : 0, 4, 0x00);
-        if (!name_idx) { encode_string(block, kv.first, true); }
+        if (!name_idx) { encode_string(block, lname, true); }
         encode_string(block, kv.second, true);
     }
     // HEADERS frame with END_HEADERS (use Huffman for strings), no END_STREAM here
