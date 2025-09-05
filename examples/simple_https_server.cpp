@@ -1,6 +1,8 @@
 #include "../include/server.h"
 #include "../include/multi_protocol_factory.h"
 #include "../include/app_handler.h"
+#include "../core/ssl_context.h"
+#include "../core/listen_factory.h"
 #include <thread>
 #include <chrono>
 #include <iostream>
@@ -62,15 +64,27 @@ int main(int argc, char** argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    server srv(1);
+    // 配置TLS证书
+    ssl_config conf;
+    conf._cert_file = "/home/rong/myframe/test_certs/server.crt";
+    conf._key_file = "/home/rong/myframe/test_certs/server.key";
+    conf._protocols = "TLSv1.2:TLSv1.3";
+    conf._verify_peer = false;
+    tls_set_server_config(conf);
+
+    server srv; // 默认2线程：1个listen + 1个worker
     g_server = &srv;
     
     auto handler = std::shared_ptr<SimpleHttpsHandler>(new SimpleHttpsHandler());
-    auto factory = std::shared_ptr<MultiProtocolFactory>(new MultiProtocolFactory(handler.get(), MultiProtocolFactory::Mode::TlsOnly));
-    
-    srv.bind("127.0.0.1", port);
-    srv.set_business_factory(factory);
-    srv.start();
+    auto biz = std::make_shared<MultiProtocolFactory>(handler.get(), MultiProtocolFactory::Mode::TlsOnly);
+    auto lsn = std::make_shared<ListenFactory>("127.0.0.1", port, biz);
+    srv.set_business_factory(lsn);
+    try {
+        srv.start();
+    } catch (const std::exception& e) {
+        std::cerr << "[fatal] 启动失败: " << e.what() << std::endl;
+        return 2;
+    }
 
     std::cout << "\n🔒 HTTPS服务器启动成功!" << std::endl;
     std::cout << "\n测试命令:" << std::endl;

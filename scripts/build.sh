@@ -16,8 +16,10 @@ build_libs=('utils/str2sign' 'utils/encode')
 # 仅头文件的库
 header_only_libs=('utils/btree' 'utils/rapidjson' 'utils/ini')
 
-rm -rf lib include
-mkdir -p lib include/{core,encode,str2sign,btree,rapidjson,ini}
+# 将产物放入 out/ 目录，避免覆盖源码中的 include/
+OUT_DIR="$PROJECT_ROOT/out"
+rm -rf "$OUT_DIR"
+mkdir -p "$OUT_DIR"/lib "$OUT_DIR"/include/{core,encode,str2sign,btree,rapidjson,ini}
 
 if [ $# == 0 ]; then
     echo "Building all utility components..."
@@ -32,8 +34,8 @@ if [ $# == 0 ]; then
         
         # 复制静态库
         if [ -d "lib" ]; then
-            cp lib/lib*.a ../../lib/
-            echo "Copied static library from ${build_libs[$i]}/lib/"
+            cp lib/lib*.a "$OUT_DIR"/lib/
+            echo "Copied static library from ${build_libs[$i]}/lib/ to out/lib/"
         fi
         
         # 复制头文件到对应的子目录
@@ -41,13 +43,13 @@ if [ $# == 0 ]; then
         echo "Copying headers for ${project_name}..."
         
         if [ -d "core" ]; then
-            find core -name "*.h" -exec cp {} "../../include/${project_name}/" \; 2>/dev/null || true
-            echo "Copied core headers to include/${project_name}/"
+            find core -name "*.h" -exec cp {} "$OUT_DIR"/include/${project_name}/ \; 2>/dev/null || true
+            echo "Copied core headers to out/include/${project_name}/"
         fi
         
         if [ -d "include" ]; then
-            find include -name "*.h" -exec cp {} "../../include/${project_name}/" \; 2>/dev/null || true
-            echo "Copied include headers to include/${project_name}/"
+            find include -name "*.h" -exec cp {} "$OUT_DIR"/include/${project_name}/ \; 2>/dev/null || true
+            echo "Copied include headers to out/include/${project_name}/"
         fi
         
         let i+=1
@@ -56,35 +58,35 @@ if [ $# == 0 ]; then
     
     # 复制主项目头文件到core子目录
     echo "=== Copying main project headers ==="
-    cp core/*.h include/core/
-    echo "Copied main project headers to include/core/"
+    cp core/*.h "$OUT_DIR"/include/core/
+    echo "Copied main project headers to out/include/core/"
     
     # 复制仅头文件的库
     echo "=== Copying header-only libraries ==="
     
     # btree headers
     echo "Copying btree headers..."
-    cp -r utils/btree/*.h include/btree/ 2>/dev/null || true
-    cp -r utils/btree/btree* include/btree/ 2>/dev/null || true
-    echo "Copied btree headers to include/btree/"
+    cp -r utils/btree/*.h "$OUT_DIR"/include/btree/ 2>/dev/null || true
+    cp -r utils/btree/btree* "$OUT_DIR"/include/btree/ 2>/dev/null || true
+    echo "Copied btree headers to out/include/btree/"
     
     # rapidjson headers (保持目录结构)
     echo "Copying rapidjson headers..."
-    cp -r utils/rapidjson/* include/rapidjson/ 2>/dev/null || true
-    echo "Copied rapidjson headers to include/rapidjson/"
+    cp -r utils/rapidjson/* "$OUT_DIR"/include/rapidjson/ 2>/dev/null || true
+    echo "Copied rapidjson headers to out/include/rapidjson/"
     
     # ini headers  
     echo "Copying ini headers..."
-    cp -r utils/ini/*.h include/ini/ 2>/dev/null || true
-    echo "Copied ini headers to include/ini/"
+    cp -r utils/ini/*.h "$OUT_DIR"/include/ini/ 2>/dev/null || true
+    echo "Copied ini headers to out/include/ini/"
     
     echo ""
     echo "=== Build Summary ==="
-    echo "静态库 (lib/):"
-    ls -la lib/*.a 2>/dev/null || echo "  (no static libraries found)"
+    echo "静态库 (out/lib/):"
+    ls -la "$OUT_DIR"/lib/*.a 2>/dev/null || echo "  (no static libraries found)"
     echo ""
-    echo "头文件目录 (include/):"
-    ls -d include/*/ 2>/dev/null || echo "  (no include directories found)"
+    echo "头文件目录 (out/include/):"
+    ls -d "$OUT_DIR"/include/*/ 2>/dev/null || echo "  (no include directories found)"
     echo ""
     echo "✅ All utility libraries built successfully!"
     echo "📦 Use 'scripts/build_cmake.sh' for full project build with CMake."

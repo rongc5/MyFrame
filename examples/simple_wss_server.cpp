@@ -1,6 +1,8 @@
 #include "../include/server.h"
 #include "../include/multi_protocol_factory.h"
 #include "../include/app_handler.h"
+#include "../core/ssl_context.h"
+#include "../core/listen_factory.h"
 #include <thread>
 #include <chrono>
 #include <iostream>
@@ -64,14 +66,21 @@ int main(int argc, char** argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    server srv(1);
+    // 配置TLS证书
+    ssl_config conf;
+    conf._cert_file = "/home/rong/myframe/test_certs/server.crt";
+    conf._key_file = "/home/rong/myframe/test_certs/server.key";
+    conf._protocols = "TLSv1.2:TLSv1.3";
+    conf._verify_peer = false;
+    tls_set_server_config(conf);
+
+    server srv; // 默认2线程：1个listen + 1个worker
     g_server = &srv;
     
     auto handler = std::shared_ptr<SimpleWssHandler>(new SimpleWssHandler());
-    auto factory = std::shared_ptr<MultiProtocolFactory>(new MultiProtocolFactory(handler.get()));
-    
-    srv.bind("127.0.0.1", port);
-    srv.set_business_factory(factory);
+    auto biz = std::make_shared<MultiProtocolFactory>(handler.get());
+    auto lsn = std::make_shared<ListenFactory>("127.0.0.1", port, biz);
+    srv.set_business_factory(lsn);
     srv.start();
 
     std::cout << "\n🔒 WSS服务器启动成功!" << std::endl;

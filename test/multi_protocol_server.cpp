@@ -1,6 +1,7 @@
 #include "../include/server.h"
 #include "../include/app_handler.h"
 #include "../include/multi_protocol_factory.h"
+#include "../include/ssl_context.h"
 #include <iostream>
 #include <signal.h>
 #include <atomic>
@@ -114,6 +115,14 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, signal_handler);
     
     try {
+        // 配置TLS证书（用于HTTPS和WSS）
+        ssl_config conf;
+        conf._cert_file = "/home/rong/myframe/test_certs/server.crt";
+        conf._key_file = "/home/rong/myframe/test_certs/server.key";
+        conf._protocols = "TLSv1.2:TLSv1.3";
+        conf._verify_peer = false;
+        tls_set_server_config(conf);
+        
         // 创建业务处理器
         std::shared_ptr<MultiProtocolHandler> handler(new MultiProtocolHandler());
         

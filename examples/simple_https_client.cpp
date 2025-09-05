@@ -13,6 +13,7 @@ int main(int argc, char* argv[]) {
 
     SSL_library_init(); SSL_load_error_strings(); OpenSSL_add_all_algorithms();
     SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);  // 忽略证书验证
     SSL* ssl = SSL_new(ctx);
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);

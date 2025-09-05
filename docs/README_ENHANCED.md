@@ -7,9 +7,9 @@
 ## 新增功能
 
 ### 1. Server类封装
-- **server_simple**: 简化的服务器类，支持多线程处理
-- **server**: 功能完整的服务器类，支持工厂模式和自动协议检测
-- 支持listen thread模式，提高网络I/O性能
+- **server**: 功能完整的服务器类，支持工厂模式和自动协议检测。
+- **ListenFactory**: 可插入到 `server.set_business_factory()` 的监听包装器，负责创建 `listen_fd` 并把新连接轮询分发给 worker 线程。
+- 默认线程数=2：1个监听线程 + 1个工作线程；可通过构造参数调整。
 
 ### 2. SSL/HTTPS支持  
 - **ssl_context**: SSL上下文管理
@@ -86,9 +86,8 @@ ClientFactory::register_scheme("grpc", [](const client_url& u){
 - 智能路由到相应的处理器
 
 ### 5. 线程池管理
-- **net_thread_pool**: 网络线程池管理
-- 支持工厂模式创建连接处理器
-- 提高并发处理能力
+- 监听线程维护 worker 线程池索引，`add_worker_thread()` 注册；`next_worker_rr()` 轮询选择 worker。
+- `listen_process` 优先使用监听线程的线程池进行分发；同时兼容旧的 `on_accept` 路径。
 
 ## 构建方式
 
@@ -103,8 +102,14 @@ ClientFactory::register_scheme("grpc", [](const client_url& u){
 
 ### CMake构建
 ```bash
-# 使用CMake构建
+# 默认Debug，仅构建core库（目标 myframe）
 ./scripts/build_cmake.sh
+
+# Release构建
+./scripts/build_cmake.sh release
+
+# 构建所有目标（examples/tests）
+./scripts/build_cmake.sh all
 
 # 清理构建
 ./scripts/build_cmake.sh clean
@@ -175,16 +180,26 @@ ssl_context ctx;
 ctx.init_server(config);
 ```
 
-## 简单服务器使用示例
+## 服务器使用示例（ListenFactory新用法）
 
 ```cpp
-#include "server_simple.h"
+#include "server.h"
+#include "multi_protocol_factory.h"
+#include "../core/listen_factory.h"
 
-server_simple server(4);  // 4个工作线程
-server.listen(8080);
-server.use_auto_detect(); // 自动协议检测
-server.start();
+server srv; // 默认2线程：1 listen + 1 worker
+
+auto app = std::make_shared<MyHandler>();
+auto biz = std::make_shared<MultiProtocolFactory>(app.get()); // 或 Mode::TlsOnly
+auto lsn = std::make_shared<ListenFactory>("0.0.0.0", 8080, biz);
+
+srv.set_business_factory(lsn);
+srv.start();
 ```
+
+说明：
+- `ListenFactory` 会在监听线程初始化时创建并注册 `listen_fd`（ET模式），`accept` 后将新连接封装为 `NORMAL_MSG_CONNECT` 交给 worker。
+- 如仍想走旧路径，可直接 `server.set_business_factory(biz); server.bind(ip,port);`，兼容保留。
 
 ## 编译要求
 

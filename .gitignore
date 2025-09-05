@@ -1,7 +1,7 @@
 # Build directories
 build/
 lib/
-include/
+# include 目录需要纳入版本控制，勿忽略
 
 # Object files
 *.o
@@ -70,3 +70,5 @@ CTestTestfile.cmake
 # Temporary files
 .tmp/
 temp/
+out/
+out/*

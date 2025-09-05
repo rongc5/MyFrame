@@ -1,6 +1,7 @@
 #include "../include/server.h"
 #include "../include/multi_protocol_factory.h"
 #include "../include/app_handler.h"
+#include "../core/listen_factory.h"
 #include <thread>
 #include <chrono>
 #include <iostream>
@@ -62,14 +63,13 @@ int main(int argc, char** argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    server srv(1);
+    server srv; // 默认2线程：1个listen + 1个worker
     g_server = &srv;
     
     auto handler = std::shared_ptr<SimpleHttpHandler>(new SimpleHttpHandler());
-    auto factory = std::shared_ptr<MultiProtocolFactory>(new MultiProtocolFactory(handler.get()));
-    
-    srv.bind("127.0.0.1", port);
-    srv.set_business_factory(factory);
+    auto biz = std::make_shared<MultiProtocolFactory>(handler.get());
+    auto lsn = std::make_shared<ListenFactory>("127.0.0.1", port, biz);
+    srv.set_business_factory(lsn);
     srv.start();
 
     std::cout << "\n📡 HTTP服务器启动成功!" << std::endl;

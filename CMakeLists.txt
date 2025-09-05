@@ -18,13 +18,26 @@ include_directories(include)
 include_directories(utils/btree)
 include_directories(utils/encode)
 include_directories(utils/rapidjson)
-
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign/include/ul_sign.h")
+    include_directories(utils/str2sign/include)
+    add_definitions(-DHAVE_UL_SIGN_H)
+else()
+    message(WARNING "utils/str2sign/include/ul_sign.h not found; building with fallback hash implementation")
+endif()
 
 
 ## Core source files (minimal set)
 file(GLOB CORE_SOURCES
     "core/*.cpp"
 )
+# Exclude legacy logging modules that require additional infra
+## Exclude legacy log modules; provide stubs instead
+list(REMOVE_ITEM CORE_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/core/log_process.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/core/log_thread.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/core/log_base.cpp"
+)
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/connection_manager.cpp")
 
 ## Ensure utils/encode is built (optional signer is handled below)
 add_custom_target(build_encode ALL
@@ -32,25 +45,20 @@ add_custom_target(build_encode ALL
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/utils/encode
 )
 
-# Optional utils/str2sign
+## Optional utils/str2sign (header+static lib if present)
 set(STR2SIGN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign)
-if (EXISTS "${STR2SIGN_DIR}/build.sh" AND EXISTS "${STR2SIGN_DIR}/core.mk" AND EXISTS "${STR2SIGN_DIR}/core")
-    add_custom_target(build_sign ALL
-        COMMAND bash -lc "./build.sh all"
-        WORKING_DIRECTORY ${STR2SIGN_DIR}
-    )
+set(SIGN_HEADER ${STR2SIGN_DIR}/include/ul_sign.h)
+set(SIGN_LIB    ${STR2SIGN_DIR}/lib/libsign.a)
+if (EXISTS "${SIGN_HEADER}" AND EXISTS "${SIGN_LIB}")
     set(HAVE_SIGN_LIB TRUE)
 else()
-    message(WARNING "utils/str2sign not found; skipping sign library build")
+    message(WARNING "utils/str2sign not fully available (need include/ul_sign.h and lib/libsign.a); skipping sign library link")
     set(HAVE_SIGN_LIB FALSE)
 endif()
 
 # Create library
 add_library(myframe STATIC ${CORE_SOURCES})
 add_dependencies(myframe build_encode)
-if (HAVE_SIGN_LIB)
-    add_dependencies(myframe build_sign)
-endif()
 
 # Link libraries 
 target_link_libraries(myframe 
