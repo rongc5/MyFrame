@@ -105,12 +105,18 @@ void signal_handler(int sig) {
 }
 
 int main(int argc, char* argv[]) {
-    int port = 7782;  // 默认端口
+    int port = 7782;      // 默认端口
+    int threads = 2;      // 默认2线程（1个listen + 1个worker）
     bool tls_only = false;
-    // 参数解析：第一个数字端口，可选参数 --tls-only 控制模式
+    // 参数解析：第一个数字端口，可选参数 --tls-only，--threads=N 或 "--threads N"
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--tls-only") {
+        std::string arg = argv[i];
+        if (arg == "--tls-only") {
             tls_only = true;
+        } else if (arg.rfind("--threads=", 0) == 0) {
+            threads = std::max(1, atoi(arg.substr(10).c_str()));
+        } else if (arg == "--threads" && i + 1 < argc) {
+            threads = std::max(1, atoi(argv[++i]));
         } else {
             // 端口
             port = atoi(argv[i]);
@@ -138,7 +144,7 @@ int main(int argc, char* argv[]) {
         std::shared_ptr<MultiProtocolHandler> handler(new MultiProtocolHandler());
         
         // 创建服务器
-        g_server.reset(new server(2));
+        g_server.reset(new server(threads));
         
         // 绑定监听
         g_server->bind("127.0.0.1", port);
