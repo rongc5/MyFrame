@@ -44,10 +44,24 @@ target_link_libraries(multi_proto_client ${COMMON_LIBS})
 # WebSocket Echo Client (WsSyncClient)
 add_executable(ws_echo_client ws_echo_client.cpp)
 target_link_libraries(ws_echo_client ${COMMON_LIBS})
+
+# HTTP Outbound Client Example
+add_executable(http_out_client http_out_client.cpp)
+target_link_libraries(http_out_client ${COMMON_LIBS})
+
+# ClientConnRouter Example
+add_executable(client_conn_factory_example client_conn_factory_example.cpp)
+target_link_libraries(client_conn_factory_example ${COMMON_LIBS})
+
+# XPROTO Demo (custom protocol via MultiProtocolFactory + CustomProbe)
+add_executable(xproto_server xproto_server.cpp)
+target_link_libraries(xproto_server ${COMMON_LIBS})
+add_executable(xproto_client xproto_client.cpp)
+target_link_libraries(xproto_client ${COMMON_LIBS})
 # Set output directory
 set_target_properties(
     http_server https_server wss_server
-    http_client https_client ws_client multi_proto_client ws_echo_client http_out_client
+    http_client https_client ws_client multi_proto_client ws_echo_client http_out_client client_conn_factory_example xproto_server xproto_client
     PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
 )

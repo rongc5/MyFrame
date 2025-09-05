@@ -10,8 +10,15 @@ public:
     custom_stream_process(std::shared_ptr<base_net_obj> p, IAppHandler* app)
         : base_data_process(p), _app_handler(app) {}
     virtual size_t process_recv_buf(const char* buf, size_t len) override {
-        if (!buf || len == 0) return 0; if (_app_handler) _app_handler->on_custom(PROTOCOL_ID, buf, len); return len; }
-    virtual std::string* get_send_buf() override { return 0; }
+        if (!buf || len == 0) return 0;
+        if (_app_handler) _app_handler->on_custom(PROTOCOL_ID, buf, len);
+        // 默认回显收到的数据，方便自定义协议示例验证
+        std::string* echo = new std::string;
+        echo->assign(buf, buf + len);
+        put_send_buf(echo);
+        return len;
+    }
+    virtual std::string* get_send_buf() override { return base_data_process::get_send_buf(); }
 private:
     IAppHandler* _app_handler;
 };

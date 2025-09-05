@@ -124,6 +124,7 @@ class out_connect:public base_connect<PROCESS>
         virtual void connect_ok_process()
         {
             PDEBUG("CONNECT OK");
+            // 连接成功时，允许子类或已安装的 PROCESS 在此阶段安装编解码器等
             return;
         }
 
