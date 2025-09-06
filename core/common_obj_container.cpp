@@ -3,7 +3,7 @@
 #include "common_obj_container.h"
 #include "base_net_thread.h"
 #include "base_timer.h"
-#include "log_helper.h"
+
 #include "common_util.h"
 #include "common_domain.h"
 

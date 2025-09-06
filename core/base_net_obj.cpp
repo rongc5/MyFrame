@@ -3,7 +3,7 @@
 #include "common_obj_container.h"
 #include "common_def.h"
 #include "common_exception.h"
-#include "log_helper.h"
+
 #include "base_data_process.h"
 #include "common_util.h"
 
@@ -65,10 +65,10 @@ void base_net_obj::set_real_net(bool real_net)
     _real_net = real_net;
     if (_real_net) {
     std::shared_ptr<base_net_obj> p=std::dynamic_pointer_cast<base_net_obj>(shared_from_this());
-        //LOG_DEBUG("base_net_obj:%d, .use_count:%d, _id:%d, _thread_index:%d", p, p.use_count(), p->get_id()._id, p->get_id()._thread_index);
+        //PDEBUG("base_net_obj:%d, .use_count:%d, _id:%d, _thread_index:%d", p, p.use_count(), p->get_id()._id, p->get_id()._thread_index);
         PDEBUG(".use_count:%d, _id:%d, _thread_index:%d", p.use_count(), p->get_id()._id, p->get_id()._thread_index);
         _p_net_container->push_real_net(p);
-        //LOG_DEBUG("base_net_obj:%d, .use_count:%d, _id:%d, _thread_index:%d", p, p.use_count(), p->get_id()._id, p->get_id()._thread_index);
+        //PDEBUG("base_net_obj:%d, .use_count:%d, _id:%d, _thread_index:%d", p, p.use_count(), p->get_id()._id, p->get_id()._thread_index);
         PDEBUG(".use_count:%d, _id:%d, _thread_index:%d", p.use_count(), p->get_id()._id, p->get_id()._thread_index);
     }
 }

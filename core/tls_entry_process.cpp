@@ -52,11 +52,11 @@ bool tls_entry_process::init_server_ssl(SSL*& out_ssl) {
                 if (!found) return false;
             }
         }
-        if (!ctx->init_server(conf)) { LOG_WARNING("[tls] init_server failed (cert/key load or options)"); return false; }
+        if (!ctx->init_server(conf)) { PDEBUG("[tls] init_server failed (cert/key load or options)"); return false; }
     }
     SSL* ssl = ctx->create_ssl(); if (!ssl) return false;
-    int fd = get_base_net()->get_sfd(); if (SSL_set_fd(ssl, fd) != 1) { LOG_WARNING("[tls] SSL_set_fd failed"); SSL_free(ssl); return false; }
-    LOG_NOTICE("[tls] Binding SSL to fd=%d", fd);
+    int fd = get_base_net()->get_sfd(); if (SSL_set_fd(ssl, fd) != 1) { PDEBUG("[tls] SSL_set_fd failed"); SSL_free(ssl); return false; }
+    PDEBUG("[tls] Binding SSL to fd=%d", fd);
     SSL_set_accept_state(ssl);
     SSL_set_mode(ssl, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
     out_ssl = ssl; return true;
@@ -73,7 +73,7 @@ bool tls_entry_process::ensure_ssl_installed() {
     base_connect<base_data_process>* holder = dynamic_cast< base_connect<base_data_process>* >(get_base_net().get());
     if (!holder) return false;
     // 在连接上安装 SSL 编解码器
-    LOG_NOTICE("[tls] Installing SslCodec and switching to over-TLS detector");
+    PDEBUG("[tls] Installing SslCodec and switching to over-TLS detector");
     holder->set_codec(std::unique_ptr<ICodec>(new SslCodec(ssl)));
     // 构造后尝试一次握手，记录握手状态（忽略 WANT_READ/WRITE）
     {

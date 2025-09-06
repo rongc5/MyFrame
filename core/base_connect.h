@@ -4,7 +4,7 @@
 #include "common_def.h"
 #include "base_net_obj.h"
 #include "common_obj_container.h"
-#include "log_helper.h"
+
 #include "common_exception.h"
 #include "common_epoll.h"
 #include "codec.h"
@@ -170,7 +170,7 @@ class base_connect:public base_net_obj
                 ret = 0;
             }
 
-            //LOG_DEBUG("recv:%s", buf);
+            //PDEBUG("recv:%s", buf);
 
             return ret;
         }

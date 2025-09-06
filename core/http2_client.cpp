@@ -117,10 +117,8 @@ public:
         const unsigned char alpn_protos[] = { 2, 'h', '2' };
         SSL_set_alpn_protos(ssl, alpn_protos, sizeof(alpn_protos));
         if (SSL_connect(ssl)!=1) { SSL_free(ssl); SSL_CTX_free(ctx); ::close(fd); return {}; }
-        const unsigned char* sel = nullptr; unsigned int slen = 0; SSL_get0_alpn_selected(ssl, &sel, &slen);
-        if (!(slen==2 && sel && sel[0]=='h' && sel[1]=='2')) {
-            SSL_shutdown(ssl); SSL_free(ssl); SSL_CTX_free(ctx); ::close(fd); return {}; // no h2
-        }
+        // 尝试 ALPN 获取 h2，但在未协商成功时也继续按 h2 发送 preface，由服务端探测决定
+        // const unsigned char* sel = nullptr; unsigned int slen = 0; SSL_get0_alpn_selected(ssl, &sel, &slen);
 
         auto send_all = [&](const std::string& s){ size_t off=0; while(off<s.size()){ int w=SSL_write(ssl, s.data()+off, (int)(s.size()-off)); if (w<=0) return false; off+=(size_t)w;} return true; };
         auto recv_n = [&](unsigned char* buf, size_t n){ size_t off=0; while(off<n){ int r=SSL_read(ssl, (char*)buf+off, (int)(n-off)); if (r<=0) return false; off+=(size_t)r;} return true; };
@@ -204,8 +202,15 @@ public:
                     if (!send_all(h2::make_settings_ack())) break;
                 }
             } else if (type == h2::HEADERS && sid == 1) {
-                // Aggregate CONTINUATION if any
-                std::string block = payload; bool end_headers = (flags_in & 0x4) != 0; // END_HEADERS
+                // Handle PADDED and PRIORITY fields
+                const unsigned char* pp = (const unsigned char*)payload.data();
+                const unsigned char* pe = pp + payload.size();
+                uint8_t pad_len = 0; if (flags_in & 0x08 /*PADDED*/) { if (pp>=pe) { done=true; break; } pad_len = *pp++; }
+                if (flags_in & 0x20 /*PRIORITY*/) { if (pe-pp < 5) { done=true; break; } pp += 5; }
+                size_t header_len = (size_t)(pe-pp);
+                if (header_len < pad_len) { done=true; break; }
+                std::string block; block.assign((const char*)pp, (const char*)pp + (header_len - pad_len));
+                bool end_headers = (flags_in & 0x4) != 0; // END_HEADERS
                 while (!end_headers) {
                     unsigned char ch[9]; if (!recv_n(ch,9)) { done=true; break; }
                     uint32_t clen = h2::read24(ch); uint8_t ctype = ch[3]; uint8_t cflags = ch[4]; uint32_t csid = h2::read32(&ch[5]) & 0x7fffffffu;

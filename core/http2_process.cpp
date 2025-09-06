@@ -1,6 +1,6 @@
 #include "http2_process.h"
 #include "common_exception.h"
-#include "log_helper.h"
+
 #include <cstring>
 #include "hpack.h"
 #include "http_base_process.h" // for HttpRequest/HttpResponse structures live in app_handler.h
@@ -329,23 +329,23 @@ void http2_process::send_response(uint32_t stream_id, const HttpResponse& rsp) {
     {
         uint32_t name_idx = static_index_of_name(":status");
         encode_integer(block, name_idx ? name_idx : 0, 4, 0x00);
-        if (!name_idx) { encode_string(block, std::string(":status"), true); }
-        encode_string(block, std::to_string(rsp.status), true);
+        if (!name_idx) { encode_string(block, std::string(":status"), false); }
+        encode_string(block, std::to_string(rsp.status), false);
     }
     // content-type
     {
         uint32_t name_idx = static_index_of_name("content-type");
         encode_integer(block, name_idx ? name_idx : 0, 4, 0x00);
-        if (!name_idx) { encode_string(block, std::string("content-type"), true); }
+        if (!name_idx) { encode_string(block, std::string("content-type"), false); }
         auto it = rsp.headers.find("Content-Type");
-        encode_string(block, it != rsp.headers.end() ? it->second : std::string("text/plain"), true);
+        encode_string(block, it != rsp.headers.end() ? it->second : std::string("text/plain"), false);
     }
     // content-length
     {
         uint32_t name_idx = static_index_of_name("content-length");
         encode_integer(block, name_idx ? name_idx : 0, 4, 0x00);
-        if (!name_idx) { encode_string(block, std::string("content-length"), true); }
-        encode_string(block, std::to_string(body.size()), true);
+        if (!name_idx) { encode_string(block, std::string("content-length"), false); }
+        encode_string(block, std::to_string(body.size()), false);
     }
     // other headers (optional, non-pseudo)
     for (auto& kv : rsp.headers) {
@@ -362,8 +362,8 @@ void http2_process::send_response(uint32_t stream_id, const HttpResponse& rsp) {
         // Otherwise, encode with incremental indexing and add to dynamic table
         uint32_t name_idx = static_index_of_name(lname);
         encode_integer(block, name_idx ? name_idx : 0, 4, 0x00);
-        if (!name_idx) { encode_string(block, lname, true); }
-        encode_string(block, lval, true);
+        if (!name_idx) { encode_string(block, lname, false); }
+        encode_string(block, lval, false);
         enc_dyn_add(lname, lval);
     }
     // HEADERS frame with END_HEADERS (use Huffman for strings), no END_STREAM here

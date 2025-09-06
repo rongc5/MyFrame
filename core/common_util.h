@@ -3,7 +3,6 @@
 
 #include "base_def.h"
 #include "common_def.h"
-#include "log_helper.h"
 
 #ifdef HAVE_UL_SIGN_H
 #include "ul_sign.h"
@@ -149,7 +148,7 @@ std::string strError(int errnum);
 #define ASSERT_WARNING(valid, fmt, arg...) \
     do{ \
         if(!(valid)){ \
-            LOG_WARNING(fmt, ##arg); \
+            PDEBUG(fmt, ##arg); \
             return -1; \
         } \
     }while(0)
@@ -157,7 +156,7 @@ std::string strError(int errnum);
 #define ASSERT_DEBUG(valid, fmt, arg...) \
     do{ \
         if(!(valid)){ \
-            LOG_DEBUG(fmt, ##arg); \
+            PDEBUG(fmt, ##arg); \
             return -1; \
         } \
     }while(0)

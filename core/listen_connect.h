@@ -2,7 +2,7 @@
 #define __LISTEN_CONNECT_H__
 
 #include "common_def.h"
-#include "log_helper.h"
+
 #include "common_exception.h"
 #include "base_net_obj.h"
 #include <memory>

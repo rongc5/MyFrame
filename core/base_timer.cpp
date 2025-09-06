@@ -1,4 +1,4 @@
-#include "log_helper.h"
+
 #include "base_timer.h"
 #include "common_util.h"
 #include "base_net_thread.h"
@@ -44,7 +44,7 @@ uint32_t base_timer::add_timer(std::shared_ptr<timer_msg> & t_msg)
     uint64_t reach_time = GetMilliSecond() + t_msg->_time_length;
     t_msg->_timer_id = gen_timerid();
 
-    //LOG_DEBUG("time_length:%u reach_time:%llu timer_id:%u _timer_type:%u", t_msg->_time_length, reach_time, t_msg->_timer_id, t_msg->_timer_type);
+    //PDEBUG("time_length:%u reach_time:%llu timer_id:%u _timer_type:%u", t_msg->_time_length, reach_time, t_msg->_timer_id, t_msg->_timer_type);
 
     _timer_list[_current].insert(make_pair(reach_time, t_msg));
 
@@ -74,7 +74,7 @@ void base_timer::check_timer(std::vector<uint32_t> &expect_list)
             if (it->first > now)
                 break;
 
-            //LOG_DEBUG("time_length:%u timer_id:%u _timer_type:%u", it->second->_time_length, it->second->_timer_id, it->second->_timer_type);
+            //PDEBUG("time_length:%u timer_id:%u _timer_type:%u", it->second->_time_length, it->second->_timer_id, it->second->_timer_type);
 
             tmp_vec.push_back(it->first);
 
@@ -101,7 +101,7 @@ void base_timer::check_timer(std::vector<uint32_t> &expect_list)
         timer_list.erase(*ii);
     }
 
-    //LOG_DEBUG("_current: size:%u idle: size:%u, _timerid_set:%u", _timer_list[_current].size(), _timer_list[1 - _current].size(), _timerid_set.size());
+    //PDEBUG("_current: size:%u idle: size:%u, _timerid_set:%u", _timer_list[_current].size(), _timer_list[1 - _current].size(), _timerid_set.size());
 }
 
 bool base_timer::is_empty()

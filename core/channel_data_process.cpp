@@ -2,7 +2,7 @@
 #include "base_net_thread.h"
 #include "base_net_obj.h"
 #include "base_connect.h"
-#include "log_helper.h"
+
 #include "base_net_obj.h"
 #include "common_util.h"
 

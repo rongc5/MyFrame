@@ -1,10 +1,11 @@
 #pragma once
 
+#include "base_def.h"
 #include <string>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <cstring>
-#include "log_helper.h"
+
 
 // forward decl for ALPN callback context cast
 class ssl_context;
@@ -65,7 +66,7 @@ public:
             if (SSL_CTX_check_private_key(_ctx) != 1) { std::fprintf(stderr, "[tls] Private key does not match certificate\n"); ERR_print_errors_fp(stderr); return false; }
         }
         if (!conf._cert_file.empty() || !conf._key_file.empty()) {
-            LOG_NOTICE("[tls] Using cert='%s' key='%s'", conf._cert_file.c_str(), conf._key_file.c_str());
+            PDEBUG("[tls] Using cert='%s' key='%s'", conf._cert_file.c_str(), conf._key_file.c_str());
         }
         if (!conf._cipher_list.empty()) {
             if (SSL_CTX_set_cipher_list(_ctx, conf._cipher_list.c_str()) != 1) { ERR_print_errors_fp(stderr); return false; }

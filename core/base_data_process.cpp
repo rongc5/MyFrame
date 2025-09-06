@@ -1,6 +1,6 @@
 #include "base_net_obj.h"
 #include "base_data_process.h"
-#include "log_helper.h"
+
 
 
 base_data_process::base_data_process(std::shared_ptr<base_net_obj> p)
@@ -90,5 +90,5 @@ void base_data_process::add_timer(std::shared_ptr<timer_msg> & t_msg)
 
 void base_data_process::handle_timeout(std::shared_ptr<timer_msg> & t_msg)
 {
-    LOG_DEBUG("%p", this);
+    PDEBUG("%p", this);
 }
