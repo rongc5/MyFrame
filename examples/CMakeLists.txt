@@ -103,3 +103,10 @@ if (HAVE_STOCK_EXAMPLES)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
     )
 endif()
+
+# Multi-thread server fixed
+add_executable(multi_thread_server_fixed multi_thread_server_fixed.cpp)
+target_link_libraries(multi_thread_server_fixed myframe ${OpenSSL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+if(TARGET build_encode)
+    add_dependencies(multi_thread_server_fixed build_encode)
+endif()
