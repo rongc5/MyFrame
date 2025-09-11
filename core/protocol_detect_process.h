@@ -20,9 +20,9 @@ public:
     virtual size_t process_recv_buf(const char* buf, size_t buf_len) override;
     virtual std::string* get_send_buf() override { return 0; }
     virtual void handle_timeout(std::shared_ptr<timer_msg>& t) override;
-    // legacy base has no peek preference hook
-    // Hint: in detection phase we prefer MSG_PEEK so TLS bytes remain in kernel
-    bool want_peek() const { return !_protocol_detected; }
+    // Prefer MSG_PEEK only before protocol is detected and only when not over TLS.
+    // When running over TLS (after installing SslCodec), data must be consumed by SSL.
+    bool want_peek() const { return !_protocol_detected && !_over_tls; }
 
 private:
     bool _protocol_detected;

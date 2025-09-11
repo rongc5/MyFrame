@@ -373,13 +373,16 @@ void http2_process::send_response(uint32_t stream_id, const HttpResponse& rsp) {
 
     // If no body, send empty DATA with END_STREAM; else enqueue body and try to send within flow control windows
     StreamState& st = _streams[stream_id];
+    // Initialize per-stream send window to the current peer initial window size
+    // so we honor SETTINGS_INITIAL_WINDOW_SIZE for newly created response streams.
+    st.send_window = (int32_t)_peer_initial_window_size;
     if (body.empty()) {
         std::string datahdr = make_frame_header(0, DATA, FLAG_END_STREAM, stream_id);
         put_send_buf(new std::string(std::move(datahdr)));
     } else {
         st.out_body = std::move(body);
         st.out_off = 0;
-        update_quantum(st);
+        // Schedule initial send; try to fill available flow-control windows.
         (void)try_send_data(stream_id);
     }
 }
@@ -415,23 +418,20 @@ uint32_t http2_process::try_send_data(uint32_t stream_id) {
     if (it == _streams.end()) return 0;
     StreamState& st = it->second;
     if (st.out_off >= st.out_body.size()) return 0;
-    // loop to send multiple frames within allowance to reduce wakeups
-    int frames_sent = 0;
-    const int kMaxFramesPerPump = 8;
+    // Send as much as allowed by both connection and stream flow-control windows.
+    // Avoid artificial stalling: do not gate on scheduler deficit here; fairness is
+    // sufficiently protected by HTTP/2 flow control and event loop backpressure.
     uint32_t total_sent = 0;
-    while (st.out_off < st.out_body.size() && _conn_send_window > 0 && st.send_window > 0 && frames_sent < kMaxFramesPerPump) {
-        if (st.sched_deficit <= 0) break;
+    while (st.out_off < st.out_body.size() && _conn_send_window > 0 && st.send_window > 0) {
         uint32_t remaining = (uint32_t)(st.out_body.size() - st.out_off);
         uint32_t allowance = (uint32_t)std::min<int32_t>(_conn_send_window, st.send_window);
         allowance = std::min<uint32_t>(allowance, _peer_max_frame_size);
-        allowance = std::min<uint32_t>(allowance, (uint32_t)st.sched_deficit);
         if (allowance == 0) break;
         uint32_t chunk = std::min<uint32_t>(allowance, remaining);
         std::string payload = st.out_body.substr(st.out_off, chunk);
         st.out_off += chunk;
         _conn_send_window -= (int32_t)chunk;
         st.send_window -= (int32_t)chunk;
-        st.sched_deficit -= (int32_t)chunk;
         uint8_t fl = (st.out_off >= st.out_body.size()) ? FLAG_END_STREAM : 0;
         std::string hdr = make_frame_header(chunk, DATA, fl, stream_id);
         std::string frame = hdr + payload;
@@ -439,7 +439,6 @@ uint32_t http2_process::try_send_data(uint32_t stream_id) {
 #ifdef DEBUG
         PDEBUG("[h2] SEND DATA stream=%u chunk=%u conn_win=%d stream_win=%d end=%d", stream_id, chunk, _conn_send_window, st.send_window, fl ? 1 : 0);
 #endif
-        frames_sent++;
         total_sent += chunk;
     }
     return total_sent;

@@ -218,7 +218,28 @@ class base_connect:public base_net_obj
             {
                 char t_buf[SIZE_LEN_32768];
                 int r_len = tmp_len <= sizeof(t_buf) ? (int)tmp_len:(int)sizeof(t_buf);
-                ret = RECV(t_buf, r_len);
+
+                // During protocol detection (pre-TLS), peek bytes so we don't consume
+                // the ClientHello before SSL_accept can read it. Once over TLS, do not peek.
+                bool did_peek = false;
+                if (!_codec && _process) {
+                    // Only dynamic_cast when needed to avoid RTTI cost in hot path
+                    auto detect = dynamic_cast<protocol_detect_process*>(_process.get());
+                    if (detect && detect->want_peek()) {
+                        ssize_t pr = ::recv(_fd, t_buf, r_len, MSG_DONTWAIT | MSG_PEEK);
+                        if (pr > 0) {
+                            ret = pr;
+                            did_peek = true;
+                        } else {
+                            ret = pr; // pass through errors/EAGAIN handling below
+                        }
+                    }
+                }
+
+                if (!did_peek) {
+                    ret = RECV(t_buf, r_len);
+                }
+
                 if (ret > 0){
                     _recv_buf.append(t_buf, ret);
                     _recv_buf_len += ret;

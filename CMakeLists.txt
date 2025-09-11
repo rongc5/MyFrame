@@ -43,6 +43,8 @@ list(REMOVE_ITEM CORE_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/core/log_thread.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/core/log_base.cpp"
 )
+## Exclude old non-UTF8 http2_client implementation; replaced by http2_client_alpn.cpp
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/http2_client.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/connection_manager.cpp")
 
 ## Ensure utils/encode is built (optional signer is handled below)

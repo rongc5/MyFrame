@@ -38,7 +38,26 @@ curl -k https://127.0.0.1:7777/hello
 curl -k https://127.0.0.1:7777/api/status
 ```
 
-### 3. WebSocket安全服务器 (`simple_wss_server.cpp`)
+### 3. HTTP/2 服务器 (`simple_h2_server.cpp`)
+基于TLS+ALPN的HTTP/2服务器，展示如何：
+- 通过ALPN协商h2并处理HTTP/2请求
+- 保持对HTTP/1.1客户端的兼容（可通过`MYFRAME_SSL_ALPN=h2`仅启用h2）
+- 演示大响应体/流控（`/big`）
+
+**运行方式:**
+```bash
+./h2_server [端口]  # 默认端口7779
+```
+
+**测试命令:**
+```bash
+curl -k --http2 https://127.0.0.1:7779/hello
+curl -k --http2 https://127.0.0.1:7779/big
+# 或使用示例客户端：
+./h2_client h2://127.0.0.1:7779/hello
+```
+
+### 4. WebSocket安全服务器 (`simple_wss_server.cpp`)
 WSS (WebSocket over SSL)服务器示例，展示如何：
 - 创建安全的WebSocket连接
 - 处理WebSocket消息
@@ -54,7 +73,7 @@ WSS (WebSocket over SSL)服务器示例，展示如何：
 websocat wss://127.0.0.1:7778/websocket
 ```
 
-### 4. 多协议服务器 (`multi_protocol_server.cpp`)
+### 5. 多协议服务器 (`multi_protocol_server.cpp`)
 同端口多协议服务器示例，展示如何：
 - 在同一端口支持多种协议(HTTP/HTTPS/WS/WSS)
 - 自动协议检测和切换
@@ -94,7 +113,18 @@ HTTPS安全客户端示例，展示如何：
 - 发送HTTPS请求
 - 处理安全连接
 
-### 3. WebSocket客户端 (`simple_ws_client.cpp`)
+### 3. HTTP/2 客户端 (`simple_h2_client.cpp`)
+基于`client_iface`的HTTP/2客户端示例，展示如何：
+- 使用`make_http2_factory()`创建HTTP/2请求
+- 支持`https://`（ALPN协商h2）或非标准`h2://`（强制HTTP/2）URL
+
+**使用示例:**
+```bash
+./h2_client h2://127.0.0.1:7779/hello
+./h2_client https://127.0.0.1:7779/hello
+```
+
+### 4. WebSocket客户端 (`simple_ws_client.cpp`)
 WebSocket客户端示例，展示如何：
 - 建立WebSocket连接
 - 发送WebSocket升级请求
@@ -114,10 +144,12 @@ make examples
 ```bash
 build/examples/http_server
 build/examples/https_server
+build/examples/h2_server
 build/examples/wss_server
 build/examples/multi_protocol_server
 build/examples/http_client
-build/examples/https_client  
+build/examples/https_client
+build/examples/h2_client
 build/examples/ws_client
 ```
 

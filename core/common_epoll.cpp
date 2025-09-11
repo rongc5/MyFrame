@@ -14,7 +14,16 @@ void common_epoll::add_to_epoll(base_net_obj * p_obj)
     int ret = epoll_ctl(_epoll_fd, tmpOprate, p_obj->get_sfd(), &tmpEvent);
     PDEBUG("add to epoll _epoll_fd[%d] _get_sock [%d]", _epoll_fd, p_obj->get_sfd());
     if (ret != 0) {
-        std::string err = strError(errno);
+        int e = errno;
+        if (e == EEXIST) {
+            // Already registered on this epoll; update events instead of failing
+            tmpOprate = EPOLL_CTL_MOD;
+            int r2 = epoll_ctl(_epoll_fd, tmpOprate, p_obj->get_sfd(), &tmpEvent);
+            if (r2 == 0) return;
+            std::string err2 = strError(errno);
+            PDEBUG("epoll MOD after EEXIST failed: %s", err2.c_str());
+        }
+        std::string err = strError(e);
         PDEBUG("add to epoll fail %s", err.c_str());
         THROW_COMMON_EXCEPT("add to epoll fail " << err);
     }
@@ -28,8 +37,13 @@ void common_epoll::del_from_epoll(base_net_obj * p_obj)
     tmpEvent.data.ptr = p_obj;;
     int ret = epoll_ctl(_epoll_fd, tmpOprate, p_obj->get_sfd(), &tmpEvent);
     PDEBUG("delete to epoll _epoll_fd[%d] _get_sock [%d]", _epoll_fd, p_obj->get_sfd());
-    if (ret != 0)
+    if (ret != 0) {
+        if (errno == ENOENT) {
+            // Not present; treat as success to be robust against races
+            return;
+        }
         THROW_COMMON_EXCEPT("del from epoll fail " << strError(errno).c_str());
+    }
 }
 
 void common_epoll::mod_from_epoll(base_net_obj * p_obj)
@@ -39,8 +53,15 @@ void common_epoll::mod_from_epoll(base_net_obj * p_obj)
     tmpEvent.events =  p_obj->get_event();  
     tmpEvent.data.ptr = p_obj;
     int ret = epoll_ctl(_epoll_fd, tmpOprate, p_obj->get_sfd(), &tmpEvent);
-    if (ret != 0)
+    if (ret != 0) {
+        if (errno == ENOENT) {
+            // Not present; try add instead
+            tmpOprate = EPOLL_CTL_ADD;
+            int r2 = epoll_ctl(_epoll_fd, tmpOprate, p_obj->get_sfd(), &tmpEvent);
+            if (r2 == 0) return;
+        }
         THROW_COMMON_EXCEPT("mod from epoll fail "<< strError(errno).c_str());
+    }
 }
 
 int common_epoll::epoll_wait(std::map<ObjId, std::shared_ptr<base_net_obj> > &expect_list, std::map<ObjId, std::shared_ptr<base_net_obj> > &remove_list, uint32_t num)

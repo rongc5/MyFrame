@@ -33,6 +33,10 @@ target_link_libraries(http_client ${COMMON_LIBS})
 add_executable(https_client simple_https_client.cpp)
 target_link_libraries(https_client ${COMMON_LIBS})
 
+# HTTP/2 Client Example
+add_executable(h2_client simple_h2_client.cpp)
+target_link_libraries(h2_client ${COMMON_LIBS})
+
 # WebSocket Client Example
 add_executable(ws_client simple_ws_client.cpp)
 target_link_libraries(ws_client ${COMMON_LIBS})
@@ -58,10 +62,44 @@ add_executable(xproto_server xproto_server.cpp)
 target_link_libraries(xproto_server ${COMMON_LIBS})
 add_executable(xproto_client xproto_client.cpp)
 target_link_libraries(xproto_client ${COMMON_LIBS})
+# Stock system examples (optional if sources exist)
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/stock_index_server.cpp" AND
+    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/stock_bridge_server.cpp" AND
+    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/stock_driver.cpp")
+    add_executable(stock_index_server stock_index_server.cpp)
+    target_link_libraries(stock_index_server ${COMMON_LIBS})
+    add_executable(stock_bridge_server stock_bridge_server.cpp)
+    target_link_libraries(stock_bridge_server ${COMMON_LIBS})
+    add_executable(stock_driver stock_driver.cpp)
+    target_link_libraries(stock_driver ${COMMON_LIBS})
+    set(HAVE_STOCK_EXAMPLES TRUE)
+else()
+    set(HAVE_STOCK_EXAMPLES FALSE)
+endif()
+
+# Multi-protocol and multi-threading examples
+add_executable(demo_multi_protocol_server multi_protocol_server.cpp)
+target_link_libraries(demo_multi_protocol_server ${COMMON_LIBS})
+add_executable(demo_multi_thread_server multi_thread_server.cpp)
+target_link_libraries(demo_multi_thread_server ${COMMON_LIBS})
+# HTTP/2 Server Example (TLS + ALPN h2)
+add_executable(h2_server simple_h2_server.cpp)
+target_link_libraries(h2_server ${COMMON_LIBS})
 # Set output directory
+# Always-present example targets
 set_target_properties(
     http_server https_server wss_server
-    http_client https_client ws_client multi_proto_client ws_echo_client http_out_client client_conn_factory_example xproto_server xproto_client
+    http_client https_client h2_client ws_client multi_proto_client ws_echo_client http_out_client client_conn_factory_example xproto_server xproto_client
+    demo_multi_protocol_server demo_multi_thread_server h2_server
     PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
 )
+
+# Optional stock targets
+if (HAVE_STOCK_EXAMPLES)
+    set_target_properties(
+        stock_index_server stock_bridge_server stock_driver
+        PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
+    )
+endif()
