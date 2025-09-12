@@ -25,6 +25,14 @@ public:
         for (auto it = rh._headers.begin(); it != rh._headers.end(); ++it) {
             req.headers[it->first] = it->second;
         }
+        // 注入对端地址到请求头，方便上层读取真实客户端IP/端口
+        if (auto conn = get_base_net()) {
+            auto& addr = conn->get_peer_addr();
+            if (!addr.ip.empty()) {
+                req.headers["X-Remote-IP"] = addr.ip;
+                req.headers["X-Remote-Port"] = std::to_string(addr.port);
+            }
+        }
         req.body.swap(_body);
 
         HttpResponse rsp;
@@ -76,4 +84,3 @@ private:
     bool _head_ready;
     bool _body_ready;
 };
-
