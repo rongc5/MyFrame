@@ -2,6 +2,7 @@
 #include "../core/http_req_process.h"
 #include "../core/http_client_data_process.h"
 #include "../core/base_net_thread.h"
+#include "../core/tls_out_connect.h"
 #include <iostream>
 #include <regex>
 #include <map>
@@ -37,8 +38,12 @@ int main(int argc, char** argv) {
 
     base_net_thread th; th.start();
 
-    // Create TCP connection (no TLS for simplicity in this example)
-    auto conn = std::make_shared< out_connect<http_req_process> >(host, (unsigned short)atoi(port.c_str()));
+    std::shared_ptr< out_connect<http_req_process> > conn;
+#ifdef ENABLE_SSL
+    if (scheme == "https") conn = std::make_shared< tls_out_connect<http_req_process> >(host, (unsigned short)atoi(port.c_str()), host);
+    else
+#endif
+    conn = std::make_shared< out_connect<http_req_process> >(host, (unsigned short)atoi(port.c_str()));
     auto proc = new http_req_process(conn);
 
     // Build headers/body per business need

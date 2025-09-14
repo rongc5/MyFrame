@@ -304,7 +304,7 @@ void http2_client_process::handle_timeout(std::shared_ptr<timer_msg>& t_msg) {
         // reschedule
         std::shared_ptr<timer_msg> tp(new timer_msg); tp->_obj_id = 0; tp->_timer_type = H2_PING_TIMER_TYPE; tp->_time_length = _ping_interval_ms; add_timer(tp);
     } else if (t_msg->_timer_type == H2_TOTAL_TIMEOUT_TIMER_TYPE && !_response_done) {
-        std::cout << "H2 total timeout, stopping threads" << std::endl;
-        base_thread::stop_all_thread();
+        std::cout << "H2 total timeout, requesting close" << std::endl;
+        close_now();
     }
 }
