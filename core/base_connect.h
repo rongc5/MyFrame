@@ -67,7 +67,9 @@ class base_connect:public base_net_obj
 
             if ((get_event() & EPOLLIN) == EPOLLIN) {
                 PDEBUG("real_net_process real_recv");
-                real_recv(true);
+                // Only force process when codec explicitly needs it (e.g., TLS handshake write→read)
+                bool force = (_codec && _codec->poll_events_hint() != 0);
+                real_recv(force);
             }
 
             if ((get_event() & EPOLLOUT) == EPOLLOUT) {
