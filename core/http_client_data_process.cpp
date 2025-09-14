@@ -116,14 +116,12 @@ void http_client_data_process::msg_recv_finish() {
     }
 #endif
 
-    // Stop all network threads so event loop exits.
-    // Using direct stop avoids timer routing edge-cases here.
-    base_thread::stop_all_thread();
+    // Do not stop all threads here; examples/tests may choose to end the
+    // event loop via timeout or their own completion hooks.
 }
 
 void http_client_data_process::handle_timeout(std::shared_ptr<timer_msg>& t_msg) {
     if (t_msg && t_msg->_timer_type == STOP_THREAD_TIMER_TYPE) {
-        base_thread::stop_all_thread();
         return;
     }
     http_base_data_process::handle_timeout(t_msg);

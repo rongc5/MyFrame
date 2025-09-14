@@ -288,7 +288,7 @@ size_t http2_client_process::process_recv_buf(const char* buf, size_t len) {
 #else
         if (_resp_body.size() < 1000) std::cout << "Response Body: " << _resp_body << std::endl;
 #endif
-        base_thread::stop_all_thread();
+        // Do not stop all threads automatically; allow the owner to decide.
     }
     return len;
 }

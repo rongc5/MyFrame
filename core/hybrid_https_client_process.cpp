@@ -134,9 +134,8 @@ size_t hybrid_https_client_process::process_http1_recv(const char* buf, size_t l
             size_t chunk = (size_t)strtoul(sz.c_str(), 0, 16);
             if (_h1_buf.size() < nl+2+chunk+2) break; // wait
             if (chunk == 0) {
-                // done
-                base_thread::stop_all_thread();
-                break;
+            // done (do not stop all threads; owner decides lifecycle)
+            break;
             }
             _h1_body.append(_h1_buf.data()+nl+2, chunk);
             _h1_buf.erase(0, nl+2+chunk+2);
@@ -147,7 +146,7 @@ size_t hybrid_https_client_process::process_http1_recv(const char* buf, size_t l
         _h1_body.append(_h1_buf.data(), take);
         _h1_buf.erase(0, take);
         if (_h1_body.size() >= _h1_content_length) {
-            base_thread::stop_all_thread();
+            // complete; owner can decide to stop threads or keep running
         }
     } else {
         // no length: read until close; nothing to do here
