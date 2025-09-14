@@ -29,8 +29,12 @@ class common_epoll
             const char* preset   = ::getenv("MYFRAME_PERF_PRESET");
             _epoll_size = (epoll_size == 0)?DAFAULT_EPOLL_SIZE:epoll_size;
             if (env_size) {
-                long v = atol(env_size); if (v > 0) _epoll_size = (uint32_t)v;
+                long v = atol(env_size);
+                if (v > 0) _epoll_size = (uint32_t)v;
             }
+            // Clamp epoll size to sane range
+            if (_epoll_size < 256) _epoll_size = 256;
+            if (_epoll_size > 65536) _epoll_size = 65536;
             _epoll_wait_time = epoll_wait_time;
             if (env_wait) {
                 int v = atoi(env_wait); if (v >= 0) _epoll_wait_time = v;
@@ -38,6 +42,10 @@ class common_epoll
                 // Recommended low-latency default when preset enabled
                 _epoll_wait_time = 1;
             }
+            if (_epoll_wait_time < 0) _epoll_wait_time = 0;
+            if (_epoll_wait_time > 1000) _epoll_wait_time = 1000;
+
+            PDEBUG("[epoll] size=%u wait_ms=%d (preset=%s)", _epoll_size, _epoll_wait_time, preset?preset:"off");
 
             _epoll_fd = epoll_create(_epoll_size);
             if (_epoll_fd == -1)
