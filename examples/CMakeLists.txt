@@ -82,6 +82,10 @@ target_link_libraries(demo_multi_thread_server ${COMMON_LIBS})
 add_executable(h2_server simple_h2_server.cpp)
 target_link_libraries(h2_server ${COMMON_LIBS})
 
+# HTTP Server Close Demo (graceful close after response)
+add_executable(http_server_close_demo http_server_close_demo.cpp)
+target_link_libraries(http_server_close_demo ${COMMON_LIBS})
+
 # WS benchmark client
 add_executable(ws_bench_client ws_bench_client.cpp)
 target_link_libraries(ws_bench_client ${COMMON_LIBS})
@@ -89,7 +93,7 @@ target_link_libraries(ws_bench_client ${COMMON_LIBS})
 # Always-present example targets
 set_target_properties(
     http_server https_server wss_server
-    h2_client http_out_client biz_http_client http_close_demo router_client router_biz_client client_conn_factory_example xproto_server xproto_client ws_bench_client
+    h2_client http_out_client biz_http_client http_close_demo http_server_close_demo router_client router_biz_client client_conn_factory_example xproto_server xproto_client ws_bench_client
     demo_multi_protocol_server demo_multi_thread_server h2_server
     PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
