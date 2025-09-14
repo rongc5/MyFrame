@@ -31,6 +31,13 @@ class base_data_process
 
         virtual void destroy();
 
+        // Request to close the underlying connection gracefully.
+        // These helpers schedule a DELAY_CLOSE timer which will be handled by
+        // base_connect::handle_timeout and trigger connection teardown via the
+        // container (ensuring epoll and maps are cleaned consistently).
+        void request_close_now();
+        void request_close_after(uint32_t delay_ms);
+
         // Whether this process currently wants to receive data from socket.
         // Default true; protocols can override to gate EPOLLIN handling
         // (e.g., HTTP client while still sending request).

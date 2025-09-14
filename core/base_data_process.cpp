@@ -92,3 +92,19 @@ void base_data_process::handle_timeout(std::shared_ptr<timer_msg> & t_msg)
 {
     PDEBUG("%p", this);
 }
+
+void base_data_process::request_close_after(uint32_t delay_ms)
+{
+    auto sp = _p_connect.lock();
+    if (!sp) return;
+    std::shared_ptr<timer_msg> t_msg(new timer_msg);
+    t_msg->_obj_id = sp->get_id()._id;
+    t_msg->_timer_type = DELAY_CLOSE_TIMER_TYPE;
+    t_msg->_time_length = delay_ms ? delay_ms : 1; // at least 1ms
+    add_timer(t_msg);
+}
+
+void base_data_process::request_close_now()
+{
+    request_close_after(1);
+}
