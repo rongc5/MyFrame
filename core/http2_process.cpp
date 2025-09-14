@@ -253,8 +253,8 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
             PDEBUG("[h2] RST_STREAM stream=%u reason=pseudo-after-regular", stream_id);
             return true;
         }
-        if (kv.first == ":method") { if (seen_method) { std::string rst = make_rst_stream(stream_id, PROTOCOL_ERROR); put_send_buf(new std::string(std::move(rst))); _streams.erase(stream_id); PDEBUG("[h2] RST_STREAM stream=%u reason=dup-:method", stream_id); return true; } st.method = kv.second; seen_method = true; }
-        else if (kv.first == ":path") { if (seen_path) { std::string rst = make_rst_stream(stream_id, PROTOCOL_ERROR); put_send_buf(new std::string(std::move(rst))); _streams.erase(stream_id); PDEBUG("[h2] RST_STREAM stream=%u reason=dup-:path", stream_id); return true; } st.path = kv.second; seen_path = true; }
+        if (kv.first == ":method") { if (seen_method) { std::string rst = make_rst_stream(stream_id, PROTOCOL_ERROR); put_send_move(std::move(rst)); _streams.erase(stream_id); PDEBUG("[h2] RST_STREAM stream=%u reason=dup-:method", stream_id); return true; } st.method = kv.second; seen_method = true; }
+        else if (kv.first == ":path") { if (seen_path) { std::string rst = make_rst_stream(stream_id, PROTOCOL_ERROR); put_send_move(std::move(rst)); _streams.erase(stream_id); PDEBUG("[h2] RST_STREAM stream=%u reason=dup-:path", stream_id); return true; } st.path = kv.second; seen_path = true; }
         else if (kv.first == ":authority") st.authority = kv.second;
         else if (!is_pseudo) st.headers[kv.first] = kv.second;
 #ifdef DEBUG
@@ -308,7 +308,7 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
         } else {
             if (st.path.empty()) {
                 std::string rst = make_rst_stream(stream_id, PROTOCOL_ERROR);
-                put_send_buf(new std::string(std::move(rst)));
+                put_send_move(std::move(rst));
                 _streams.erase(stream_id);
                 PDEBUG("[h2] RST_STREAM stream=%u reason=no-:path", stream_id);
                 return true;
