@@ -27,6 +27,9 @@ class base_data_process
         virtual void handle_timeout(std::shared_ptr<timer_msg> & t_msg);
 
         void put_send_buf(std::string * str);
+        // Helpers that leverage per-thread string pool
+        void put_send_copy(const std::string& data);
+        void put_send_move(std::string&& data);
 
         std::shared_ptr<base_net_obj>  get_base_net();
 

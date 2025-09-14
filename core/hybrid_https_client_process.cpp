@@ -86,8 +86,8 @@ void hybrid_https_client_process::enqueue_http1_request() {
     if (!_body.empty() && !has_ct) head += "Content-Type: application/octet-stream\r\n";
     if (!_body.empty() && !has_cl) { head += "Content-Length: "; head += std::to_string(_body.size()); head += "\r\n"; }
     head += "Connection: close\r\n\r\n";
-    put_send_buf(new std::string(head));
-    if (!_body.empty()) put_send_buf(new std::string(_body));
+    put_send_move(std::move(head));
+    if (!_body.empty()) put_send_copy(_body);
 }
 
 size_t hybrid_https_client_process::process_http1_recv(const char* buf, size_t len) {

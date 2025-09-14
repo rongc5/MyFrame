@@ -106,9 +106,9 @@ std::string http2_client_process::build_headers_block() const {
 void http2_client_process::enqueue_preface_and_request() {
     if (_enqueued) return; _enqueued = true;
     // 1) Connection preface
-    put_send_buf(new std::string(std::string(CONNECTION_PREFACE, CONNECTION_PREFACE_LEN)));
+    put_send_copy(std::string(CONNECTION_PREFACE, CONNECTION_PREFACE_LEN));
     // 2) SETTINGS (ENABLE_PUSH=0)
-    put_send_buf(new std::string(make_settings_frame(false)));
+    put_send_copy(make_settings_frame(false));
     // 3) HEADERS (stream 1)
     std::string blk = build_headers_block();
     uint8_t flags = 0x4 /*END_HEADERS*/ | (_body.empty()? 0x1 /*END_STREAM*/ : 0x0);
@@ -124,11 +124,15 @@ void http2_client_process::enqueue_preface_and_request() {
         }
         std::cout << (blk.size()>48?"...":"") << std::endl;
     }
-    put_send_buf(new std::string(hdr + blk));
+    {
+        std::string tmp = hdr + blk;
+        put_send_move(std::move(tmp));
+    }
     // 4) Optional DATA (single frame)
     if (!_body.empty()) {
         std::string data_hdr = make_frame_header((uint32_t)_body.size(), DATA, 0x1 /*END_STREAM*/, 1);
-        put_send_buf(new std::string(data_hdr + _body));
+        std::string tmp = data_hdr + _body;
+        put_send_move(std::move(tmp));
     }
     _sent_all = true;
 }
@@ -171,7 +175,7 @@ bool http2_client_process::parse_frames() {
             std::cout << "[h2] frame: len=" << len << " type=0x" << std::hex << (unsigned)type << std::dec << " flags=0x" << std::hex << (unsigned)flags << std::dec << " sid=" << sid << std::endl;
         }
         const unsigned char* payload = p + 9;
-        if (type == SETTINGS) { if ((flags & FLAGS_ACK) == 0) { put_send_buf(new std::string(make_settings_ack())); } }
+        if (type == SETTINGS) { if ((flags & FLAGS_ACK) == 0) { put_send_copy(make_settings_ack()); } }
         else if (type == HEADERS && sid == 1) {
             PDEBUG("[h2] HEADERS len=%u flags=0x%x sid=%u", len, flags, sid);
             if (!handle_headers_payload(payload, len, flags)) return false;
@@ -203,8 +207,8 @@ bool http2_client_process::parse_frames() {
                 // Accumulate credits and send WINDOW_UPDATE in batches
                 _conn_win_credits += remain;
                 _strm1_win_credits += remain;
-                if (_conn_win_credits >= _winupdate_threshold) { put_send_buf(new std::string(make_window_update(0, _conn_win_credits))); _conn_win_credits = 0; }
-                if (_strm1_win_credits >= _winupdate_threshold) { put_send_buf(new std::string(make_window_update(1, _strm1_win_credits))); _strm1_win_credits = 0; }
+                if (_conn_win_credits >= _winupdate_threshold) { put_send_copy(make_window_update(0, _conn_win_credits)); _conn_win_credits = 0; }
+                if (_strm1_win_credits >= _winupdate_threshold) { put_send_copy(make_window_update(1, _strm1_win_credits)); _strm1_win_credits = 0; }
             }
             if (flags & 0x1) { _response_done = true; }
         }
@@ -213,7 +217,7 @@ bool http2_client_process::parse_frames() {
                 // echo with ACK
                 std::string ack = make_frame_header(8, PING, FLAGS_ACK, 0);
                 ack.append((const char*)payload, 8);
-                put_send_buf(new std::string(ack));
+                put_send_move(std::move(ack));
             }
         }
         else if (type == GOAWAY) {
@@ -300,7 +304,7 @@ void http2_client_process::handle_timeout(std::shared_ptr<timer_msg>& t_msg) {
         std::string ping = make_frame_header(8, PING, 0, 0);
         const char opaque[8] = { 'm','y','f','r','a','m','e','1' };
         ping.append(opaque, 8);
-        put_send_buf(new std::string(ping));
+        put_send_move(std::move(ping));
         // reschedule
         std::shared_ptr<timer_msg> tp(new timer_msg); tp->_obj_id = 0; tp->_timer_type = H2_PING_TIMER_TYPE; tp->_time_length = _ping_interval_ms; add_timer(tp);
     } else if (t_msg->_timer_type == H2_TOTAL_TIMEOUT_TIMER_TYPE && !_response_done) {

@@ -1,6 +1,7 @@
 #include "base_net_obj.h"
 #include "base_data_process.h"
 #include "common_exception.h"
+#include "string_pool.h"
 
 
 
@@ -55,7 +56,7 @@ void base_data_process::handle_msg(std::shared_ptr<normal_msg> & p_msg)
 
 void base_data_process::clear_send_list()
 {
-    for (auto* ptr : _send_list) { delete ptr; }
+    for (auto* ptr : _send_list) { myframe::string_release(ptr); }
     _send_list.clear();
 }
 
@@ -67,6 +68,22 @@ void base_data_process::put_send_buf(std::string * str)
     {
         sp->notice_send();  
     }
+}
+
+void base_data_process::put_send_copy(const std::string& data)
+{
+    if (_closing) return;
+    std::string* s = myframe::string_acquire();
+    s->assign(data);
+    put_send_buf(s);
+}
+
+void base_data_process::put_send_move(std::string&& data)
+{
+    if (_closing) return;
+    std::string* s = myframe::string_acquire();
+    s->swap(data);
+    put_send_buf(s);
 }
 
 std::shared_ptr<base_net_obj>  base_data_process::get_base_net()

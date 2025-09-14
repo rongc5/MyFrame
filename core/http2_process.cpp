@@ -11,7 +11,7 @@ void http2_process::on_connected_once() {
     if (_sent_settings) return;
     // Send server SETTINGS (ENABLE_PUSH=0)
     std::string settings = make_settings_frame(false);
-    put_send_buf(new std::string(std::move(settings)));
+    put_send_move(std::move(settings));
     _sent_settings = true;
 }
 
@@ -43,7 +43,7 @@ bool http2_process::parse_frames(size_t& consumed) {
                 if (len % 6 != 0) {
                     // protocol error → GOAWAY
                     std::string go = make_goaway(0, FRAME_SIZE_ERROR, "bad settings len");
-                    put_send_buf(new std::string(std::move(go)));
+                    put_send_move(std::move(go));
                     throw CMyCommonException("http2: invalid SETTINGS length");
                 }
                 // parse settings
@@ -70,7 +70,7 @@ bool http2_process::parse_frames(size_t& consumed) {
                 pump_all_streams();
                 // reply ACK
                 std::string ack = make_settings_ack();
-                put_send_buf(new std::string(std::move(ack)));
+                put_send_move(std::move(ack));
                 _got_client_settings = true;
             }
         } else if (type == PING) {
@@ -79,7 +79,7 @@ bool http2_process::parse_frames(size_t& consumed) {
                 std::string hdr = make_frame_header(8, PING, FLAGS_ACK, 0);
                 std::string frame; frame.reserve(9+8);
                 frame += hdr; frame.append((const char*)payload, 8);
-                put_send_buf(new std::string(std::move(frame)));
+                put_send_move(std::move(frame));
             }
         } else if (type == PRIORITY) {
             if (sid == 0 || len < 5) throw CMyCommonException("http2: PRIORITY invalid");
@@ -134,8 +134,8 @@ bool http2_process::parse_frames(size_t& consumed) {
             if (remain > 0) {
                 std::string wu1 = make_window_update(0, remain);
                 std::string wu2 = make_window_update(sid, remain);
-                put_send_buf(new std::string(std::move(wu1)));
-                put_send_buf(new std::string(std::move(wu2)));
+                put_send_move(std::move(wu1));
+                put_send_move(std::move(wu2));
             }
         }
         off += 9 + len;
@@ -248,7 +248,7 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
         if (is_pseudo && seen_regular) {
             // Pseudo-header after regular header: RST_STREAM (stream-level error)
             std::string rst = make_rst_stream(stream_id, PROTOCOL_ERROR);
-            put_send_buf(new std::string(std::move(rst)));
+            put_send_move(std::move(rst));
             _streams.erase(stream_id);
             PDEBUG("[h2] RST_STREAM stream=%u reason=pseudo-after-regular", stream_id);
             return true;
@@ -270,7 +270,7 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
         for (char c : kvh.first) {
             if (c >= 'A' && c <= 'Z') {
                 std::string rst = make_rst_stream(stream_id, PROTOCOL_ERROR);
-                put_send_buf(new std::string(std::move(rst)));
+                put_send_move(std::move(rst));
                 _streams.erase(stream_id);
                 PDEBUG("[h2] RST_STREAM stream=%u reason=uppercase-header '%s'", stream_id, kvh.first.c_str());
                 return true;
@@ -279,7 +279,7 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
         for (const char* bad : kBadHdrs) {
             if (kvh.first == bad) {
                 std::string rst = make_rst_stream(stream_id, PROTOCOL_ERROR);
-                put_send_buf(new std::string(std::move(rst)));
+                put_send_move(std::move(rst));
                 _streams.erase(stream_id);
                 PDEBUG("[h2] RST_STREAM stream=%u reason=forbidden-header '%s'", stream_id, kvh.first.c_str());
                 return true;
@@ -293,14 +293,14 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
         if (m == "connect") {
             if (!st.path.empty()) {
                 std::string rst = make_rst_stream(stream_id, PROTOCOL_ERROR);
-                put_send_buf(new std::string(std::move(rst)));
+                put_send_move(std::move(rst));
                 _streams.erase(stream_id);
                 PDEBUG("[h2] RST_STREAM stream=%u reason=CONNECT-has-:path", stream_id);
                 return true;
             }
             if (st.authority.empty()) {
                 std::string rst = make_rst_stream(stream_id, PROTOCOL_ERROR);
-                put_send_buf(new std::string(std::move(rst)));
+                put_send_move(std::move(rst));
                 _streams.erase(stream_id);
                 PDEBUG("[h2] RST_STREAM stream=%u reason=CONNECT-no-:authority", stream_id);
                 return true;
@@ -369,7 +369,7 @@ void http2_process::send_response(uint32_t stream_id, const HttpResponse& rsp) {
     // HEADERS frame with END_HEADERS (use Huffman for strings), no END_STREAM here
     std::string hdr = make_frame_header((uint32_t)block.size(), HEADERS, FLAG_END_HEADERS, stream_id);
     std::string frame = hdr + block;
-    put_send_buf(new std::string(std::move(frame)));
+    put_send_move(std::move(frame));
 
     // If no body, send empty DATA with END_STREAM; else enqueue body and try to send within flow control windows
     StreamState& st = _streams[stream_id];
@@ -378,7 +378,7 @@ void http2_process::send_response(uint32_t stream_id, const HttpResponse& rsp) {
     st.send_window = (int32_t)_peer_initial_window_size;
     if (body.empty()) {
         std::string datahdr = make_frame_header(0, DATA, FLAG_END_STREAM, stream_id);
-        put_send_buf(new std::string(std::move(datahdr)));
+        put_send_move(std::move(datahdr));
     } else {
         st.out_body = std::move(body);
         st.out_off = 0;
@@ -435,7 +435,7 @@ uint32_t http2_process::try_send_data(uint32_t stream_id) {
         uint8_t fl = (st.out_off >= st.out_body.size()) ? FLAG_END_STREAM : 0;
         std::string hdr = make_frame_header(chunk, DATA, fl, stream_id);
         std::string frame = hdr + payload;
-        put_send_buf(new std::string(std::move(frame)));
+        put_send_move(std::move(frame));
 #ifdef DEBUG
         PDEBUG("[h2] SEND DATA stream=%u chunk=%u conn_win=%d stream_win=%d end=%d", stream_id, chunk, _conn_send_window, st.send_window, fl ? 1 : 0);
 #endif
