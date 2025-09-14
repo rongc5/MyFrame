@@ -40,6 +40,10 @@ class base_net_obj: public std::enable_shared_from_this<base_net_obj>
 
         virtual void destroy();
 
+        // Activity hint for idle-skip. Updated on IO and event processing.
+        void touch_active(uint64_t now_ms);
+        uint64_t last_active_ms() const { return _last_active_ms; }
+
         // Hint for the container whether this object wants a tick outside of
         // epoll events (e.g., TLS handshake progress or pending writes).
         // Default: when EPOLLOUT is armed.
@@ -59,6 +63,7 @@ class base_net_obj: public std::enable_shared_from_this<base_net_obj>
         std::vector<std::shared_ptr<timer_msg> > _timer_vec;
 
         net_addr _peer_net;
+        uint64_t _last_active_ms{0};
 };
 
 

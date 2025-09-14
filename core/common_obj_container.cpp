@@ -192,6 +192,8 @@ void common_obj_container::handle_msg(uint32_t obj_id, std::shared_ptr<normal_ms
 void common_obj_container::obj_process()
 {   
     uint32_t tmp_num = 0;
+    uint64_t now = GetMilliSecond();
+    uint32_t idle_skip_ms = 0; if (const char* e = ::getenv("MYFRAME_IDLE_SKIP_MS")) { int v = atoi(e); if (v > 0) idle_skip_ms = (uint32_t)v; }
 
     std::vector<std::shared_ptr<base_net_obj> > exception_vec;
     std::vector<std::shared_ptr<base_net_obj> > real_net_vec;
@@ -201,7 +203,7 @@ void common_obj_container::obj_process()
         try
         {
             // Only tick objects that declare interest (e.g., TLS handshake or pending write)
-            if (u.second->wants_tick()) {
+            if (u.second->wants_tick() || (idle_skip_ms && (now - u.second->last_active_ms() < idle_skip_ms))) {
                 u.second->real_net_process();
             }
             if (!u.second->get_real_net()) {

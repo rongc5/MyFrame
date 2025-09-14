@@ -19,6 +19,7 @@ base_net_obj::base_net_obj()
         ;
     _p_net_container = NULL;
     _real_net = false;
+    _last_active_ms = GetMilliSecond();
 }
 
 base_net_obj::~base_net_obj()
@@ -136,6 +137,11 @@ void base_net_obj::notice_send()
 
 void base_net_obj::destroy()
 {
+}
+
+void base_net_obj::touch_active(uint64_t now_ms)
+{
+    _last_active_ms = now_ms;
 }
 
 void base_net_obj::add_timer(std::shared_ptr<timer_msg> & t_msg)

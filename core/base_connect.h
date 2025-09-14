@@ -52,12 +52,14 @@ class base_connect:public base_net_obj
 
             if ((event & EPOLLIN) == EPOLLIN) //读
             {
+                touch_active(GetMilliSecond());
                 real_recv();
             }
 
             if ((event & EPOLLOUT) == EPOLLOUT ) //写
             {
                 if (_codec) { _codec->on_writable_event(); }
+                touch_active(GetMilliSecond());
                 real_send();
             }	
         }
@@ -262,6 +264,7 @@ class base_connect:public base_net_obj
                 if (ret > 0){
                     _recv_buf.append(t_buf, ret);
                     _recv_buf_len += ret;
+                    touch_active(GetMilliSecond());
                 }
             }
 
@@ -350,6 +353,7 @@ class base_connect:public base_net_obj
                 THROW_COMMON_EXCEPT("sendv error " << strError(errno).c_str());
             }
             size_t left = (size_t)wr;
+            if (left > 0) touch_active(GetMilliSecond());
             // Consume from _p_send_buf then pending
             if (_p_send_buf && left > 0) {
                 size_t blen = _p_send_buf->size();
