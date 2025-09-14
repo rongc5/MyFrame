@@ -10,6 +10,8 @@
 #include "codec.h"
 #include "protocol_detect_process.h"
 #include <memory>
+#include <deque>
+#include <sys/uio.h>
 
 template<class PROCESS>
 class base_connect:public base_net_obj
@@ -275,44 +277,95 @@ class base_connect:public base_net_obj
 
         void real_send()
         {
-            int i = 0;
-            while (1)
-            {
-                if (i >= MAX_SEND_NUM)
-                    break;
-
-                if (!_p_send_buf)
-                {
-                    std::string* next = _process->get_send_buf();
-                    if (next) _p_send_buf.reset(next);
-                }
-
-                if (!_p_send_buf) {
-                    update_event(get_event() & ~EPOLLOUT);
-                    break;
-                }
-
-                i++;
-
-                size_t _send_buf_len = _p_send_buf->length();
-                if (_p_send_buf && _send_buf_len)
-                {
-                    ssize_t ret = SEND(_p_send_buf->c_str(), _send_buf_len);				
-                    if (ret == (ssize_t)_send_buf_len)
-                    {
-                        _p_send_buf.reset();
+            // If SSL or custom codec is installed, fall back to single-buffer SEND path
+            if (_codec) {
+                int i = 0;
+                while (1) {
+                    if (i >= MAX_SEND_NUM) break;
+                    if (!_p_send_buf) {
+                        std::string* next = _process->get_send_buf();
+                        if (next) _p_send_buf.reset(next);
                     }
-                    else if (ret > 0)
-                    {
-                        _p_send_buf->erase(0, ret);
-                        PDEBUG("_p_send_buf erase %zd", ret);
+                    if (!_p_send_buf) { update_event(get_event() & ~EPOLLOUT); break; }
+                    i++;
+                    size_t len = _p_send_buf->length();
+                    if (len) {
+                        ssize_t ret = SEND(_p_send_buf->c_str(), len);
+                        if (ret == (ssize_t)len) { _p_send_buf.reset(); }
+                        else if (ret > 0) { _p_send_buf->erase(0, ret); PDEBUG("_p_send_buf erase %zd", ret); }
                     }
+                    if (_p_send_buf && !_p_send_buf->length()) { _p_send_buf.reset(); }
                 }
+                return;
+            }
 
-                if (_p_send_buf && !_p_send_buf->length())
-                {
-                    _p_send_buf.reset();
+            // Aggregated writev path (plain TCP)
+            const int MAX_IOV = 16;
+            const size_t MAX_BATCH = 64 * 1024; // 64KB per batch
+            // Ensure we have a current buffer
+            if (!_p_send_buf) {
+                if (auto* next = _process->get_send_buf()) _p_send_buf.reset(next);
+            }
+            if (!_p_send_buf && _pending_send.empty()) {
+                update_event(get_event() & ~EPOLLOUT);
+                return;
+            }
+
+            // Try to top up pending from process
+            while ((int)_pending_send.size() + (_p_send_buf ? 1 : 0) < MAX_IOV) {
+                std::string* nxt = _process->get_send_buf();
+                if (!nxt) break;
+                _pending_send.emplace_back(nxt);
+            }
+
+            // Build iovec array
+            struct iovec iov[MAX_IOV]; int iovcnt = 0; size_t total = 0;
+            if (_p_send_buf && !_p_send_buf->empty()) {
+                iov[iovcnt].iov_base = (void*)_p_send_buf->data();
+                iov[iovcnt].iov_len  = _p_send_buf->size();
+                total += iov[iovcnt].iov_len; iovcnt++;
+            }
+            for (size_t i=0; i<_pending_send.size() && iovcnt < MAX_IOV; ++i) {
+                auto& sp = _pending_send[i]; if (!sp || sp->empty()) continue;
+                iov[iovcnt].iov_base = (void*)sp->data();
+                iov[iovcnt].iov_len  = sp->size();
+                total += iov[iovcnt].iov_len; iovcnt++;
+                if (total >= MAX_BATCH) break;
+            }
+            if (iovcnt == 0) { update_event(get_event() & ~EPOLLOUT); return; }
+
+            ssize_t wr = ::writev(_fd, iov, iovcnt);
+            if (wr < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // keep EPOLLOUT
+                    return;
                 }
+                THROW_COMMON_EXCEPT("sendv error " << strError(errno).c_str());
+            }
+            size_t left = (size_t)wr;
+            // Consume from _p_send_buf then pending
+            if (_p_send_buf && left > 0) {
+                size_t blen = _p_send_buf->size();
+                if (left >= blen) { left -= blen; _p_send_buf.reset(); }
+                else { _p_send_buf->erase(0, left); left = 0; }
+            }
+            // consume from pending deque
+            while (left > 0 && !_pending_send.empty()) {
+                auto& front = _pending_send.front();
+                size_t blen = front->size();
+                if (left >= blen) { left -= blen; _pending_send.pop_front(); }
+                else { front->erase(0, left); left = 0; }
+            }
+            // Move partially-consumed first pending to _p_send_buf if needed
+            if (!_p_send_buf && !_pending_send.empty()) {
+                if (!_pending_send.front()->empty()) {
+                    _p_send_buf = std::move(_pending_send.front());
+                }
+                _pending_send.pop_front();
+            }
+            // If nothing left, clear EPOLLOUT
+            if (!_p_send_buf && _pending_send.empty()) {
+                update_event(get_event() & ~EPOLLOUT);
             }
         }
 
@@ -321,6 +374,7 @@ class base_connect:public base_net_obj
         std::unique_ptr<std::string> _p_send_buf;
         std::unique_ptr<PROCESS> _process;
         std::unique_ptr<ICodec> _codec;
+        std::deque<std::unique_ptr<std::string>> _pending_send;
 
     public:
         void set_codec(std::unique_ptr<ICodec> codec) { _codec = std::move(codec); }
