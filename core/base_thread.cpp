@@ -47,16 +47,21 @@ void * base_thread::base_thread_proc(void *arg)
 {
     base_thread *p = (base_thread*)arg;
 #ifdef __linux__
-    // Optional CPU affinity: MYFRAME_THREAD_AFFINITY=1 enables binding
-    if (const char* env = ::getenv("MYFRAME_THREAD_AFFINITY")) {
-        if (strcmp(env, "1") == 0 || strcasecmp(env, "true") == 0) {
+    // Optional CPU affinity: enabled if MYFRAME_THREAD_AFFINITY=1 or MYFRAME_PERF_PRESET=1
+    auto want_on = [](){
+        const char* env = ::getenv("MYFRAME_THREAD_AFFINITY");
+        if (env && (strcmp(env, "1") == 0 || strcasecmp(env, "true") == 0)) return true;
+        const char* preset = ::getenv("MYFRAME_PERF_PRESET");
+        if (preset && (strcmp(preset, "0") != 0 && strcasecmp(preset, "false") != 0)) return true;
+        return false;
+    }();
+    if (want_on) {
             long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
             if (ncpu > 0) {
                 int core = (int)((p->get_thread_index() - 1) % ncpu);
                 cpu_set_t set; CPU_ZERO(&set); CPU_SET(core, &set);
                 pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
             }
-        }
     }
 #endif
     return p->run();

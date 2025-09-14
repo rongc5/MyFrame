@@ -194,6 +194,7 @@ void common_obj_container::obj_process()
     uint32_t tmp_num = 0;
     uint64_t now = GetMilliSecond();
     uint32_t idle_skip_ms = 0; if (const char* e = ::getenv("MYFRAME_IDLE_SKIP_MS")) { int v = atoi(e); if (v > 0) idle_skip_ms = (uint32_t)v; }
+    if (!idle_skip_ms) { const char* preset = ::getenv("MYFRAME_PERF_PRESET"); if (preset && (strcmp(preset, "0") != 0 && strcasecmp(preset, "false") != 0)) idle_skip_ms = 50; }
 
     std::vector<std::shared_ptr<base_net_obj> > exception_vec;
     std::vector<std::shared_ptr<base_net_obj> > real_net_vec;

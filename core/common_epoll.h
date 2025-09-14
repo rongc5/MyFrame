@@ -26,6 +26,7 @@ class common_epoll
             // Allow override by environment variables
             const char* env_size = ::getenv("MYFRAME_EPOLL_SIZE");
             const char* env_wait = ::getenv("MYFRAME_EPOLL_WAIT_MS");
+            const char* preset   = ::getenv("MYFRAME_PERF_PRESET");
             _epoll_size = (epoll_size == 0)?DAFAULT_EPOLL_SIZE:epoll_size;
             if (env_size) {
                 long v = atol(env_size); if (v > 0) _epoll_size = (uint32_t)v;
@@ -33,6 +34,9 @@ class common_epoll
             _epoll_wait_time = epoll_wait_time;
             if (env_wait) {
                 int v = atoi(env_wait); if (v >= 0) _epoll_wait_time = v;
+            } else if (preset && (strcmp(preset, "0") != 0 && strcasecmp(preset, "false") != 0)) {
+                // Recommended low-latency default when preset enabled
+                _epoll_wait_time = 1;
             }
 
             _epoll_fd = epoll_create(_epoll_size);
