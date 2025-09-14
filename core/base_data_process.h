@@ -56,6 +56,7 @@ class base_data_process
     protected:
         std::weak_ptr<base_net_obj> _p_connect;
         std::list<std::string*> _send_list;
+        bool _closing{false};
 };
 
 #endif

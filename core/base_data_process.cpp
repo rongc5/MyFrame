@@ -65,6 +65,7 @@ void base_data_process::clear_send_list()
 
 void base_data_process::put_send_buf(std::string * str)
 {
+    if (_closing) { delete str; return; }
     _send_list.push_back(str);
     if (auto sp = _p_connect.lock())
     {
@@ -80,6 +81,7 @@ std::shared_ptr<base_net_obj>  base_data_process::get_base_net()
 void base_data_process::destroy()
 {
     PDEBUG("%p", this);
+    _closing = true;
 }
 
 void base_data_process::add_timer(std::shared_ptr<timer_msg> & t_msg)
@@ -98,6 +100,8 @@ void base_data_process::request_close_after(uint32_t delay_ms)
 {
     auto sp = _p_connect.lock();
     if (!sp) return;
+    if (_closing) return;
+    _closing = true;
     std::shared_ptr<timer_msg> t_msg(new timer_msg);
     t_msg->_obj_id = sp->get_id()._id;
     t_msg->_timer_type = DELAY_CLOSE_TIMER_TYPE;
@@ -112,6 +116,7 @@ void base_data_process::request_close_now()
 
 [[noreturn]] void base_data_process::close_now()
 {
+    if (!_closing) _closing = true;
     // Mirror the peer-close exception path to trigger container teardown:
     // - common_obj_container catches the exception
     // - calls destroy() on the net object (process-level cleanup)
