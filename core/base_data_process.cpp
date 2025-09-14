@@ -1,5 +1,6 @@
 #include "base_net_obj.h"
 #include "base_data_process.h"
+#include "common_exception.h"
 
 
 
@@ -107,4 +108,13 @@ void base_data_process::request_close_after(uint32_t delay_ms)
 void base_data_process::request_close_now()
 {
     request_close_after(1);
+}
+
+[[noreturn]] void base_data_process::close_now()
+{
+    // Mirror the peer-close exception path to trigger container teardown:
+    // - common_obj_container catches the exception
+    // - calls destroy() on the net object (process-level cleanup)
+    // - erases the object from maps; base_net_obj dtor removes epoll and closes fd
+    THROW_COMMON_EXCEPT("process requested close");
 }

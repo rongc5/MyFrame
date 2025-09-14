@@ -38,6 +38,13 @@ class base_data_process
         void request_close_now();
         void request_close_after(uint32_t delay_ms);
 
+        // Immediate close: throw an exception up to the event loop so the
+        // container executes the standard teardown path (destroy + erase),
+        // which removes the fd from epoll and closes it in base_net_obj dtor.
+        // Call this from within event-driven contexts (e.g., process_recv_buf,
+        // handle_msg, msg_recv_finish) to immediately drop the connection.
+        [[noreturn]] void close_now();
+
         // Whether this process currently wants to receive data from socket.
         // Default true; protocols can override to gate EPOLLIN handling
         // (e.g., HTTP client while still sending request).
