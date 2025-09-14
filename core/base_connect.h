@@ -133,6 +133,11 @@ class base_connect:public base_net_obj
             _process->handle_msg(p_msg);
         }
 
+        virtual bool wants_tick() const override {
+            if (_codec && _codec->poll_events_hint() != 0) return true;
+            return (_epoll_event & EPOLLOUT) == EPOLLOUT;
+        }
+
     protected:
         virtual int RECV(void *buf, size_t len)
         {

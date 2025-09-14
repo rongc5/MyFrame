@@ -40,6 +40,11 @@ class base_net_obj: public std::enable_shared_from_this<base_net_obj>
 
         virtual void destroy();
 
+        // Hint for the container whether this object wants a tick outside of
+        // epoll events (e.g., TLS handshake progress or pending writes).
+        // Default: when EPOLLOUT is armed.
+        virtual bool wants_tick() const { return (_epoll_event & EPOLLOUT) == EPOLLOUT; }
+
         net_addr & get_peer_addr();
 
     protected:
@@ -59,4 +64,3 @@ class base_net_obj: public std::enable_shared_from_this<base_net_obj>
 
 
 #endif
-

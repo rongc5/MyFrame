@@ -200,7 +200,10 @@ void common_obj_container::obj_process()
     {
         try
         {
-            u.second->real_net_process();            
+            // Only tick objects that declare interest (e.g., TLS handshake or pending write)
+            if (u.second->wants_tick()) {
+                u.second->real_net_process();
+            }
             if (!u.second->get_real_net()) {
                 real_net_vec.push_back(u.second);
             }
