@@ -1,4 +1,8 @@
 #include "base_thread.h"
+#include <unistd.h>
+#ifdef __linux__
+#include <sched.h>
+#endif
 
 
 base_thread::base_thread():_thread_id(0), _run_flag(true)
@@ -42,6 +46,19 @@ bool base_thread::stop()
 void * base_thread::base_thread_proc(void *arg)
 {
     base_thread *p = (base_thread*)arg;
+#ifdef __linux__
+    // Optional CPU affinity: MYFRAME_THREAD_AFFINITY=1 enables binding
+    if (const char* env = ::getenv("MYFRAME_THREAD_AFFINITY")) {
+        if (strcmp(env, "1") == 0 || strcasecmp(env, "true") == 0) {
+            long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+            if (ncpu > 0) {
+                int core = (int)((p->get_thread_index() - 1) % ncpu);
+                cpu_set_t set; CPU_ZERO(&set); CPU_SET(core, &set);
+                pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+            }
+        }
+    }
+#endif
     return p->run();
 }
 
