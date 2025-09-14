@@ -20,6 +20,9 @@ class http_req_process:public http_base_process
 
 		void peer_close();
 
+        // Only receive after request fully sent (RECV_* phases)
+        virtual bool want_recv() const override { return _http_status <= RECV_BODY; }
+
     protected:
         virtual size_t process_recv_body(const char *buf, size_t len, int &result);
 
@@ -45,4 +48,3 @@ class http_req_process:public http_base_process
 
 
 #endif
-

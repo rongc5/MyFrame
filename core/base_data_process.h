@@ -31,6 +31,11 @@ class base_data_process
 
         virtual void destroy();
 
+        // Whether this process currently wants to receive data from socket.
+        // Default true; protocols can override to gate EPOLLIN handling
+        // (e.g., HTTP client while still sending request).
+        virtual bool want_recv() const { return true; }
+
     protected:
         void clear_send_list();
 
@@ -40,4 +45,3 @@ class base_data_process
 };
 
 #endif
-

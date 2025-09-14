@@ -20,7 +20,7 @@ size_t channel_data_process::process_recv_buf(const char *buf, size_t len)
         std::lock_guard<std::mutex> lck (_mutex);
         que.swap(_queue);
     }
-    PDEBUG("buf:%s, len:%d, que.len:%d", buf, len, que.size());
+    PDEBUG("buf:%s, len:%zu, que.len:%zu", buf, len, que.size());
 
     size_t i = 0;
     auto sp = _p_connect.lock();

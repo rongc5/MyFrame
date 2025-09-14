@@ -184,6 +184,11 @@ const int URLESCAPE[] =
 #define DOMAIN_CACHE_TIMER_TYPE 5
 #define NONE_DATA_TIMER_TYPE 6
 #define NONE_CHANNEL_EVENT_TIMER_TYPE 7
+// Client-helper timer: used by examples to stop threads gracefully
+#define STOP_THREAD_TIMER_TYPE 8
+// HTTP/2 client timers
+#define H2_PING_TIMER_TYPE 9
+#define H2_TOTAL_TIMEOUT_TIMER_TYPE 10
 
 #ifdef DEBUG
 #define PDEBUG(format, arg...) \

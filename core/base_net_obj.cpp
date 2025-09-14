@@ -11,7 +11,12 @@
 base_net_obj::base_net_obj()
 {
     _fd = 0;
-    _epoll_event = EPOLLIN | EPOLLERR | EPOLLHUP;
+    // Monitor read, hangups, and remote half-close by default
+    _epoll_event = EPOLLIN | EPOLLERR | EPOLLHUP
+#ifdef EPOLLRDHUP
+        | EPOLLRDHUP
+#endif
+        ;
     _p_net_container = NULL;
     _real_net = false;
 }
@@ -19,9 +24,15 @@ base_net_obj::base_net_obj()
 base_net_obj::~base_net_obj()
 {
 
-    common_epoll * p_epoll = _p_net_container->get_epoll();
-    if (p_epoll) {
-        p_epoll->del_from_epoll(this);
+    try {
+        if (_p_net_container) {
+            common_epoll * p_epoll = _p_net_container->get_epoll();
+            if (p_epoll) {
+                p_epoll->del_from_epoll(this);
+            }
+        }
+    } catch (...) {
+        // Best-effort cleanup during teardown; ignore epoll removal errors
     }
 
     _epoll_event = 0;
@@ -41,7 +52,10 @@ void base_net_obj::set_net_container(common_obj_container *p_net_container)
     std::shared_ptr<base_net_obj> p=std::dynamic_pointer_cast<base_net_obj>(shared_from_this());
 
     try {
-        p_epoll->add_to_epoll(p.get());
+        // Only add to epoll when we have a valid socket fd
+        if (_fd > 0) {
+            p_epoll->add_to_epoll(p.get());
+        }
         _p_net_container->insert(p);
         add_timer();
     }
@@ -66,10 +80,10 @@ void base_net_obj::set_real_net(bool real_net)
     if (_real_net) {
     std::shared_ptr<base_net_obj> p=std::dynamic_pointer_cast<base_net_obj>(shared_from_this());
         //PDEBUG("base_net_obj:%d, .use_count:%d, _id:%d, _thread_index:%d", p, p.use_count(), p->get_id()._id, p->get_id()._thread_index);
-        PDEBUG(".use_count:%d, _id:%d, _thread_index:%d", p.use_count(), p->get_id()._id, p->get_id()._thread_index);
+        PDEBUG(".use_count:%ld, _id:%d, _thread_index:%d", (long)p.use_count(), p->get_id()._id, p->get_id()._thread_index);
         _p_net_container->push_real_net(p);
         //PDEBUG("base_net_obj:%d, .use_count:%d, _id:%d, _thread_index:%d", p, p.use_count(), p->get_id()._id, p->get_id()._thread_index);
-        PDEBUG(".use_count:%d, _id:%d, _thread_index:%d", p.use_count(), p->get_id()._id, p->get_id()._thread_index);
+        PDEBUG(".use_count:%ld, _id:%d, _thread_index:%d", (long)p.use_count(), p->get_id()._id, p->get_id()._thread_index);
     }
 }
 

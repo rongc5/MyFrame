@@ -20,6 +20,10 @@ struct ssl_config {
     bool _verify_peer = false;
     std::string _ca_file; // optional CA bundle for client verification
     std::string _cipher_list; // optional cipher list
+    // Optional session settings
+    bool _enable_session_cache{true};
+    long _session_cache_size{4096};
+    bool _enable_tickets{true};
 };
 
 void tls_set_server_config(const ssl_config& conf);
@@ -70,6 +74,35 @@ public:
         }
         if (!conf._cipher_list.empty()) {
             if (SSL_CTX_set_cipher_list(_ctx, conf._cipher_list.c_str()) != 1) { ERR_print_errors_fp(stderr); return false; }
+        }
+        // Session cache and tickets (reduce handshake cost)
+        {
+            bool enable_cache = conf._enable_session_cache; long cache_sz = conf._session_cache_size;
+            bool enable_tickets = conf._enable_tickets;
+            // Env overrides: MYFRAME_SSL_SESS_CACHE(1/0), MYFRAME_SSL_SESS_CACHE_SIZE, MYFRAME_SSL_TICKETS(1/0)
+            if (const char* e = ::getenv("MYFRAME_SSL_SESS_CACHE")) {
+                enable_cache = (strcmp(e, "0") != 0 && strcasecmp(e, "false") != 0);
+            }
+            if (const char* e = ::getenv("MYFRAME_SSL_SESS_CACHE_SIZE")) {
+                long v = atol(e); if (v > 0) cache_sz = v;
+            }
+            if (const char* e = ::getenv("MYFRAME_SSL_TICKETS")) {
+                enable_tickets = (strcmp(e, "0") != 0 && strcasecmp(e, "false") != 0);
+            }
+            if (enable_cache) {
+                SSL_CTX_set_session_cache_mode(_ctx, SSL_SESS_CACHE_SERVER);
+                SSL_CTX_sess_set_cache_size(_ctx, cache_sz);
+            } else {
+                SSL_CTX_set_session_cache_mode(_ctx, SSL_SESS_CACHE_OFF);
+            }
+#ifdef SSL_OP_NO_TICKET
+            if (!enable_tickets) {
+                SSL_CTX_set_options(_ctx, SSL_OP_NO_TICKET);
+            } else {
+                // Ensure tickets not disabled
+                SSL_CTX_clear_options(_ctx, SSL_OP_NO_TICKET);
+            }
+#endif
         }
         // 启用 ALPN，优先 h2 回退 http/1.1；可由环境限制
         _allow_h2 = true; _allow_h11 = true;

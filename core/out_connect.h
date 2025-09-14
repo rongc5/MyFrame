@@ -37,37 +37,60 @@ class out_connect:public base_connect<PROCESS>
 
         void connect()
         {
-            base_net_obj::_fd = socket(AF_INET, SOCK_STREAM, 0);
-            if (base_net_obj::_fd == -1)
+            // Resolve host (supports domain/IP, IPv4/IPv6), attempt non-blocking connect
+            struct addrinfo hints; memset(&hints, 0, sizeof(hints));
+            hints.ai_family = AF_UNSPEC; // IPv4 or IPv6
+            hints.ai_socktype = SOCK_STREAM;
+            struct addrinfo* res = nullptr;
+            char portbuf[16]; snprintf(portbuf, sizeof(portbuf), "%hu", _port);
+            int gai = getaddrinfo(_ip.c_str(), portbuf, &hints, &res);
+            if (gai != 0 || !res)
             {
-                THROW_COMMON_EXCEPT("create sock fail " << strError(errno).c_str());
+                THROW_COMMON_EXCEPT(std::string("getaddrinfo fail: ") + gai_strerror(gai));
             }
 
-            set_unblock(base_net_obj::_fd);
-
-            sockaddr_in address;
-            memset((char *) &address, 0, sizeof(address));
-            address.sin_family = AF_INET;
-            address.sin_port = htons(_port);
-            inet_aton(_ip.c_str(), &address.sin_addr);
-
-            int ret = ::connect(base_net_obj::_fd, (sockaddr*)&address, sizeof(address));
-            if (ret != 0)
+            int fd = -1; int last_err = 0; bool in_progress = false;
+            for (auto p = res; p; p = p->ai_next)
             {
-                if (errno != EINPROGRESS && errno != EALREADY)
+                fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+                if (fd < 0) { last_err = errno; continue; }
+                set_unblock(fd);
+                int ret = ::connect(fd, p->ai_addr, p->ai_addrlen);
+                if (ret == 0)
                 {
-                    PDEBUG("connect fail:%s", strError(errno).c_str());
-                    return;
+                    // Connected immediately
+                    in_progress = false; break;
                 }
+                if (errno == EINPROGRESS || errno == EALREADY)
+                {
+                    in_progress = true; break;
+                }
+                last_err = errno; ::close(fd); fd = -1;
             }
-            out_connect<PROCESS>::_epoll_event = out_connect<PROCESS>::_epoll_event | EPOLLOUT;
-            _status = CONNECTING;
+            freeaddrinfo(res);
+            if (fd < 0)
+            {
+                THROW_COMMON_EXCEPT("connect fail: " << strError(last_err).c_str());
+            }
+
+            base_net_obj::_fd = fd;
+            // Ensure we are registered/updated on epoll with writable interest
+            this->update_event(this->get_event() | EPOLLOUT);
+            _status = in_progress ? CONNECTING : CONNECT_OK;
+            if (_status == CONNECT_OK)
+            {
+                connect_ok_process();
+            }
         }
 
+        // During non-blocking connect, we still must register/update
+        // the socket with epoll (typically to watch EPOLLOUT for
+        // connect completion). The previous gate suppressed updates
+        // while CONNECTING, causing the fd to never be added to epoll
+        // and the connection to hang forever.
         virtual void update_event(int event)
         {
-            if (_status == CONNECT_OK)
-                base_connect<PROCESS>::update_event(event);
+            base_connect<PROCESS>::update_event(event);
         }
 
         virtual void event_process(int event)
@@ -79,32 +102,17 @@ class out_connect:public base_connect<PROCESS>
 
             if (_status == CONNECTING)
             {
-                if ((event & EPOLLIN) == EPOLLIN && (event & EPOLLOUT) == EPOLLOUT) //
-                {
-                    int ret = recv(base_net_obj::_fd, NULL, 0, MSG_DONTWAIT);
-                    if (ret == 0)
-                    {
-                        _status = CONNECT_OK;
-                        connect_ok_process();
-                    }
-                    else
-                    {
-                        THROW_COMMON_EXCEPT("connect  can read and can write, error");
-                    }				
+                // Robust completion check via SO_ERROR regardless of specific events
+                int err = 0; socklen_t elen = sizeof(err);
+                if (getsockopt(base_net_obj::_fd, SOL_SOCKET, SO_ERROR, &err, &elen) < 0) {
+                    err = errno;
                 }
-                else if ((event & EPOLLOUT) == EPOLLOUT) //
-                {
+                if (err == 0) {
                     PDEBUG("connect ok %s:%d", _ip.c_str(), _port);
                     _status = CONNECT_OK;
                     connect_ok_process();
-                }
-                else if ((event & EPOLLIN) == EPOLLIN) //
-                {
-                    THROW_COMMON_EXCEPT("connect only can read, error");
-                }
-                else
-                {
-                    THROW_COMMON_EXCEPT("connect  error ");
+                } else {
+                    THROW_COMMON_EXCEPT(std::string("connect failed after epoll: ") + strError(err));
                 }
             }
             else 

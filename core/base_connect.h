@@ -39,7 +39,11 @@ class base_connect:public base_net_obj
 
         virtual void event_process(int event)
         {
-            if ((event & EPOLLERR) == EPOLLERR || (event & EPOLLHUP) == EPOLLHUP)
+            if ((event & EPOLLERR) == EPOLLERR || (event & EPOLLHUP) == EPOLLHUP
+#ifdef EPOLLRDHUP
+                || (event & EPOLLRDHUP) == EPOLLRDHUP
+#endif
+            )
             {
                 THROW_COMMON_EXCEPT("epoll error "<< strError(errno).c_str());
             }
@@ -210,6 +214,12 @@ class base_connect:public base_net_obj
 
         void real_recv(int flag = false)
         {
+            // If protocol doesn't want to receive, and there is no codec
+            // that may still need read events (e.g., TLS handshake), skip.
+            if (_process && !_process->want_recv() && !_codec) {
+                // Protocol not ready to receive (e.g., HTTP client still sending)
+                return;
+            }
             size_t _recv_buf_len = _recv_buf.length();
             size_t tmp_len = MAX_RECV_SIZE - _recv_buf_len; 	
             ssize_t ret = 0;
@@ -248,7 +258,7 @@ class base_connect:public base_net_obj
 
             if (_recv_buf_len > 0 || flag)
             {
-                PDEBUG("process_recv_buf _recv_buf_len[%d] fd[%d], flag[%d]", _recv_buf_len, _fd, flag);
+                PDEBUG("process_recv_buf _recv_buf_len[%zu] fd[%d], flag[%d]", _recv_buf_len, _fd, flag);
                 p_ret = _process->process_recv_buf(_recv_buf.data(), _recv_buf_len);
                 if (p_ret && p_ret <= _recv_buf_len)
                 {
@@ -260,7 +270,7 @@ class base_connect:public base_net_obj
                 }
             }		
 
-            PDEBUG("process_recv_buf _recv_buf[%d] ip[%s] flag[%d]", _recv_buf.length(), _peer_net.ip.c_str(), flag);
+            PDEBUG("process_recv_buf _recv_buf[%zu] ip[%s] flag[%d]", _recv_buf.length(), _peer_net.ip.c_str(), flag);
         }
 
         void real_send()
@@ -295,7 +305,7 @@ class base_connect:public base_net_obj
                     else if (ret > 0)
                     {
                         _p_send_buf->erase(0, ret);
-                        PDEBUG("_p_send_buf erase %d", ret);
+                        PDEBUG("_p_send_buf erase %zd", ret);
                     }
                 }
 

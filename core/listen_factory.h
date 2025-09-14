@@ -35,6 +35,12 @@ public:
             _listen_proc->set_business_factory(_biz_factory.get());
             for (auto idx : _worker_indices) _listen_proc->add_worker_thread(idx);
         }
+
+        // 重要：为监听线程上的业务工厂设置容器，确保在单线程场景下
+        // 接受的连接可直接由该线程上的工厂处理（避免 container 为空）。
+        if (_biz_factory) {
+            _biz_factory->net_thread_init(th);
+        }
     }
 
     void handle_thread_msg(std::shared_ptr<normal_msg>& msg) override {

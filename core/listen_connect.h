@@ -52,10 +52,14 @@ class listen_connect:public base_net_obj
                 THROW_COMMON_EXCEPT("bind error "  << strError(errno).c_str() << " " << ip << ":" << port);
             }
 
-            ret = listen(fd, 250);
+            int backlog = 1024;
+            if (const char* env_bl = ::getenv("MYFRAME_SOMAXCONN")) {
+                int v = atoi(env_bl); if (v > 0) backlog = v;
+            }
+            ret = listen(fd, backlog);
             if (ret == -1)
             {
-                std::fprintf(stderr, "[listen_factory] listen(fd=%d) fail: %s\n", fd, strError(errno).c_str());
+                std::fprintf(stderr, "[listen_factory] listen(fd=%d, backlog=%d) fail: %s\n", fd, backlog, strError(errno).c_str());
                 THROW_COMMON_EXCEPT("listen error "  << strError(errno).c_str());
             }
 

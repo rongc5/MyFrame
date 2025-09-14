@@ -18,6 +18,7 @@ public:
     virtual std::string* get_send_head() override;
     virtual std::string* get_send_body(int& result) override;
     virtual void msg_recv_finish() override;
+    virtual void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override;
     virtual size_t process_recv_body(const char* buf, size_t len, int& result) override;
 
     int status() const { return _status; }
@@ -27,8 +28,8 @@ private:
     std::string _method, _host, _path;
     std::map<std::string,std::string> _headers;
     std::string _body;
-    std::unique_ptr<std::string> _p_head;
-    std::unique_ptr<std::string> _p_body;
+    bool _head_sent{false};
+    bool _body_sent{false};
     std::string _resp_body;
     int _status{0};
 };

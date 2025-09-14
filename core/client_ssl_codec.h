@@ -18,13 +18,21 @@ public:
     }
 
     bool is_handshake_done() const { return _handshake_done; }
+    // Return selected ALPN protocol after handshake, or empty if none/handshake not done
+    std::string selected_alpn() const { return _selected_alpn; }
 
     SSL_HANDSHAKE_STATUS ssl_handshake() {
         if (!_ssl) return SSL_HANDSHAKE_ERROR;
         if (_handshake_done) return SSL_HANDSHAKE_DONE;
         ERR_clear_error();
         int ret = SSL_connect(_ssl);
-        if (ret == 1) { _handshake_done = true; _last_hs = SSL_HANDSHAKE_DONE; return SSL_HANDSHAKE_DONE; }
+        if (ret == 1) {
+            _handshake_done = true; _last_hs = SSL_HANDSHAKE_DONE;
+            const unsigned char* sel = nullptr; unsigned int slen = 0;
+            SSL_get0_alpn_selected(_ssl, &sel, &slen);
+            if (slen > 0 && sel) _selected_alpn.assign((const char*)sel, (const char*)sel + slen);
+            return SSL_HANDSHAKE_DONE;
+        }
         int ssl_error = SSL_get_error(_ssl, ret);
         switch (ssl_error) {
             case SSL_ERROR_WANT_READ:  _last_hs = SSL_HANDSHAKE_WANT_READ;  return SSL_HANDSHAKE_WANT_READ;
@@ -77,7 +85,7 @@ private:
     SSL* _ssl;
     bool _handshake_done;
     SSL_HANDSHAKE_STATUS _last_hs;
+    std::string _selected_alpn;
 };
 #endif
-
 

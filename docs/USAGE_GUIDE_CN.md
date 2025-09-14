@@ -111,3 +111,117 @@ build/examples/client_conn_factory_example ws://127.0.0.1:7790/
   - ��ǰ�� HTTP/1.1 �ͻ��ˡ������� `h2_client`���� ALPN��HPACK��֡���أ�����ע�ᵽ·������
 
 
+
+### 附：HTTPS 客户端/服务端证书配置与 mTLS 示例
+
+以下示例基于框架内置的 TLS 运行时配置接口（ssl_context.h）与环境变量兜底策略，适用于 examples 及业务代码。
+
+- 关键环境变量（可选，便于快速试验）
+  - 服务端：
+    - `MYFRAME_SSL_CERT`、`MYFRAME_SSL_KEY`：服务器证书/私钥（PEM）。
+    - `MYFRAME_SSL_PROTOCOLS`：启用的协议范围（如 `TLSv1.2,TLSv1.3`）。
+    - `MYFRAME_SSL_ALPN`：ALPN 列表（如 `h2,http/1.1`）。
+    - `MYFRAME_SSL_VERIFY`：是否验证对端证书（`1/true` 开启，用于 mTLS）。
+  - 客户端：
+    - `MYFRAME_SSL_VERIFY`：是否验证服务端证书（`1/true` 开启）。
+    - `MYFRAME_SSL_CA`：CA 证书路径。
+    - `MYFRAME_SSL_CLIENT_CERT`、`MYFRAME_SSL_CLIENT_KEY`：客户端证书/私钥（用于 mTLS）。
+
+- 服务端最小代码配置（C++）
+```cpp
+#include "ssl_context.h"
+#include "tls_runtime.cpp" // 或链接到核心库后仅包含头文件
+
+void setup_tls_server() {
+    ssl_config conf;
+    conf._cert_file = "tests/common/cert/server.crt";
+    conf._key_file  = "tests/common/cert/server.key";
+    conf._protocols = "TLSv1.2,TLSv1.3";
+    // 若需 mTLS：要求校验对端证书，并指定 CA
+    // conf._verify_peer = true;
+    // conf._ca_file = "tests/common/cert/ca.crt";
+    tls_set_server_config(conf);
+}
+
+int main() {
+    setup_tls_server();
+    // 启动 https_server 或任何基于 server 的 TLS 服务
+}
+```
+
+- 客户端最小代码配置（C++）
+```cpp
+#include "ssl_context.h"
+
+void setup_tls_client_verify_only() {
+    ssl_config conf;
+    conf._verify_peer = true;            // 验证服务端证书
+    conf._ca_file = "tests/common/cert/ca.crt"; // 受信 CA
+    tls_set_client_config(conf);
+}
+
+void setup_tls_client_mtls() {
+    ssl_config conf;
+    conf._verify_peer = true;
+    conf._ca_file = "tests/common/cert/ca.crt";
+    conf._cert_file = "tests/common/cert/client.crt"; // 客户端证书
+    conf._key_file  = "tests/common/cert/client.key"; // 客户端私钥
+    tls_set_client_config(conf);
+}
+```
+
+- 运行示例
+```bash
+# 方式A：使用环境变量（快速）
+export MYFRAME_SSL_CERT=tests/common/cert/server.crt
+export MYFRAME_SSL_KEY=tests/common/cert/server.key
+export MYFRAME_SSL_ALPN="h2,http/1.1"
+./build_dbg/examples/https_server 8443 &
+
+# 客户端校验 + CA
+export MYFRAME_SSL_VERIFY=1
+export MYFRAME_SSL_CA=tests/common/cert/ca.crt
+./build_dbg/examples/router_client https://127.0.0.1:8443/hello
+
+# 方式B：在代码中设置（更可控）
+# 参考以上 C++ 片段，调用 tls_set_server_config / tls_set_client_config 后再启动示例
+```
+
+- mTLS（双向认证）
+```bash
+# 服务端强制校验客户端证书（代码 conf._verify_peer=true 且 conf._ca_file 为 CA 路径）
+# 客户端提供证书与私钥
+export MYFRAME_SSL_VERIFY=1
+export MYFRAME_SSL_CA=tests/common/cert/ca.crt
+export MYFRAME_SSL_CLIENT_CERT=tests/common/cert/client.crt
+export MYFRAME_SSL_CLIENT_KEY=tests/common/cert/client.key
+./build_dbg/examples/router_client https://127.0.0.1:8443/api/status
+```
+
+- H2/ALPN 说明
+  - 服务端 ALPN 缺省允许 `h2,http/1.1`，可通过 `MYFRAME_SSL_ALPN` 精确控制。
+  - 客户端在 `https://` 路径默认发起 ALPN `h2,http/1.1`，协商到 `h2` 则自动走 HTTP/2（失败回退 HTTP/1.1）。
+  - 强制 HTTP/2 可使用 `h2://host[:port]/path`。
+
+- 常见问题
+  - 自签证书但开启校验：需提供 CA 路径（`MYFRAME_SSL_CA` 或 `tls_set_client_config` 中 `_ca_file`）。
+  - mTLS：服务端需开启 `_verify_peer=true` 并设定 `_ca_file`；客户端需配置自身 `client.crt/key`。
+  - 证书加载与握手异常：检查路径、权限以及协议范围（`MYFRAME_SSL_PROTOCOLS`）。
+
+### 附：默认请求头与 gzip 压缩
+
+- HTTP/1.1 客户端
+  - 若未在业务 headers 中显式提供，默认添加：
+    - `User-Agent: myframe-http-client`
+    - `Accept-Encoding: gzip`
+    - 并自动补全 `Host` 与 `Connection: close`
+- HTTP/2 客户端
+  - 若未在业务 headers 中显式提供，默认添加：
+    - `user-agent: myframe-h2-client`
+    - `accept-encoding: gzip`
+- 自动解压（可选）
+  - 构建时检测到 zlib 时，对含 `gzip` 编码的响应体自动解压并打印解压后的长度/内容（小体积时）。
+  - 未启用 zlib 时保持原始输出。
+- 关闭默认 Accept-Encoding（可选）
+  - 环境变量：`MYFRAME_NO_DEFAULT_AE=1`（HTTP/1.1 与 HTTP/2 均生效）。
+  - 路由客户端：`router_client ... --no-accept-encoding`（内部设置上述环境变量）。

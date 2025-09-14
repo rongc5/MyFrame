@@ -18,6 +18,7 @@ find_package(OpenSSL REQUIRED)
 
 # Find Threads
 find_package(Threads REQUIRED)
+find_package(ZLIB)
 
 ## Include directories
 include_directories(include)
@@ -43,6 +44,8 @@ list(REMOVE_ITEM CORE_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/core/log_thread.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/core/log_base.cpp"
 )
+## Replace non-UTF8 client_conn_router.cpp with clean version client_conn_router2.cpp
+list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/client_conn_router.cpp")
 ## Exclude old non-UTF8 http2_client implementation; replaced by http2_client_alpn.cpp
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/http2_client.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/connection_manager.cpp")
@@ -75,6 +78,10 @@ target_link_libraries(myframe
     OpenSSL::SSL 
     OpenSSL::Crypto
 )
+if (ZLIB_FOUND)
+    target_link_libraries(myframe ZLIB::ZLIB)
+    add_definitions(-DHAVE_ZLIB)
+endif()
 if (HAVE_SIGN_LIB)
     target_link_libraries(myframe ${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign/lib/libsign.a)
 endif()
