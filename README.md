@@ -67,4 +67,4 @@ See also:
 - docs/FRAMEWORK_FEATURES_CN.md / FRAMEWORK_FEATURES_EN.md
 - docs/PERF_TESTING_CN.md
 - docs/USAGE_GUIDE_CN.md (TLS/mTLS usage; default headers & gzip notes)
-
+ - docs/CONNECTION_LIFECYCLE_CN.md (how to close connections safely)
