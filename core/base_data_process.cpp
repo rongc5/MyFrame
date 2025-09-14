@@ -24,13 +24,13 @@ void base_data_process::peer_close()
 std::string * base_data_process::get_send_buf()
 {
     PDEBUG("%p", this);
-    if (_send_list.begin() == _send_list.end()) {
+    if (_send_list.empty()) {
         PDEBUG("_send_list is empty");
         return NULL;
     }
 
-    std::string *p = *(_send_list.begin());
-    _send_list.erase(_send_list.begin());
+    std::string *p = _send_list.front();
+    _send_list.pop_front();
 
     return p;
 }
@@ -55,11 +55,7 @@ void base_data_process::handle_msg(std::shared_ptr<normal_msg> & p_msg)
 
 void base_data_process::clear_send_list()
 {
-    for (std::list<std::string*>::iterator itr = _send_list.begin(); itr != _send_list.end(); ++itr)
-    {
-        delete *itr;
-    }
-
+    for (auto* ptr : _send_list) { delete ptr; }
     _send_list.clear();
 }
 

@@ -23,9 +23,17 @@ class common_epoll
 
         void init(const uint32_t epoll_size = DAFAULT_EPOLL_SIZE, int epoll_wait_time = DEFAULT_EPOLL_WAITE)
         {
+            // Allow override by environment variables
+            const char* env_size = ::getenv("MYFRAME_EPOLL_SIZE");
+            const char* env_wait = ::getenv("MYFRAME_EPOLL_WAIT_MS");
             _epoll_size = (epoll_size == 0)?DAFAULT_EPOLL_SIZE:epoll_size;
-
+            if (env_size) {
+                long v = atol(env_size); if (v > 0) _epoll_size = (uint32_t)v;
+            }
             _epoll_wait_time = epoll_wait_time;
+            if (env_wait) {
+                int v = atoi(env_wait); if (v >= 0) _epoll_wait_time = v;
+            }
 
             _epoll_fd = epoll_create(_epoll_size);
             if (_epoll_fd == -1)
@@ -55,4 +63,3 @@ class common_epoll
 
 
 #endif
-
