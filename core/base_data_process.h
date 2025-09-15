@@ -54,6 +54,9 @@ class base_data_process
         // (e.g., HTTP client while still sending request).
         virtual bool want_recv() const { return true; }
 
+        // Virtual function for getting process name (for debugging/logging)
+        virtual const char* name() const { return "base_data_process"; }
+
     protected:
         void clear_send_list();
 
