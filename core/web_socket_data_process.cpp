@@ -27,8 +27,14 @@ void web_socket_data_process::on_handshake_ok()
 }
 
 void web_socket_data_process::on_ping(const char op_code, const std::string &ping_data)
-{			
+{
     PDEBUG("%p", this);
+}
+
+void web_socket_data_process::peer_close()
+{
+    on_close();  // 调用子类可重写的回调
+    base_data_process::peer_close();  // 调用基类实现
 }
 
 uint64_t web_socket_data_process::get_timeout_len()

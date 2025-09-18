@@ -89,6 +89,15 @@ int common_epoll::epoll_wait(std::map<ObjId, std::shared_ptr<base_net_obj> > &ex
                 try
                 {
                     //PDEBUG("get_sock[%d]\n", p->get_sfd());
+#ifdef EPOLLRDHUP
+                    if ((_epoll_events[i].events & (EPOLLERR|EPOLLHUP|EPOLLRDHUP)) != 0) {
+                        PDEBUG("[NOTICE] epoll fd[%d] events=0x%x (ERR/HUP)", p->get_sfd(), _epoll_events[i].events);
+                    }
+#else
+                    if ((_epoll_events[i].events & (EPOLLERR|EPOLLHUP)) != 0) {
+                        PDEBUG("[NOTICE] epoll fd[%d] events=0x%x (ERR/HUP)", p->get_sfd(), _epoll_events[i].events);
+                    }
+#endif
                     p->event_process(_epoll_events[i].events);
                     if (p->get_real_net()) {
                         remove_list.insert(std::make_pair(p->get_id(), p_obj));

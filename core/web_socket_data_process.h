@@ -15,6 +15,8 @@ class web_socket_data_process:public base_data_process
 
         virtual void on_handshake_ok();
 
+        virtual void on_close() {}
+
         virtual void on_ping(const char op_code, const std::string &ping_data);
 
         virtual uint64_t get_timeout_len();
@@ -22,6 +24,8 @@ class web_socket_data_process:public base_data_process
         virtual uint64_t get_next_send_len(int8_t &content_type);
         virtual std::string *get_send_buf();
         virtual void msg_recv_finish() = 0;
+
+        virtual void peer_close() override;
 
         virtual size_t process_recv_buf(const char *buf, size_t len);
 
