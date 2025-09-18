@@ -61,8 +61,8 @@ void http_client_data_process::msg_recv_finish() {
     _status = (int)hp._response_code;
 
     // Print response for debugging
-    std::cout << "HTTP Response Status: " << _status << std::endl;
-    std::cout << "Response Body Length: " << _resp_body.length() << std::endl;
+    PDEBUG("HTTP Response Status: %d", _status);
+    PDEBUG("Response Body Length: %zu", _resp_body.length());
 #ifdef HAVE_ZLIB
     // Check content-encoding header or gzip magic, try to auto-decompress
     std::string* enc = hp.get_header("Content-Encoding");
@@ -92,27 +92,27 @@ void http_client_data_process::msg_recv_finish() {
             }
             inflateEnd(&strm);
             if (zret == Z_STREAM_END) {
-                std::cout << "Decompressed (gzip) Length: " << dec.size() << std::endl;
-                if (dec.size() < 1000) std::cout << "Response Body (gunzipped): " << dec << std::endl;
-                else std::cout << "Response Body (gunzipped, first 500 chars): " << dec.substr(0,500) << "..." << std::endl;
+                PDEBUG("Decompressed (gzip) Length: %zu", dec.size());
+                if (dec.size() < 1000) PDEBUG("Response Body (gunzipped): %s", dec.c_str());
+                else { auto s = dec.substr(0,500) + "..."; PDEBUG("Response Body (gunzipped, first 500 chars): %s", s.c_str()); }
             } else {
-                std::cout << "[http] gzip decompress failed, zret=" << zret << std::endl;
-                if (_resp_body.length() < 1000) std::cout << "Response Body (raw): " << _resp_body << std::endl;
-                else std::cout << "Response Body (raw, first 500 chars): " << _resp_body.substr(0, 500) << "..." << std::endl;
+                PDEBUG("[http] gzip decompress failed, zret=%d", zret);
+                if (_resp_body.length() < 1000) PDEBUG("Response Body (raw): %s", _resp_body.c_str());
+                else { auto s = _resp_body.substr(0,500) + "..."; PDEBUG("Response Body (raw, first 500 chars): %s", s.c_str()); }
             }
         } else {
-            if (_resp_body.length() < 1000) std::cout << "Response Body (raw): " << _resp_body << std::endl;
-            else std::cout << "Response Body (raw, first 500 chars): " << _resp_body.substr(0, 500) << "..." << std::endl;
+            if (_resp_body.length() < 1000) PDEBUG("Response Body (raw): %s", _resp_body.c_str());
+            else { auto s = _resp_body.substr(0,500) + "..."; PDEBUG("Response Body (raw, first 500 chars): %s", s.c_str()); }
         }
     } else {
-        if (_resp_body.length() < 1000) std::cout << "Response Body: " << _resp_body << std::endl;
-        else std::cout << "Response Body (first 500 chars): " << _resp_body.substr(0, 500) << "..." << std::endl;
+        if (_resp_body.length() < 1000) PDEBUG("Response Body: %s", _resp_body.c_str());
+        else { auto s = _resp_body.substr(0,500) + "..."; PDEBUG("Response Body (first 500 chars): %s", s.c_str()); }
     }
 #else
     if (_resp_body.length() < 1000) {
-        std::cout << "Response Body: " << _resp_body << std::endl;
+        PDEBUG("Response Body: %s", _resp_body.c_str());
     } else {
-        std::cout << "Response Body (first 500 chars): " << _resp_body.substr(0, 500) << "..." << std::endl;
+        { auto s = _resp_body.substr(0,500) + "..."; PDEBUG("Response Body (first 500 chars): %s", s.c_str()); }
     }
 #endif
 

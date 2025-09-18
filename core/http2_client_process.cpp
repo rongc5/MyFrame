@@ -114,7 +114,7 @@ void http2_client_process::enqueue_preface_and_request() {
     uint8_t flags = 0x4 /*END_HEADERS*/ | (_body.empty()? 0x1 /*END_STREAM*/ : 0x0);
     std::string hdr = make_frame_header((uint32_t)blk.size(), HEADERS, flags, 1);
     if (_trace) {
-        std::cout << "[h2] send preface+SETTINGS+HEADERS stream=1 flags=0x" << std::hex << (unsigned)flags << std::dec << std::endl;
+        PDEBUG("[h2] send preface+SETTINGS+HEADERS stream=1 flags=0x%02x", (unsigned)flags);
         std::cout << "[h2] headers block len=" << blk.size() << " hex=";
         size_t dump = blk.size() < 48 ? blk.size() : 48;
         for (size_t i=0;i<dump;++i) {
@@ -172,7 +172,7 @@ bool http2_client_process::parse_frames() {
     size_t n = _in.size(); size_t off = 0; while (n - off >= 9) {
         const unsigned char* p = &_in[off]; uint32_t len = read24u(p); uint8_t type = p[3]; uint8_t flags = p[4]; uint32_t sid = read32u(p+5) & 0x7fffffffu; if (n - off < 9 + len) break;
         if (_trace) {
-            std::cout << "[h2] frame: len=" << len << " type=0x" << std::hex << (unsigned)type << std::dec << " flags=0x" << std::hex << (unsigned)flags << std::dec << " sid=" << sid << std::endl;
+            PDEBUG("[h2] frame: len=%u type=0x%02x flags=0x%02x sid=%u", len, (unsigned)type, (unsigned)flags, sid);
         }
         const unsigned char* payload = p + 9;
         if (type == SETTINGS) { if ((flags & FLAGS_ACK) == 0) { put_send_copy(make_settings_ack()); } }
@@ -224,10 +224,8 @@ bool http2_client_process::parse_frames() {
             if (len >= 8) {
                 uint32_t last_sid = read32u(payload) & 0x7fffffffu;
                 uint32_t err = read32u(payload+4);
-                std::cout << "[h2] GOAWAY last_stream_id=" << last_sid << " error=0x" << std::hex << err << std::dec << std::endl;
-            } else {
-                std::cout << "[h2] GOAWAY len=" << len << std::endl;
-            }
+                PDEBUG("[h2] GOAWAY last_stream_id=%u error=0x%x", last_sid, (unsigned)err);
+            } else { PDEBUG("[h2] GOAWAY len=%u", len); }
             _response_done = true;
         }
         off += 9 + len;
@@ -239,23 +237,24 @@ bool http2_client_process::parse_frames() {
 size_t http2_client_process::process_recv_buf(const char* buf, size_t len) {
     if (len) {
         if (_trace) {
-            std::cout << "[h2] recv bytes: " << len << std::endl;
+            PDEBUG("[h2] recv bytes: %u", len);
             size_t dump = len < 32 ? len : 32;
-            std::cout << "[h2] recv hex: ";
-            for (size_t i=0;i<dump;++i) {
-                unsigned int b = (unsigned char)buf[i];
-                char hi[] = {"0123456789abcdef"[(b>>4)&0xF], "0123456789abcdef"[b&0xF], 0};
-                std::cout << hi;
+            {
+                std::string hex;
+                hex.reserve(dump*2 + 4);
+                static const char* H = "0123456789abcdef";
+                for (size_t i=0;i<dump;++i) { unsigned int b=(unsigned char)buf[i]; hex.push_back(H[(b>>4)&0xF]); hex.push_back(H[b&0xF]); }
+                if (len>32) { hex += "..."; }
+                PDEBUG("[h2] recv hex: %s", hex.c_str());
             }
-            std::cout << (len>32?"...":"") << std::endl;
         }
         _in.insert(_in.end(), (const unsigned char*)buf, (const unsigned char*)buf + len);
     }
     if (!parse_frames()) return 0;
     if (_response_done) {
         if (_status == 0) _status = 200;
-        std::cout << "H2 Response Status: " << _status << std::endl;
-        std::cout << "Response Body Length: " << _resp_body.size() << std::endl;
+        PDEBUG("H2 Response Status: %d", _status);
+        PDEBUG("Response Body Length: %zu", _resp_body.size());
 #ifdef HAVE_ZLIB
         // Auto-decompress gzip if detected (magic 0x1f8b)
         bool gz = (_resp_body.size() >= 2 && (uint8_t)_resp_body[0] == 0x1f && (uint8_t)_resp_body[1] == 0x8b);
@@ -277,20 +276,20 @@ size_t http2_client_process::process_recv_buf(const char* buf, size_t len) {
                 }
                 inflateEnd(&strm);
                 if (zret == Z_STREAM_END) {
-                    std::cout << "Decompressed (gzip) Length: " << dec.size() << std::endl;
-                    if (dec.size() < 1000) std::cout << "Response Body (gunzipped): " << dec << std::endl;
+                    PDEBUG("Decompressed (gzip) Length: %zu", dec.size());
+                    if (dec.size() < 1000) PDEBUG("Response Body (gunzipped): %s", dec.c_str());
                 } else {
-                    std::cout << "[h2] gzip decompress failed, zret=" << zret << std::endl;
-                    if (_resp_body.size() < 1000) std::cout << "Response Body (raw): " << _resp_body << std::endl;
+                    PDEBUG("[h2] gzip decompress failed, zret=%d", zret);
+                    if (_resp_body.size() < 1000) PDEBUG("Response Body (raw): %s", _resp_body.c_str());
                 }
             } else {
-                if (_resp_body.size() < 1000) std::cout << "Response Body (raw): " << _resp_body << std::endl;
+                if (_resp_body.size() < 1000) PDEBUG("Response Body (raw): %s", _resp_body.c_str());
             }
         } else {
-            if (_resp_body.size() < 1000) std::cout << "Response Body: " << _resp_body << std::endl;
+            if (_resp_body.size() < 1000) PDEBUG("Response Body: %s", _resp_body.c_str());
         }
 #else
-        if (_resp_body.size() < 1000) std::cout << "Response Body: " << _resp_body << std::endl;
+        if (_resp_body.size() < 1000) PDEBUG("Response Body: %s", _resp_body.c_str());
 #endif
         // Do not stop all threads automatically; allow the owner to decide.
     }
@@ -308,7 +307,7 @@ void http2_client_process::handle_timeout(std::shared_ptr<timer_msg>& t_msg) {
         // reschedule
         std::shared_ptr<timer_msg> tp(new timer_msg); tp->_obj_id = 0; tp->_timer_type = H2_PING_TIMER_TYPE; tp->_time_length = _ping_interval_ms; add_timer(tp);
     } else if (t_msg->_timer_type == H2_TOTAL_TIMEOUT_TIMER_TYPE && !_response_done) {
-        std::cout << "H2 total timeout, requesting close" << std::endl;
+        PDEBUG("%s", "H2 total timeout, requesting close");
         close_now();
     }
 }

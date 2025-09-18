@@ -32,16 +32,16 @@ bool hybrid_https_client_process::maybe_init() {
     std::string alpn = csc->selected_alpn();
     std::string alpn_l; alpn_l.resize(alpn.size());
     std::transform(alpn.begin(), alpn.end(), alpn_l.begin(), [](unsigned char c){ return (char)std::tolower(c); });
-    std::cout << "[https] negotiated ALPN='" << (alpn.empty()?std::string("(none)"):alpn) << "'" << std::endl;
+    PDEBUG("[https] negotiated ALPN='%s'", (alpn.empty()?std::string("(none)"):alpn).c_str());
     if (alpn_l == "h2") {
         // Switch to HTTP/2 client process
         _mode = H2;
         _inner.reset(new http2_client_process(sp, _method, std::string("https"), _host, _path, _headers, _body));
-        std::cout << "[https] switch mode: H2" << std::endl;
+        PDEBUG("%s", "[https] switch mode: H2");
         return true;
     } else {
         _mode = HTTP1;
-        std::cout << "[https] switch mode: HTTP/1.1" << std::endl;
+        PDEBUG("%s", "[https] switch mode: HTTP/1.1");
         return true;
     }
 }

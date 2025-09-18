@@ -67,7 +67,7 @@ public:
         }
         if (!conf._key_file.empty()) {
             if (SSL_CTX_use_PrivateKey_file(_ctx, conf._key_file.c_str(), SSL_FILETYPE_PEM) != 1) { ERR_print_errors_fp(stderr); return false; }
-            if (SSL_CTX_check_private_key(_ctx) != 1) { std::fprintf(stderr, "[tls] Private key does not match certificate\n"); ERR_print_errors_fp(stderr); return false; }
+            if (SSL_CTX_check_private_key(_ctx) != 1) { PDEBUG("%s", "[tls] Private key does not match certificate"); ERR_print_errors_fp(stderr); return false; }
         }
         if (!conf._cert_file.empty() || !conf._key_file.empty()) {
             PDEBUG("[tls] Using cert='%s' key='%s'", conf._cert_file.c_str(), conf._key_file.c_str());

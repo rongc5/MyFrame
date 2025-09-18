@@ -68,7 +68,7 @@ public:
         out_conn.reset(new listen_connect<listen_process>(ip, port));
         int fd = out_conn ? out_conn->get_sfd() : -1;
         if (fd < 0) {
-            std::fprintf(stderr, "[listen_factory] invalid listen fd for %s:%u\n", ip.c_str(), port);
+            PDEBUG("[listen_factory] invalid listen fd for %s:%u", ip.c_str(), port);
             throw std::runtime_error("listen failed");
         }
 
@@ -79,7 +79,7 @@ public:
         out_conn->set_net_container(owner_thread->get_net_container());
         // 改为边沿触发，避免饥饿
         out_conn->update_event(EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLET);
-        std::fprintf(stderr, "[listen] added listen_fd=%d to epoll\n", fd);
+        PDEBUG("[listen] added listen_fd=%d to epoll", fd);
         return fd;
     }
 

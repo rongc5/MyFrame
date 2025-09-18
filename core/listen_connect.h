@@ -40,7 +40,7 @@ class listen_connect:public base_net_obj
             int fd = socket(AF_INET, SOCK_STREAM, 0);
             if (fd < 0)         
             {
-                std::fprintf(stderr, "[listen_factory] socket() failed: %s\n", strError(errno).c_str());
+                PDEBUG("[listen_factory] socket() failed: %s", strError(errno).c_str());
                 THROW_COMMON_EXCEPT("socket error " << strError(errno).c_str());     
             }
             setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void*)(&(reuse_addr)), sizeof(reuse_addr));
@@ -48,7 +48,7 @@ class listen_connect:public base_net_obj
 
             if (::bind(fd, (struct sockaddr *) &address, sizeof(address)) < 0) 
             {
-                std::fprintf(stderr, "[listen_factory] bind(%s:%u) fail: %s\n", ip.empty()?"0.0.0.0":ip.c_str(), port, strError(errno).c_str());
+                PDEBUG("[listen_factory] bind(%s:%u) fail: %s", ip.empty()?"0.0.0.0":ip.c_str(), port, strError(errno).c_str());
                 THROW_COMMON_EXCEPT("bind error "  << strError(errno).c_str() << " " << ip << ":" << port);
             }
 
@@ -59,13 +59,13 @@ class listen_connect:public base_net_obj
             ret = listen(fd, backlog);
             if (ret == -1)
             {
-                std::fprintf(stderr, "[listen_factory] listen(fd=%d, backlog=%d) fail: %s\n", fd, backlog, strError(errno).c_str());
+                PDEBUG("[listen_factory] listen(fd=%d, backlog=%d) fail: %s", fd, backlog, strError(errno).c_str());
                 THROW_COMMON_EXCEPT("listen error "  << strError(errno).c_str());
             }
 
             set_unblock(fd);
             _fd  = fd;
-            std::fprintf(stderr, "[listen] bound %s:%u, fd=%d\n", ip.empty()?"0.0.0.0":ip.c_str(), port, _fd);
+            PDEBUG("[listen] bound %s:%u, fd=%d", ip.empty()?"0.0.0.0":ip.c_str(), port, _fd);
         }
 
         virtual ~listen_connect() = default;
@@ -74,7 +74,7 @@ class listen_connect:public base_net_obj
         {
             if ((events & EPOLLIN) == EPOLLIN)
             {
-                std::fprintf(stderr, "[accept] epoll in\n");
+                PDEBUG("%s", "[accept] epoll in");
                 int tmp_sock = 0;
                 sockaddr_in addr;
                 // 控制每次最多 accept N 次，避免长循环饿死其他事件

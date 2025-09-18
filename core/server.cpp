@@ -63,7 +63,7 @@ void server::start() {
             listen_process* tmp_proc = nullptr;
             int listen_fd = ListenFactory::init_listen(_listen, _ip, _port, tmp_conn, tmp_proc);
             (void)tmp_proc; // 生命周期由 listen_connect 管理
-            std::fprintf(stderr, "[listen] bound %s:%u, fd=%d\n", _ip.c_str(), _port, listen_fd);
+            PDEBUG("[listen] bound %s:%u, fd=%d", _ip.c_str(), _port, listen_fd);
         }
     }
     // 将 worker 线程索引注入到监听线程的线程池中（供 listen_process 优先使用）

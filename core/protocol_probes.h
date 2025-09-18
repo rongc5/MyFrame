@@ -39,7 +39,7 @@ public:
     }
     std::unique_ptr<base_data_process>
     create(std::shared_ptr<base_net_obj> conn) const override {
-        std::fprintf(stderr, "[detect] HttpProbe selected\n");
+        PDEBUG("%s", "[detect] HttpProbe selected");
         std::unique_ptr<http_res_process> p(new http_res_process(conn));
         p->set_process(new app_http_data_process(p.get(), _app));
         return std::unique_ptr<base_data_process>(p.release());
@@ -60,7 +60,7 @@ public:
     }
     std::unique_ptr<base_data_process>
     create(std::shared_ptr<base_net_obj> conn) const override {
-        std::fprintf(stderr, "[detect] WsProbe selected (Upgrade: websocket)\n");
+        PDEBUG("%s", "[detect] WsProbe selected (Upgrade: websocket)");
         std::unique_ptr<web_socket_res_process> p(new web_socket_res_process(conn));
         p->set_process(new app_ws_data_process(p.get(), _app));
         return std::unique_ptr<base_data_process>(p.release());
@@ -76,7 +76,7 @@ public:
     }
     std::unique_ptr<base_data_process>
     create(std::shared_ptr<base_net_obj> conn) const override {
-        std::fprintf(stderr, "[detect] TlsProbe selected (TLS handshake)\n");
+        PDEBUG("%s", "[detect] TlsProbe selected (TLS handshake)");
         return std::unique_ptr<base_data_process>(new tls_entry_process(conn, _app));
     }
 };
@@ -90,7 +90,7 @@ public:
     }
     std::unique_ptr<base_data_process>
     create(std::shared_ptr<base_net_obj> conn) const override {
-        std::fprintf(stderr, "[detect] Http2Probe selected (HTTP/2 preface)\n");
+        PDEBUG("%s", "[detect] Http2Probe selected (HTTP/2 preface)");
         return std::unique_ptr<base_data_process>(new http2_process(conn, _app));
     }
 };
@@ -101,7 +101,7 @@ public:
     bool match(const char* buf, size_t len) const override { return len >= 4 && (std::memcmp(buf, "CSTM", 4) == 0); }
     std::unique_ptr<base_data_process>
     create(std::shared_ptr<base_net_obj> conn) const override {
-        std::fprintf(stderr, "[detect] CustomProbe selected\n");
+        PDEBUG("%s", "[detect] CustomProbe selected");
         std::unique_ptr<custom_stream_process> p(new custom_stream_process(conn, _app));
         return std::unique_ptr<base_data_process>(p.release());
     }
