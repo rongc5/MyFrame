@@ -27,14 +27,14 @@ void MultiProtocolFactory::net_thread_init(base_net_thread* th)
 void MultiProtocolFactory::handle_thread_msg(std::shared_ptr<normal_msg>& msg)
 {
     if (!msg || msg->_msg_op != NORMAL_MSG_CONNECT) return;
-    fprintf(stderr, "[factory] NORMAL_MSG_CONNECT received\n");
+    PDEBUG("%s", "[factory] NORMAL_MSG_CONNECT received");
     MultiProtocolFactoryImplAccessor acc(this);
     common_obj_container* container = acc.container();
-    if (!container) { fprintf(stderr, "[factory] container is null\n"); return; }
+    if (!container) { PDEBUG("%s", "[factory] container is null"); return; }
 
     std::shared_ptr<content_msg> cm = std::static_pointer_cast<content_msg>(msg);
     int fd = cm->fd;
-    fprintf(stderr, "[factory] creating connection for fd=%d\n", fd);
+    PDEBUG("[factory] creating connection for fd=%d", fd);
 
     std::shared_ptr< base_connect<base_data_process> > conn(new base_connect<base_data_process>(fd));
     std::unique_ptr<protocol_detect_process> detector(new protocol_detect_process(conn, _app_handler));
@@ -56,7 +56,7 @@ void MultiProtocolFactory::handle_thread_msg(std::shared_ptr<normal_msg>& msg)
     conn->set_net_container(container);
     std::shared_ptr<base_net_obj> net_obj = conn;
     container->push_real_net(net_obj);
-    fprintf(stderr, "[factory] connection enqueued to container thread=%u\n", container->get_thread_index());
+    PDEBUG("[factory] connection enqueued to container thread=%u", container->get_thread_index());
 }
 
 void MultiProtocolFactory::register_worker(uint32_t thread_index)

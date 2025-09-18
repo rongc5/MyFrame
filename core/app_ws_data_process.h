@@ -112,7 +112,11 @@ private:
 // 内联实现注册/注销，避免引入链接顺序问题
 #include "ws_push_hub.h"
 inline void app_ws_data_process::register_self() {
-    if (!_username.empty()) WsPushHub::Instance().Register(_username, this);
+    if (!_username.empty()) {
+        WsPushHub::Instance().Register(_username, this);
+        // 首次建立连接后，推送一次初始化事件，供业务侧（如前端）拉取初始数据
+        try { this->send_text(std::string("{\"type\":\"init\"}")); } catch(...) {}
+    }
 }
 inline void app_ws_data_process::unregister_self() {
     WsPushHub::Instance().Unregister(this);
