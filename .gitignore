@@ -26,6 +26,9 @@ test/wss_*
 examples/http_*
 examples/https_*
 examples/ws_*
+# allow selected ws demos
+!examples/ws_broadcast_user.cpp
+!examples/ws_broadcast_periodic.cpp
 examples/multi_*
 examples/wss_*
 
