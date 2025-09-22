@@ -1,6 +1,7 @@
 #include "http2_client_process.h"
 #include "http2_frame.h"
 #include "base_thread.h"
+#include "base_net_obj.h"
 #include <iostream>
 #include <cstring>
 #ifdef HAVE_ZLIB
@@ -24,8 +25,8 @@ http2_client_process::http2_client_process(std::shared_ptr<base_net_obj> c,
     if (const char* e = ::getenv("MYFRAME_H2_TRACE")) { _trace = (strcmp(e, "0") != 0 && strcasecmp(e, "false") != 0); }
     // setup timers based on knobs
     _start_ms = GetMilliSecond();
-    std::shared_ptr<timer_msg> tp(new timer_msg); tp->_obj_id = 0; tp->_timer_type = H2_PING_TIMER_TYPE; tp->_time_length = _ping_interval_ms; add_timer(tp); _ping_scheduled = true;
-    std::shared_ptr<timer_msg> tt(new timer_msg); tt->_obj_id = 0; tt->_timer_type = H2_TOTAL_TIMEOUT_TIMER_TYPE; tt->_time_length = _total_timeout_ms; add_timer(tt); _timeout_scheduled = true;
+    std::shared_ptr<timer_msg> tp(new timer_msg); tp->_obj_id = get_base_net()->get_id()._id; tp->_timer_type = H2_PING_TIMER_TYPE; tp->_time_length = _ping_interval_ms; add_timer(tp); _ping_scheduled = true;
+    std::shared_ptr<timer_msg> tt(new timer_msg); tt->_obj_id = get_base_net()->get_id()._id; tt->_timer_type = H2_TOTAL_TIMEOUT_TIMER_TYPE; tt->_time_length = _total_timeout_ms; add_timer(tt); _timeout_scheduled = true;
 }
 
 static void hpack_write_str(std::string& out, const std::string& s) {
@@ -305,7 +306,7 @@ void http2_client_process::handle_timeout(std::shared_ptr<timer_msg>& t_msg) {
         ping.append(opaque, 8);
         put_send_move(std::move(ping));
         // reschedule
-        std::shared_ptr<timer_msg> tp(new timer_msg); tp->_obj_id = 0; tp->_timer_type = H2_PING_TIMER_TYPE; tp->_time_length = _ping_interval_ms; add_timer(tp);
+        std::shared_ptr<timer_msg> tp(new timer_msg); tp->_obj_id = get_base_net()->get_id()._id; tp->_timer_type = H2_PING_TIMER_TYPE; tp->_time_length = _ping_interval_ms; add_timer(tp);
     } else if (t_msg->_timer_type == H2_TOTAL_TIMEOUT_TIMER_TYPE && !_response_done) {
         PDEBUG("%s", "H2 total timeout, requesting close");
         close_now();

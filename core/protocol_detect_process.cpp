@@ -34,7 +34,7 @@ size_t protocol_detect_process::process_recv_buf(const char* buf, size_t buf_len
     if (_start_ms == 0) {
         _start_ms = GetMilliSecond();
         std::shared_ptr<timer_msg> t(new timer_msg);
-        t->_obj_id = 0; t->_timer_type = NONE_DATA_TIMER_TYPE; t->_time_length = _detect_timeout_ms;
+        t->_obj_id = get_base_net()->get_id()._id; t->_timer_type = NONE_DATA_TIMER_TYPE; t->_time_length = _detect_timeout_ms;
         add_timer(t); _timer_id = t->_timer_id;
     }
 
