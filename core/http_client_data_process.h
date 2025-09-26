@@ -2,6 +2,8 @@
 
 #include "http_base_data_process.h"
 #include <map>
+#include <condition_variable>
+#include <mutex>
 
 class http_req_process;
 
@@ -24,6 +26,9 @@ public:
     int status() const { return _status; }
     const std::string& response_body() const { return _resp_body; }
 
+    // Synchronous wait helper for business code that wants a blocking call
+    bool wait_done(int timeout_ms);
+
 private:
     std::string _method, _host, _path;
     std::map<std::string,std::string> _headers;
@@ -32,4 +37,9 @@ private:
     bool _body_sent{false};
     std::string _resp_body;
     int _status{0};
+
+private:
+    std::mutex _m;
+    std::condition_variable _cv;
+    bool _done{false};
 };
