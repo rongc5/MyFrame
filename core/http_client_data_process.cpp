@@ -116,6 +116,12 @@ void http_client_data_process::msg_recv_finish() {
     }
 #endif
 
+    // Mark completion for synchronous waiters
+    {
+        std::lock_guard<std::mutex> lk(_m);
+        _done = true;
+    }
+    _cv.notify_all();
     // Do not stop all threads here; examples/tests may choose to end the
     // event loop via timeout or their own completion hooks.
 }
