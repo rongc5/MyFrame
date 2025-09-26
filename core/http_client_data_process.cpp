@@ -132,3 +132,12 @@ void http_client_data_process::handle_timeout(std::shared_ptr<timer_msg>& t_msg)
     }
     http_base_data_process::handle_timeout(t_msg);
 }
+
+bool http_client_data_process::wait_done(int timeout_ms) {
+    std::unique_lock<std::mutex> lk(_m);
+    if (timeout_ms <= 0) {
+        _cv.wait(lk, [&]{ return _done; });
+        return true;
+    }
+    return _cv.wait_for(lk, std::chrono::milliseconds(timeout_ms), [&]{ return _done; });
+}
