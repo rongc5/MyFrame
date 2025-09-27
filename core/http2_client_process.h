@@ -4,6 +4,8 @@
 #include <string>
 #include <map>
 #include <vector>
+#include <condition_variable>
+#include <mutex>
 
 // Minimal HTTP/2 client data process for one-shot GET/POST.
 // - Sends connection preface + SETTINGS
@@ -25,6 +27,12 @@ public:
     virtual std::string* get_send_buf() override;
     virtual void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override;
 
+    // Convenience helpers for asynchronous callers (examples/tests).
+    bool wait_done(int timeout_ms);
+    bool is_response_done() const;
+    int status() const;
+    std::string response_body() const;
+
 private:
     void enqueue_preface_and_request();
     std::string build_headers_block() const; // HPACK (no Huffman), pseudo + user headers
@@ -32,6 +40,8 @@ private:
     // parsing helpers
     bool parse_frames();
     bool handle_headers_payload(const unsigned char* p, uint32_t len, uint8_t flags);
+
+    void notify_done();
 
 private:
     std::string _method, _scheme, _host, _path, _body;
@@ -58,4 +68,9 @@ private:
     bool _timeout_scheduled{false};
     uint32_t _ping_interval_ms{15000};   // env MYFRAME_H2_PING_MS
     uint32_t _total_timeout_ms{30000};   // env MYFRAME_H2_TIMEOUT_MS
+
+    // Completion signalling for higher-level callers
+    mutable std::mutex _m;
+    std::condition_variable _cv;
+    bool _done_notified{false};
 };

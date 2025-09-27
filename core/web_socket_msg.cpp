@@ -284,5 +284,5 @@ void ws_msg_type::init()
 ws_req_head_para::ws_req_head_para()
 {
     _version = 13;
+    _s_websocket_key = WEB_SOCKET_NONCE_KEY;
 }
-

@@ -4,6 +4,7 @@
 #include "base_net_obj.h"
 #include <iostream>
 #include <cstring>
+#include <chrono>
 #ifdef HAVE_ZLIB
 #include <zlib.h>
 #endif
@@ -193,6 +194,7 @@ bool http2_client_process::parse_frames() {
                 std::string m = _method; for (auto& c : m) c = (char)tolower((unsigned char)c);
                 if (_status == 204 || _status == 304 || m == "head") {
                     _response_done = true;
+                    notify_done();
                 } else {
                     PDEBUG("[h2] HEADERS had END_STREAM but status=%d method=%s -> waiting for DATA", _status, m.c_str());
                 }
@@ -211,7 +213,7 @@ bool http2_client_process::parse_frames() {
                 if (_conn_win_credits >= _winupdate_threshold) { put_send_copy(make_window_update(0, _conn_win_credits)); _conn_win_credits = 0; }
                 if (_strm1_win_credits >= _winupdate_threshold) { put_send_copy(make_window_update(1, _strm1_win_credits)); _strm1_win_credits = 0; }
             }
-            if (flags & 0x1) { _response_done = true; }
+            if (flags & 0x1) { _response_done = true; notify_done(); }
         }
         else if (type == PING) {
             if ((flags & FLAGS_ACK) == 0) {
@@ -228,6 +230,7 @@ bool http2_client_process::parse_frames() {
                 PDEBUG("[h2] GOAWAY last_stream_id=%u error=0x%x", last_sid, (unsigned)err);
             } else { PDEBUG("[h2] GOAWAY len=%u", len); }
             _response_done = true;
+            notify_done();
         }
         off += 9 + len;
     }
@@ -238,7 +241,7 @@ bool http2_client_process::parse_frames() {
 size_t http2_client_process::process_recv_buf(const char* buf, size_t len) {
     if (len) {
         if (_trace) {
-            PDEBUG("[h2] recv bytes: %u", len);
+            PDEBUG("[h2] recv bytes: %zu", len);
             size_t dump = len < 32 ? len : 32;
             {
                 std::string hex;
@@ -311,4 +314,38 @@ void http2_client_process::handle_timeout(std::shared_ptr<timer_msg>& t_msg) {
         PDEBUG("%s", "H2 total timeout, requesting close");
         close_now();
     }
+}
+
+void http2_client_process::notify_done() {
+    std::lock_guard<std::mutex> lk(_m);
+    if (_done_notified) return;
+    _done_notified = true;
+    _cv.notify_all();
+}
+
+bool http2_client_process::wait_done(int timeout_ms) {
+    std::unique_lock<std::mutex> lk(_m);
+    if (!_done_notified) {
+        if (timeout_ms <= 0) {
+            _cv.wait(lk, [&]{ return _done_notified; });
+        } else if (!_cv.wait_for(lk, std::chrono::milliseconds(timeout_ms), [&]{ return _done_notified; })) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool http2_client_process::is_response_done() const {
+    std::lock_guard<std::mutex> lk(_m);
+    return _done_notified;
+}
+
+int http2_client_process::status() const {
+    std::lock_guard<std::mutex> lk(_m);
+    return _status;
+}
+
+std::string http2_client_process::response_body() const {
+    std::lock_guard<std::mutex> lk(_m);
+    return _resp_body;
 }

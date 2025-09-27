@@ -33,6 +33,10 @@ target_link_libraries(h2_client ${COMMON_LIBS})
 add_executable(http_out_client http_out_client.cpp)
 target_link_libraries(http_out_client ${COMMON_LIBS})
 
+# HTTP/2 Outbound Client using out_connect
+add_executable(http2_out_client http2_out_client.cpp)
+target_link_libraries(http2_out_client ${COMMON_LIBS})
+
 # Minimal business HTTP client example
 add_executable(biz_http_client biz_http_client.cpp)
 target_link_libraries(biz_http_client ${COMMON_LIBS})
@@ -103,7 +107,7 @@ target_link_libraries(ws_stickbridge_client ${COMMON_LIBS})
 # Always-present example targets
 set_target_properties(
     http_server https_server wss_server
-    h2_client http_out_client biz_http_client http_close_demo http_server_close_demo router_client router_biz_client client_conn_factory_example xproto_server xproto_client ws_bench_client
+    h2_client http_out_client http2_out_client biz_http_client http_close_demo http_server_close_demo router_client router_biz_client client_conn_factory_example xproto_server xproto_client ws_bench_client
     demo_multi_protocol_server demo_multi_thread_server h2_server ws_stickbridge_client
     ws_broadcast_user ws_broadcast_periodic
     PROPERTIES
