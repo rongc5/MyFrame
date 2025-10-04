@@ -7,33 +7,37 @@
 #include "common_util.h"
 
 channel_data_process::channel_data_process(std::shared_ptr<base_net_obj> p, int channelid):base_data_process(p),
-    _channelid(channelid)
+    _channelid(channelid),
+    _current(0)
 {
     _last_time = 0;
 }
 
 size_t channel_data_process::process_recv_buf(const char *buf, size_t len)
 {
-    std::deque<normal_obj_msg > que;
-    size_t k = len /sizeof(CHANNEL_MSG_TAG);//防止在handle_msg 中调用put_msg d导致死锁
+    std::deque<normal_obj_msg > processing_queue;
+    size_t k = len / sizeof(CHANNEL_MSG_TAG); //防止在handle_msg 中调用put_msg d导致死锁
     {
         std::lock_guard<std::mutex> lck (_mutex);
-        que.swap(_queue);
+        if (_queue[_current].empty())
+        {
+            _current = 1 - _current;
+        }
+        processing_queue.swap(_queue[_current]);
     }
-    PDEBUG("buf:%s, len:%zu, que.len:%zu", buf, len, que.size());
+    PDEBUG("buf:%s, len:%zu, que.len:%zu", buf, len, processing_queue.size());
 
     size_t i = 0;
     auto sp = _p_connect.lock();
-    std::deque<normal_obj_msg >::iterator it;
-    //for (it = _queue.begin(); it != _queue.end() && i < k; i++)
-    for (it = que.begin(); it != que.end(); i++)
+    while (!processing_queue.empty())
     {
-        if (sp) 
+        if (sp)
         {
-            sp->get_net_container()->handle_msg(it->_id, it->p_msg);
+            normal_obj_msg &msg = processing_queue.front();
+            sp->get_net_container()->handle_msg(msg._id, msg.p_msg);
         }
-
-        it = que.erase(it);
+        processing_queue.pop_front();
+        ++i;
     }
 
      k =  i * sizeof(CHANNEL_MSG_TAG);
@@ -53,7 +57,8 @@ void channel_data_process::put_msg(uint32_t obj_id, std::shared_ptr<normal_msg> 
     normal_obj_msg nbj_msg;
     nbj_msg.p_msg = p_msg;
     nbj_msg._id = obj_id;
-    _queue.push_back(nbj_msg);
+    int idle = 1 - _current;
+    _queue[idle].push_back(nbj_msg);
 
     //write(_channelid, CHANNEL_MSG_TAG, sizeof(CHANNEL_MSG_TAG));
     send(_channelid, CHANNEL_MSG_TAG, sizeof(CHANNEL_MSG_TAG), MSG_DONTWAIT);
@@ -82,7 +87,7 @@ void channel_data_process::handle_timeout(std::shared_ptr<timer_msg> & t_msg)
     int len = 0;
     {
         std::lock_guard<std::mutex> lck (_mutex);
-        len = _queue.size();
+        len = _queue[0].size() + _queue[1].size();
     }
 
     PDEBUG("handle_timeout: timer_id:%u timer_type:%u, len:%d", t_msg->_timer_id, t_msg->_timer_type, len);

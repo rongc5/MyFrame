@@ -23,7 +23,10 @@ class channel_data_process:public base_data_process
 
         virtual ~channel_data_process()
         {
-            _queue.clear();
+            for (auto &que : _queue)
+            {
+                que.clear();
+            }
         }	
 
         virtual size_t process_recv_buf(const char *buf, size_t len);
@@ -36,10 +39,10 @@ class channel_data_process:public base_data_process
 
     protected:
         std::mutex _mutex;
-        std::deque<normal_obj_msg > _queue;
+        std::deque<normal_obj_msg > _queue[2];
+        int _current;
         int _channelid;
         uint64_t _last_time;
 };
 
 #endif
-
