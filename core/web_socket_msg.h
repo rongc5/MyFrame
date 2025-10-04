@@ -50,7 +50,8 @@ const std::string WEB_SOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const uint64_t MAX_INT16_NUM = 65535;
 const std::string WEB_SOCKET_NONCE_KEY = "AQIDBAUGBwgJCgsMDQ4PEC==";
 const uint32_t WS_CONNECT_TIMEOUT = 20*60*1000; //20分钟
-const uint32_t MAX_PAYLOAD_LEN = 100*1024;
+// Increase frame payload limit to support larger JSON/base64 messages (e.g., code_all)
+const uint32_t MAX_PAYLOAD_LEN = 10*1024*1024; // 10MB
 
 
 enum WEB_SOCKET_STATUS
