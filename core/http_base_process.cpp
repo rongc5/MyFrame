@@ -141,6 +141,11 @@ void http_base_process::change_http_status(HTTP_STATUS status, bool if_change_se
     }
 }
 
+void http_base_process::notify_send_ready()
+{
+    change_http_status(SEND_HEAD);
+}
+
 http_base_data_process * http_base_process::get_process()
 {
     return _data_process;

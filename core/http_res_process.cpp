@@ -139,7 +139,12 @@ void http_res_process::parse_header(std::string & recv_head)
 void http_res_process::recv_finish()
 {
     _data_process->msg_recv_finish();
-    change_http_status(SEND_HEAD);
+    http_base_data_process* data_process = get_process();
+    if (data_process && data_process->async_response_pending()) {
+        PDEBUG("http_res_process waiting async response");
+        return;
+    }
+    notify_send_ready();
 }
 
 void http_res_process::send_finish()

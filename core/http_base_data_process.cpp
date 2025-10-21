@@ -11,6 +11,7 @@ http_base_data_process::http_base_data_process(http_base_process * _p_process):
 {
     PDEBUG("%p", this);
     _base_process = _p_process;
+    _async_response_pending = false;
 }
 
 http_base_data_process::~http_base_data_process()
@@ -60,3 +61,15 @@ size_t http_base_data_process::process_recv_body(const char *buf, size_t len, in
 
 
 
+
+
+void http_base_data_process::set_async_response_pending(bool pending)
+{
+    _async_response_pending = pending;
+}
+
+void http_base_data_process::complete_async_response()
+{
+    _async_response_pending = false;
+    _base_process->notify_send_ready();
+}

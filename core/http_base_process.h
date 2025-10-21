@@ -39,6 +39,7 @@ class http_base_process: public base_data_process
         http_res_head_para &get_res_head_para();
 
 		void change_http_status(HTTP_STATUS status, bool if_change_send = true);
+		void notify_send_ready();
 
 		http_base_data_process *get_process();
 

@@ -34,8 +34,16 @@ class http_base_data_process: public base_data_process
         //处理接收的数据
         virtual size_t process_recv_body(const char *buf, size_t len, int& result);	
 
+        bool async_response_pending() const { return _async_response_pending; }
+
     protected:
+        void set_async_response_pending(bool pending);
+
+        // 便利方法：完成异步响应（清除标志并通知发送）
+        void complete_async_response();
+
         http_base_process * _base_process;
+        bool _async_response_pending;
 };
 
 
