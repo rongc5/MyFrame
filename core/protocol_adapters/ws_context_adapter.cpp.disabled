@@ -1,0 +1,209 @@
+// MyFrame Unified Protocol Architecture - WebSocket Context Adapter Implementation
+#include "ws_context_adapter.h"
+#include "../base_net_obj.h"
+#include <cstring>
+
+namespace myframe {
+
+// ============================================================================
+// WsContextImpl Implementation
+// ============================================================================
+
+WsContextImpl::WsContextImpl(web_socket_process* process, std::shared_ptr<base_net_obj> conn)
+    : _process(process), _conn(conn), _is_closing(false) {
+}
+
+WsContextImpl::~WsContextImpl() {
+    // 清理用户数据
+    _user_data.clear();
+    // 清理待发送帧
+    while (!_pending_frames.empty()) {
+        _pending_frames.pop();
+    }
+}
+
+const WsFrame& WsContextImpl::frame() const {
+    return _frame;
+}
+
+void WsContextImpl::send_text(const std::string& text) {
+    if (_process && !_is_closing) {
+        _process->send_frame(WsFrame::TEXT, text.data(), text.size(), true);
+    }
+}
+
+void WsContextImpl::send_binary(const void* data, size_t len) {
+    if (_process && !_is_closing && data && len > 0) {
+        _process->send_frame(WsFrame::BINARY, data, len, true);
+    }
+}
+
+void WsContextImpl::send_ping() {
+    if (_process && !_is_closing) {
+        _process->send_frame(WsFrame::PING, nullptr, 0, true);
+    }
+}
+
+void WsContextImpl::send_pong() {
+    if (_process && !_is_closing) {
+        _process->send_frame(WsFrame::PONG, nullptr, 0, true);
+    }
+}
+
+void WsContextImpl::close(uint16_t code, const std::string& reason) {
+    if (_process && !_is_closing) {
+        _is_closing = true;
+        // 发送关闭帧
+        std::string close_data;
+        close_data.resize(2 + reason.size());
+        uint16_t code_be = (code >> 8) | ((code & 0xFF) << 8);  // 网络字节序
+        std::memcpy(close_data.data(), &code_be, 2);
+        if (!reason.empty()) {
+            std::memcpy(close_data.data() + 2, reason.data(), reason.size());
+        }
+        _process->send_frame(WsFrame::CLOSE, close_data.data(), close_data.size(), true);
+    }
+}
+
+bool WsContextImpl::is_closing() const {
+    return _is_closing;
+}
+
+size_t WsContextImpl::pending_frames() const {
+    return _pending_frames.size();
+}
+
+void WsContextImpl::broadcast(const std::string& message) {
+    // 广播功能需要配合 Hub，这里只是接口实现
+    (void)message;
+}
+
+void WsContextImpl::broadcast_except_self(const std::string& message) {
+    // 广播功能需要配合 Hub，这里只是接口实现
+    (void)message;
+}
+
+void WsContextImpl::set_user_data(const std::string& key, void* data) {
+    _user_data[key] = data;
+}
+
+void* WsContextImpl::get_user_data(const std::string& key) const {
+    auto it = _user_data.find(key);
+    return it != _user_data.end() ? it->second : nullptr;
+}
+
+std::shared_ptr<base_net_obj> WsContextImpl::raw_connection() {
+    return _conn;
+}
+
+base_net_thread* WsContextImpl::get_thread() const {
+    // 从连接对象中获取所在的线程
+    if (_conn) {
+        // 尝试从连接中获取线程引用
+        // 注：具体实现取决于 base_net_obj 的接口
+        return nullptr;  // 待实现：需要根据实际框架接口完善
+    }
+    return nullptr;
+}
+
+// ============================================================================
+// WsContextAdapter Implementation
+// ============================================================================
+
+WsContextAdapter::WsContextAdapter(
+    std::shared_ptr<base_net_obj> conn,
+    IProtocolHandler* handler)
+    : web_socket_res_process(conn), _handler(handler) {
+    // 创建并设置数据处理器
+    set_process(new WsContextDataProcess(this, handler));
+}
+
+WsContextAdapter::~WsContextAdapter() {
+}
+
+std::unique_ptr<base_data_process> WsContextAdapter::create(
+    std::shared_ptr<base_net_obj> conn,
+    IProtocolHandler* handler) {
+    return std::make_unique<WsContextAdapter>(conn, handler);
+}
+
+// ============================================================================
+// WsContextDataProcess Implementation
+// ============================================================================
+
+WsContextDataProcess::WsContextDataProcess(
+    web_socket_process* process,
+    IProtocolHandler* handler)
+    : web_socket_data_process(process), _handler(handler) {
+    // 创建上下文对象
+    _context = std::make_shared<WsContextImpl>(process, process ? process->get_base_net() : nullptr);
+}
+
+WsContextDataProcess::~WsContextDataProcess() {
+}
+
+void WsContextDataProcess::msg_recv_finish() {
+    if (!_handler || !_context) return;
+
+    try {
+        // 构造帧对象
+        WsFrame frame;
+        frame.opcode = static_cast<WsFrame::OpCode>(get_opcode());
+        frame.payload = get_payload();
+        frame.fin = is_fin();
+
+        // 设置上下文的帧
+        _context->set_frame(frame);
+
+        // 处理不同的操作码
+        switch (frame.opcode) {
+            case WsFrame::PING:
+                // 自动回复 PONG
+                _context->send_pong();
+                break;
+
+            case WsFrame::CLOSE:
+                // 标记为关闭中
+                _context->_is_closing = true;
+                break;
+
+            case WsFrame::TEXT:
+            case WsFrame::BINARY:
+            case WsFrame::CONTINUATION:
+                // 调用用户处理器
+                _handler->on_ws_frame(*_context);
+                break;
+
+            default:
+                break;
+        }
+    } catch (const std::exception& e) {
+        if (_handler) {
+            _handler->on_error(std::string("WebSocket handler exception: ") + e.what());
+        }
+    }
+}
+
+void WsContextDataProcess::on_connect() {
+    if (_handler && _context) {
+        ConnectionInfo conn_info;
+        // 尝试获取连接信息
+        auto raw_conn = _context->raw_connection();
+        if (raw_conn) {
+            conn_info.remote_ip = raw_conn->get_remote_ip();
+            conn_info.remote_port = raw_conn->get_remote_port();
+            conn_info.local_ip = raw_conn->get_local_ip();
+            conn_info.local_port = raw_conn->get_local_port();
+            conn_info.connection_id = raw_conn->get_id();
+        }
+        _handler->on_connect(conn_info);
+    }
+}
+
+void WsContextDataProcess::on_close() {
+    if (_handler) {
+        _handler->on_disconnect();
+    }
+}
+
+} // namespace myframe

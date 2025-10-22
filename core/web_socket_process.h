@@ -8,8 +8,13 @@
 
 class base_net_obj;
 class web_socket_data_process;
+
+namespace myframe { class WsContextImpl; }
+
 class web_socket_process: public base_data_process
 {
+	friend class myframe::WsContextImpl;
+
 	public:
 		web_socket_process(std::shared_ptr<base_net_obj> p);
 
@@ -17,7 +22,7 @@ class web_socket_process: public base_data_process
         
         void set_process(web_socket_data_process * data_process);
 
-		//´¦Àí½ÓÊÕµÄÊý¾Ý
+		//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Õµï¿½ï¿½ï¿½ï¿½ï¿½
 		size_t process_recv_buf(const char *buf, const size_t len);
 
         virtual void handle_msg(std::shared_ptr<normal_msg> & p_msg);

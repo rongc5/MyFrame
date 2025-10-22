@@ -36,6 +36,7 @@ endif()
 ## Core source files (minimal set)
 file(GLOB CORE_SOURCES
     "core/*.cpp"
+    "core/protocol_adapters/*.cpp"
 )
 # Exclude legacy logging modules that require additional infra
 ## Exclude legacy log modules; provide stubs instead
@@ -89,6 +90,7 @@ endif()
 
 # Copy headers to include directory in build folder
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/protocol_adapters)
 file(COPY core/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include
      FILES_MATCHING PATTERN "*.h")
 if (HAVE_SIGN_LIB AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign/include")

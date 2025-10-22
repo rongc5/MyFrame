@@ -107,13 +107,43 @@ target_link_libraries(ws_broadcast_periodic ${COMMON_LIBS})
 # StickBridge client demo leveraging myframe websocket stack
 add_executable(ws_stickbridge_client ws_stickbridge_client.cpp)
 target_link_libraries(ws_stickbridge_client ${COMMON_LIBS})
+
+# Unified Protocol Architecture - Simple HTTP Example (Level 1 API)
+add_executable(unified_simple_http unified_simple_http.cpp)
+target_link_libraries(unified_simple_http ${COMMON_LIBS})
+
+# Unified Protocol Architecture - Mixed HTTP + WebSocket Example (Level 1 API)
+add_executable(unified_mixed_server unified_mixed_server.cpp)
+target_link_libraries(unified_mixed_server ${COMMON_LIBS})
+
+# Unified Protocol Architecture - WebSocket Client Test
+add_executable(unified_ws_client_test unified_ws_client_test.cpp)
+target_link_libraries(unified_ws_client_test ${COMMON_LIBS})
+
+# Unified Protocol Architecture - Level 2 Context Demo
+add_executable(unified_level2_demo unified_level2_demo.cpp)
+target_link_libraries(unified_level2_demo ${COMMON_LIBS})
+
+# Unified Protocol Architecture - HTTPS/WSS Server Demo
+add_executable(unified_https_wss_server unified_https_wss_server.cpp)
+target_link_libraries(unified_https_wss_server ${COMMON_LIBS})
+
+# Unified Protocol Architecture - Async Response Demo
+add_executable(unified_async_demo unified_async_demo.cpp)
+target_link_libraries(unified_async_demo ${COMMON_LIBS})
+
+# Simple Async Test with Timer
+add_executable(simple_async_test simple_async_test.cpp)
+target_link_libraries(simple_async_test ${COMMON_LIBS})
+
 # Set output directory
 # Always-present example targets
 set_target_properties(
     http_server async_http_demo https_server wss_server
     h2_client http_out_client http2_out_client biz_http_client http_close_demo http_server_close_demo router_client router_biz_client client_conn_factory_example xproto_server xproto_client ws_bench_client
     demo_multi_protocol_server demo_multi_thread_server h2_server ws_stickbridge_client
-    ws_broadcast_user ws_broadcast_periodic
+    ws_broadcast_user ws_broadcast_periodic 
+    unified_simple_http unified_mixed_server unified_ws_client_test unified_level2_demo unified_https_wss_server unified_async_demo simple_async_test
     PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
 )

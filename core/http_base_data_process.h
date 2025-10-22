@@ -36,11 +36,13 @@ class http_base_data_process: public base_data_process
 
         bool async_response_pending() const { return _async_response_pending; }
 
-    protected:
+        // 便利方法：完成异步响应（清除标志并通知发送）
+        virtual void complete_async_response();
+
+        // 设置异步响应挂起标志
         void set_async_response_pending(bool pending);
 
-        // 便利方法：完成异步响应（清除标志并通知发送）
-        void complete_async_response();
+    protected:
 
         http_base_process * _base_process;
         bool _async_response_pending;
