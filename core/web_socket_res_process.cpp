@@ -98,8 +98,18 @@ std::string web_socket_res_process::gen_send_http_head()
             << "Upgrade: websocket\r\n"
             << "Connection: Upgrade\r\n"
             << "Sec-WebSocket-Accept: " << _s_accept_key <<"\r\n";
-        if (_s_ws_protocol != "")
-            ss << "Sec-WebSocket-Protocol: chat\r\n";				
+        if (!_s_ws_protocol.empty()) {
+            std::string protocol = _s_ws_protocol;
+            StringTrim(protocol);
+            auto comma = protocol.find(",");
+            if (comma != std::string::npos) {
+                protocol = protocol.substr(0, comma);
+                StringTrim(protocol);
+            }
+            if (!protocol.empty()) {
+                ss << "Sec-WebSocket-Protocol: " << protocol << "\r\n";
+            }
+        }
         ss << "\r\n";
     }
     else //
@@ -116,6 +126,7 @@ void  web_socket_res_process::parse_header()
     GetCaseStringByLabel(_recv_header, "Sec-WebSocket-Key:", "\r\n", _s_websocket_key);
     StringTrim(_s_websocket_key);
     GetCaseStringByLabel(_recv_header, "Sec-WebSocket-Protocol:", "\r\n", _s_ws_protocol);
+    StringTrim(_s_ws_protocol);
     std::string tmp;
     GetCaseStringByLabel(_recv_header, "Sec-WebSocket-Version:", "\r\n", tmp);
     _wb_version = strtoull(tmp.c_str(), 0, 10);

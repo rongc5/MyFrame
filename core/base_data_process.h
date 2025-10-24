@@ -54,6 +54,11 @@ class base_data_process
         // (e.g., HTTP client while still sending request).
         virtual bool want_recv() const { return true; }
 
+        // Whether this process prefers using MSG_PEEK to avoid consuming data
+        // during early protocol detection (e.g. keep TLS ClientHello available).
+        // Default false; detectors override to request peeking.
+        virtual bool want_peek() const { return false; }
+
         // Virtual function for getting process name (for debugging/logging)
         virtual const char* name() const { return "base_data_process"; }
 

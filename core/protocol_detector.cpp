@@ -7,14 +7,15 @@ namespace myframe {
 
 ProtocolDetector::ProtocolDetector(
     std::shared_ptr<base_net_obj> conn,
-    const std::vector<UnifiedProtocolFactory::ProtocolEntry>& protocols)
+    const std::vector<UnifiedProtocolFactory::ProtocolEntry>& protocols,
+    bool over_tls)
     : ::base_data_process(conn)
     , _protocols(protocols)
+    , _over_tls(over_tls)
     , _detected(false)
 {
-    // 按优先级排序
-    std::sort(_protocols.begin(), _protocols.end());
-
+    // 协议已在传入前排序，不需要再次排序
+    // std::sort() 可能导致 std::function 对象的移动/拷贝问题
     PDEBUG("[ProtocolDetector] Created with %zu protocols", _protocols.size());
 }
 
@@ -60,11 +61,17 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
                 // 将缓冲的数据交给协议处理器，可能只消费部分数据
                 size_t total_consumed = 0;
 
+                // CRITICAL: 缓存 buffer 相关数据到局部变量
+                // 因为 _delegate->process_recv_buf() 可能会调用 set_process() 删除 this 对象
+                // 之后不能再访问任何成员变量（_buffer, _delegate 等）
+                const char* buffer_data = _buffer.data();
+                size_t buffer_size = _buffer.size();
+
                 // 循环处理直到处理器无法继续消费
-                while (total_consumed < _buffer.size()) {
-                    size_t available = _buffer.size() - total_consumed;
+                while (total_consumed < buffer_size) {
+                    size_t available = buffer_size - total_consumed;
                     size_t consumed = _delegate->process_recv_buf(
-                        _buffer.data() + total_consumed, available);
+                        buffer_data + total_consumed, available);
 
                     if (consumed == 0) {
                         // 处理器暂时无法消费更多数据，保留剩余部分
@@ -81,15 +88,20 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
                     // 如果还有剩余数据，将在下一次循环尝试继续处理
                 }
 
-                // 删除已消费的数据，保留未消费的部分
+                // 注意：如果 delegate 调用了 set_process()，this 对象可能已被删除
+                // 此时不能访问任何成员变量！
+                // 当 total_consumed == buffer_size 时，说明所有数据都被消费，
+                // delegate 可能已经替换了 this，所以直接返回，不再访问 _buffer
+                if (total_consumed >= buffer_size) {
+                    // 所有数据都被消费，直接返回（可能 this 已被删除）
+                    return len;
+                }
+
+                // 如果没有消费所有数据，说明 delegate 没有替换 this，可以安全访问成员
                 if (total_consumed > 0) {
-                    if (total_consumed >= _buffer.size()) {
-                        _buffer.clear();
-                    } else {
-                        _buffer.erase(0, total_consumed);
-                        PDEBUG("[ProtocolDetector] Consumed %zu bytes, %zu bytes remaining",
-                               total_consumed, _buffer.size());
-                    }
+                    _buffer.erase(0, total_consumed);
+                    PDEBUG("[ProtocolDetector] Consumed %zu bytes, %zu bytes remaining",
+                           total_consumed, _buffer.size());
                 }
 
                 // 返回本次实际接收的长度

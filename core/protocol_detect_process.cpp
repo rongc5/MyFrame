@@ -7,7 +7,7 @@
 #include <sys/socket.h>
 #include <cstring>
 
-protocol_detect_process::protocol_detect_process(std::shared_ptr<base_net_obj> base_obj, IAppHandler* app_handler, bool over_tls)
+protocol_detect_process::protocol_detect_process(std::shared_ptr<base_net_obj> base_obj, myframe::IApplicationHandler* app_handler, bool over_tls)
     : base_data_process(base_obj)
     , _protocol_detected(false)
     , _over_tls(over_tls)

@@ -1,11 +1,11 @@
 #pragma once
 
 #include "http_base_data_process.h"
-#include "app_handler.h"
+#include "app_handler_v2.h"
 
 class app_http_data_process : public http_base_data_process {
 public:
-    app_http_data_process(http_base_process* p, IAppHandler* h)
+    app_http_data_process(http_base_process* p, myframe::IApplicationHandler* h)
         : http_base_data_process(p), _handler(h), _head_ready(false), _body_ready(false) {}
 
     virtual void header_recv_finish() override {}
@@ -17,7 +17,7 @@ public:
     }
     virtual void msg_recv_finish() override {
         // 组装 HttpRequest -> 调用 handler -> 生成响应缓存
-        HttpRequest req;
+        myframe::HttpRequest req;
         auto& rh = _base_process->get_req_head_para();
         req.method = rh._method;
         req.url = rh._url_path;
@@ -35,8 +35,9 @@ public:
         }
         req.body.swap(_body);
 
-        HttpResponse rsp;
+        myframe::HttpResponse rsp;
         if (_handler) {
+            myframe::detail::HandlerContextScope scope(this);
             _handler->on_http(req, rsp);
         } else {
             rsp.status = 200; rsp.reason = "OK";
@@ -75,9 +76,21 @@ public:
         if (!_body_ready || !_p_body) { result = 1; return 0; }
         _body_ready = false; result = 1; return _p_body.release();
     }
+    void handle_msg(std::shared_ptr<normal_msg>& msg) override {
+        if (_handler) {
+            myframe::detail::HandlerContextScope scope(this);
+            _handler->handle_msg(msg);
+        }
+    }
+    void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override {
+        if (_handler) {
+            myframe::detail::HandlerContextScope scope(this);
+            _handler->handle_timeout(t_msg);
+        }
+    }
 
 private:
-    IAppHandler* _handler;
+    myframe::IApplicationHandler* _handler;
     std::string _body;
     std::unique_ptr<std::string> _p_head;
     std::unique_ptr<std::string> _p_body;

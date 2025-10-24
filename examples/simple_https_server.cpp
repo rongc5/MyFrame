@@ -1,6 +1,6 @@
 #include "../include/server.h"
 #include "../include/multi_protocol_factory.h"
-#include "../include/app_handler.h"
+#include "../include/app_handler_v2.h"
 #include "../core/ssl_context.h"
 #include "../core/listen_factory.h"
 #include <thread>
@@ -8,9 +8,9 @@
 #include <iostream>
 #include <signal.h>
 
-class SimpleHttpsHandler : public IAppHandler {
+class SimpleHttpsHandler : public myframe::IApplicationHandler {
 public:
-    void on_http(const HttpRequest& req, HttpResponse& res) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& res) override {
         std::cout << "[HTTPS] " << req.method << " " << req.url << std::endl;
         
         res.status = 200;
@@ -41,11 +41,12 @@ public:
         }
     }
     
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
-        send = WsFrame::text("Error: This is HTTPS-only server");
+    void on_ws(const myframe::WsFrame& recv, myframe::WsFrame& send) override {
+        (void)recv;
+        send = myframe::WsFrame::text("Error: This is HTTPS-only server");
     }
     
-    void on_connect() override {
+    void on_connect(const myframe::ConnectionInfo&) override {
         std::cout << "[HTTPS] 新连接" << std::endl;
     }
     

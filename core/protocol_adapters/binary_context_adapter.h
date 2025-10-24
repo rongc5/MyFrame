@@ -106,7 +106,6 @@ private:
     IProtocolHandler* _handler;
     std::shared_ptr<BinaryContextImpl> _context;
     std::string _recv_buffer;
-    std::string _current_send;
 };
 
 } // namespace myframe

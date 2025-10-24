@@ -21,7 +21,8 @@ public:
     // 构造函数
     ProtocolDetector(
         std::shared_ptr<base_net_obj> conn,
-        const std::vector<UnifiedProtocolFactory::ProtocolEntry>& protocols);
+        const std::vector<UnifiedProtocolFactory::ProtocolEntry>& protocols,
+        bool over_tls = false);
 
     virtual ~ProtocolDetector();
 
@@ -37,10 +38,12 @@ public:
     // 查询接口
     bool is_detected() const { return _detected; }
     const std::string& detected_protocol() const { return _detected_protocol; }
+    bool want_peek() const override { return !_detected && !_over_tls; }
 
 private:
     std::vector<UnifiedProtocolFactory::ProtocolEntry> _protocols;     // 协议列表（已排序）
     std::unique_ptr<::base_data_process> _delegate; // 实际的协议处理器
+    bool _over_tls;                              // 是否运行在 TLS 之上（需要禁用 MSG_PEEK）
     bool _detected;                             // 是否已检测到协议
     std::string _buffer;                        // 检测缓冲区
     std::string _detected_protocol;             // 检测到的协议名称

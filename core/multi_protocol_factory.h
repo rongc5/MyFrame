@@ -2,7 +2,7 @@
 #define __MULTI_PROTOCOL_FACTORY_H__
 
 #include "factory_base.h"
-#include "app_handler.h"
+#include "app_handler_v2.h"
 #include <memory>
 
 // Forward declarations
@@ -19,13 +19,13 @@ public:
         PlainOnly  // 只支持明文
     };
     
-    MultiProtocolFactory(IAppHandler* handler, Mode mode = Mode::Auto)
+    MultiProtocolFactory(myframe::IApplicationHandler* handler, Mode mode = Mode::Auto)
         : _handler(handler), _app_handler(handler), _mode(mode), _container(nullptr), _rr_hint(0) {}
     
     virtual ~MultiProtocolFactory() = default;
     
     // Accessors needed by server.cpp
-    IAppHandler* handler() const { return _handler; }
+    myframe::IApplicationHandler* handler() const { return _handler; }
     Mode mode() const { return _mode; }
     
     // IFactory interface - declarations only, implementations in multi_protocol_factory_impl.cpp
@@ -38,8 +38,8 @@ public:
     common_obj_container* _container;
     
 private:
-    IAppHandler* _handler;
-    IAppHandler* _app_handler;  // For compatibility with impl
+    myframe::IApplicationHandler* _handler;
+    myframe::IApplicationHandler* _app_handler;  // For compatibility with impl
     Mode _mode;
     std::vector<uint32_t> _worker_indices;
     uint32_t _rr_hint;

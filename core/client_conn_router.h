@@ -6,12 +6,12 @@
 #include <functional>
 
 #include "common_obj_container.h"
-#include "app_handler.h"
+#include "app_handler_v2.h"
 #include "base_net_obj.h"
 
 struct ClientBuildCtx {
     common_obj_container* container{nullptr};
-    IAppHandler* handler{nullptr};
+    myframe::IApplicationHandler* handler{nullptr};
     std::map<std::string, std::string> headers; // for HTTP
     std::string method{"GET"};
     std::string body;
@@ -48,5 +48,4 @@ private:
 
 // Register default builders for http/https/ws/wss
 void register_default_client_builders(ClientConnRouter& r);
-
 

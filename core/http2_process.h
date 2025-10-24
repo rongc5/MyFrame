@@ -3,13 +3,13 @@
 #include "base_data_process.h"
 #include "http2_frame.h"
 #include <vector>
-#include "app_handler.h"
+#include "app_handler_v2.h"
 #include <unordered_map>
 #include <map>
 
 class http2_process : public base_data_process {
 public:
-    explicit http2_process(std::shared_ptr<base_net_obj> c, IAppHandler* app=nullptr)
+    explicit http2_process(std::shared_ptr<base_net_obj> c, myframe::IApplicationHandler* app=nullptr)
         : base_data_process(c)
         , _app(app)
         , _preface_ok(false)
@@ -20,18 +20,20 @@ public:
     virtual size_t process_recv_buf(const char* buf, size_t len) override;
     virtual std::string* get_send_buf() override { return base_data_process::get_send_buf(); }
     virtual void reset() override { _in.clear(); _preface_ok=false; _sent_settings=false; _got_client_settings=false; }
+    virtual void handle_msg(std::shared_ptr<normal_msg>& msg) override;
+    virtual void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override;
 
 private:
     void on_connected_once();
     bool parse_frames(size_t& consumed);
     bool handle_headers_block(uint32_t stream_id, const std::string& block, bool end_stream);
-    void send_response(uint32_t stream_id, const HttpResponse& rsp);
+    void send_response(uint32_t stream_id, const myframe::HttpResponse& rsp);
     void on_data(uint32_t stream_id, const unsigned char* p, uint32_t len, bool end_stream);
     void finish_stream(uint32_t stream_id);
 
     std::string _out;
     std::vector<unsigned char> _in;
-    IAppHandler* _app;
+    myframe::IApplicationHandler* _app;
     bool _preface_ok;
     bool _sent_settings;
     bool _got_client_settings;

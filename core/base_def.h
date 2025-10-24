@@ -189,6 +189,8 @@ const int URLESCAPE[] =
 // HTTP/2 client timers
 #define H2_PING_TIMER_TYPE 9
 #define H2_TOTAL_TIMEOUT_TIMER_TYPE 10
+// Level 1 application handlers may request timers using this type
+#define APPLICATION_TIMER_TYPE 100
 
 #ifdef DEBUG
 #define PDEBUG(format, arg...) \

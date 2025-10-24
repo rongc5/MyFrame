@@ -1,6 +1,6 @@
 #include "../include/server.h"
 #include "../include/multi_protocol_factory.h"
-#include "../include/app_handler.h"
+#include "../include/app_handler_v2.h"
 #include "../core/ssl_context.h"
 #include "../core/listen_factory.h"
 #include <thread>
@@ -13,11 +13,11 @@
 // Notes:
 // - Uses TLS with ALPN; if client offers "h2" it negotiates HTTP/2
 // - Falls back to HTTP/1.1 if client does not support h2 (can be forced via env)
-// - Business logic is shared via IAppHandler::on_http
+// - Business logic is shared via IApplicationHandler::on_http
 
-class SimpleH2Handler : public IAppHandler {
+class SimpleH2Handler : public myframe::IApplicationHandler {
 public:
-    void on_http(const HttpRequest& req, HttpResponse& res) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& res) override {
         std::cout << "[H2] " << req.method << " " << req.url << std::endl;
 
         res.status = 200;
@@ -66,9 +66,9 @@ public:
         res.body = "H2 server OK. Try /hello or /api/status";
     }
 
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
+    void on_ws(const myframe::WsFrame& recv, myframe::WsFrame& send) override {
         (void)recv; // HTTP/2 example; no WS here
-        send = WsFrame::text("Error: H2 server does not accept WebSocket on this port");
+        send = myframe::WsFrame::text("Error: H2 server does not accept WebSocket on this port");
     }
 };
 
@@ -125,4 +125,3 @@ int main(int argc, char** argv) {
     while (true) std::this_thread::sleep_for(std::chrono::milliseconds(200));
     return 0;
 }
-

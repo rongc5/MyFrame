@@ -1,15 +1,15 @@
 #include "../include/server.h"
 #include "../include/multi_protocol_factory.h"
-#include "../include/app_handler.h"
+#include "../include/app_handler_v2.h"
 #include "../core/listen_factory.h"
 #include <thread>
 #include <chrono>
 #include <iostream>
 #include <signal.h>
 
-class SimpleHttpHandler : public IAppHandler {
+class SimpleHttpHandler : public myframe::IApplicationHandler {
 public:
-    void on_http(const HttpRequest& req, HttpResponse& res) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& res) override {
         std::cout << "[HTTP] " << req.method << " " << req.url << std::endl;
         
         res.status = 200;
@@ -32,11 +32,12 @@ public:
         }
     }
     
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
-        send = WsFrame::text("Error: This is HTTP-only server");
+    void on_ws(const myframe::WsFrame& recv, myframe::WsFrame& send) override {
+        (void)recv;
+        send = myframe::WsFrame::text("Error: This is HTTP-only server");
     }
     
-    void on_connect() override {
+    void on_connect(const myframe::ConnectionInfo&) override {
         std::cout << "[HTTP] 新连接" << std::endl;
     }
     

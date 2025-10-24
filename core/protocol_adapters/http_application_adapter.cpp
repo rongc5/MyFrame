@@ -76,6 +76,7 @@ void HttpApplicationDataProcess::msg_recv_finish() {
 
     try {
         // 调用用户处理器
+        detail::HandlerContextScope scope(this);
         _handler->on_http(req, res);
 
         PDEBUG("[HttpApplicationDataProcess] Response: %d %s (body size=%zu)",

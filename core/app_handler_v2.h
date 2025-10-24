@@ -3,6 +3,8 @@
 #ifndef __APP_HANDLER_V2_H__
 #define __APP_HANDLER_V2_H__
 
+#include "base_def.h"
+#include "common_def.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -14,6 +16,25 @@
 class normal_msg;
 class timer_msg;
 class base_net_thread;
+class base_data_process;
+
+namespace myframe {
+namespace detail {
+
+// RAII scope：在 handler 回调过程中记录当前数据流程上下文
+class HandlerContextScope {
+public:
+    explicit HandlerContextScope(::base_data_process* process);
+    ~HandlerContextScope();
+private:
+    ::base_data_process* _previous;
+};
+
+// 获取当前线程的 handler 执行上下文（若无则返回 nullptr）
+::base_data_process* current_process();
+
+} // namespace detail
+} // namespace myframe
 
 namespace myframe {
 
@@ -246,12 +267,18 @@ public:
         (void)t_msg;
     }
 
+    // ========== 定时器辅助 ==========
+    // 触发一个延迟执行的超时，返回生成的 timer_id（失败时返回 0）
+    uint32_t schedule_timeout(uint32_t delay_ms, uint32_t timer_type = APPLICATION_TIMER_TYPE) const;
+
     // ========== 线程访问 ==========
     // 获取当前业务线程
     // 返回 nullptr 表示线程信息不可用
-    virtual ::base_net_thread* get_current_thread() const {
-        return nullptr;
-    }
+    virtual ::base_net_thread* get_current_thread() const;
+
+    // ========== 连接标识 ==========
+    // 获取当前连接的 ObjId（若不可用则返回 {0,0}）
+    ObjId current_connection_id() const;
 };
 
 } // namespace myframe

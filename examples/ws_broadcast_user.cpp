@@ -1,13 +1,13 @@
 #include "server.h"
 #include "multi_protocol_factory.h"
-#include "app_handler.h"
+#include "app_handler_v2.h"
 #include "../core/ws_push_hub.h"
 #include <sstream>
 #include <iostream>
 
-class WsBroadcastUserApp : public IAppHandler {
+class WsBroadcastUserApp : public myframe::IApplicationHandler {
 public:
-    void on_http(const HttpRequest& req, HttpResponse& res) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& res) override {
         if (req.url.rfind("/login", 0) == 0) {
             // /login?user=alice
             auto pos = req.url.find('?');
@@ -61,11 +61,11 @@ public:
         res.body = "Not Found";
     }
 
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
-        if (recv.opcode == WsFrame::TEXT && recv.payload == "ping") {
-            send = WsFrame::text("pong");
+    void on_ws(const myframe::WsFrame& recv, myframe::WsFrame& send) override {
+        if (recv.opcode == myframe::WsFrame::TEXT && recv.payload == "ping") {
+            send = myframe::WsFrame::text("pong");
         } else {
-            send = WsFrame::text(std::string("echo:") + recv.payload);
+            send = myframe::WsFrame::text(std::string("echo:") + recv.payload);
         }
     }
 

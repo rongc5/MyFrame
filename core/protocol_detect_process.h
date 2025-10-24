@@ -1,7 +1,7 @@
 #pragma once
 
 #include "base_data_process.h"
-#include "app_handler.h"
+#include "app_handler_v2.h"
 #include "protocol_probes.h"
 #include <vector>
 
@@ -10,10 +10,10 @@
 class protocol_detect_process : public base_data_process
 {
 public:
-    protocol_detect_process(std::shared_ptr<base_net_obj> base_obj, IAppHandler* app_handler = 0, bool over_tls = false);
+    protocol_detect_process(std::shared_ptr<base_net_obj> base_obj, myframe::IApplicationHandler* app_handler = nullptr, bool over_tls = false);
     virtual ~protocol_detect_process();
     
-    void set_app_handler(IAppHandler* handler) { _app_handler = handler; }
+    void set_app_handler(myframe::IApplicationHandler* handler) { _app_handler = handler; }
     void add_probe(std::unique_ptr<IProtocolProbe> probe) { _probes.push_back(std::move(probe)); }
     void set_detect_timeout(uint64_t ms) { _detect_timeout_ms = ms; }
 
@@ -22,12 +22,12 @@ public:
     virtual void handle_timeout(std::shared_ptr<timer_msg>& t) override;
     // Prefer MSG_PEEK only before protocol is detected and only when not over TLS.
     // When running over TLS (after installing SslCodec), data must be consumed by SSL.
-    bool want_peek() const { return !_protocol_detected && !_over_tls; }
+    bool want_peek() const override { return !_protocol_detected && !_over_tls; }
 
 private:
     bool _protocol_detected;
     bool _over_tls;
-    IAppHandler* _app_handler;
+    myframe::IApplicationHandler* _app_handler;
     std::vector<std::unique_ptr<IProtocolProbe>> _probes;
     // Detection guards
     size_t _total_bytes;

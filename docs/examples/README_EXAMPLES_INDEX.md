@@ -1,336 +1,91 @@
-# MyFrame Ê¾Àı³ÌĞòË÷Òı
+# MyFrame ç¤ºä¾‹ç´¢å¼•
 
-**×îºó¸üĞÂ**: 2025-10-22
+**æ›´æ–°æ—¥æœŸ**: 2025-10-22
 
-±¾Ä¿Â¼°üº¬ MyFrame ¿ò¼ÜµÄËùÓĞÊ¾Àı³ÌĞò£¬°´¹¦ÄÜ·ÖÀàÈçÏÂ£º
+æœ¬ç›®å½•åˆ—å‡ºä»“åº“ä¸­å¯ç›´æ¥è¿è¡Œçš„ç¤ºä¾‹ç¨‹åºï¼ŒæŒ‰åŠŸèƒ½åˆ†ç±»ã€‚
 
 ---
 
-## ? ·ÖÀàË÷Òı
+## ç»Ÿä¸€åè®®æ¶æ„ (Unified Protocol Architecture)
 
-### ? Í³Ò»Ğ­Òé¼Ü¹¹Ê¾Àı (Unified Protocol Architecture)
-
-**ÍÆ¼öĞÂÓÃ»§´ÓÕâĞ©Ê¾Àı¿ªÊ¼**
-
-| Ê¾Àı | ¹¦ÄÜ | Level | ËµÃ÷ |
+| ç¤ºä¾‹ | åŠŸèƒ½ | Level | è¯´æ˜ |
 |------|------|-------|------|
-| `unified_simple_http.cpp` | HTTP ·şÎñÆ÷ | Level 1 | ×î¼òµ¥µÄ HTTP Ê¾Àı ? |
-| `unified_mixed_server.cpp` | HTTP + WebSocket | Level 1 | »ìºÏĞ­Òé·şÎñÆ÷ |
-| `unified_level2_demo.cpp` | HTTP Context | Level 2 | Level 2 ¸ß¼¶ÌØĞÔ |
-| `unified_https_wss_server.cpp` | HTTPS + WSS | Level 1 | TLS ¼ÓÃÜÊ¾Àı |
-| `unified_async_demo.cpp` | Òì²½ÏìÓ¦ | Level 2 | Òì²½ºÍÏûÏ¢´¦Àí |
-| `unified_ws_client_test.cpp` | WebSocket ¿Í»§¶Ë | - | WS ¿Í»§¶Ë²âÊÔ |
+| `unified_simple_http.cpp` | HTTP æœåŠ¡å™¨ | Level 1 | æœ€ç®€ HTTP ç¤ºä¾‹ |
+| `unified_mixed_server.cpp` | HTTP + WebSocket | Level 1 | å¤šåè®®åŒç«¯å£ |
+| `unified_level2_demo.cpp` | HTTP Context | Level 2 | Level 2 è¿›é˜¶åŠŸèƒ½ |
+| `unified_https_wss_server.cpp` | HTTPS + WSS | Level 1 | TLS æ¼”ç¤º |
+| `unified_async_demo.cpp` | å¼‚æ­¥å“åº” | Level 2 | Async/æ¶ˆæ¯ç¤ºä¾‹ |
+| `level1_multi_protocol.cpp` | HTTP/WS/HTTPS/WSS/HTTP2 | Level 1 | æ–°å¢ Level1 å¤šåè®®æ¼”ç¤º |
+| `level2_multi_protocol.cpp` | HTTP/WS/Binary | Level 2 | æ–°å¢ Level2 å¤šåè®® + å¼‚æ­¥ |
+| `level3_custom_echo.cpp` | RAW è‡ªå®šä¹‰åè®® | Level 3 | ç›´æ¥ç»§æ‰¿ base_data_process |
+| `unified_ws_client_test.cpp` | WebSocket å®¢æˆ·ç«¯ | - | WebSocket æµ‹è¯• |
 
-### ?? Òì²½ÏìÓ¦ºÍ¶¨Ê±Æ÷
+## å¼‚æ­¥ä¸å®šæ—¶å™¨
 
-| Ê¾Àı | ¹¦ÄÜ | ËµÃ÷ |
+| ç¤ºä¾‹ | åŠŸèƒ½ | è¯´æ˜ |
 |------|------|------|
-| `simple_async_test.cpp` | Òì²½ + ¶¨Ê±Æ÷ | **ÍÆ¼öÈëÃÅ** - ¶¨Ê±Æ÷Ê¹ÓÃÊ¾Àı ? |
-| `async_http_server_demo.cpp` | ÍêÕûÒì²½·şÎñÆ÷ | ÍêÕûµÄÒì²½ÏìÓ¦ÑİÊ¾ |
+| `simple_async_test.cpp` | å®šæ—¶å™¨ + å¼‚æ­¥ | åŸºç¡€å®šæ—¶å™¨ç¤ºä¾‹ |
+| `async_http_server_demo.cpp` | å¼‚æ­¥ HTTP | å±•ç¤ºè·¨çº¿ç¨‹å“åº” |
 
-### ? »ù´¡ HTTP/HTTPS Ê¾Àı
+## HTTP/HTTPS ç¤ºä¾‹
 
-| Ê¾Àı | ¹¦ÄÜ | ËµÃ÷ |
+| ç¤ºä¾‹ | åŠŸèƒ½ | è¯´æ˜ |
 |------|------|------|
-| `simple_http_server.cpp` | HTTP ·şÎñÆ÷ | »ù´¡ HTTP ·şÎñÆ÷ |
-| `simple_https_server.cpp` | HTTPS ·şÎñÆ÷ | TLS ¼ÓÃÜµÄ HTTP |
-| `simple_wss_server.cpp` | WSS ·şÎñÆ÷ | TLS ¼ÓÃÜµÄ WebSocket |
+| `simple_http_server.cpp` | HTTP æœåŠ¡å™¨ | ç»å…¸ HTTP ç¤ºä¾‹ |
+| `simple_https_server.cpp` | HTTPS æœåŠ¡å™¨ | TLS åŠ å¯† |
+| `simple_wss_server.cpp` | WSS æœåŠ¡å™¨ | TLS ä¸Šçš„ WebSocket |
 
-### ? HTTP/2 Ê¾Àı
+## HTTP/2 ç¤ºä¾‹
 
-| Ê¾Àı | ¹¦ÄÜ | ËµÃ÷ |
+| ç¤ºä¾‹ | åŠŸèƒ½ | è¯´æ˜ |
 |------|------|------|
-| `simple_h2_server.cpp` | HTTP/2 ·şÎñÆ÷ | Ö§³Ö ALPN ºÍ h2 |
-| `simple_h2_client.cpp` | HTTP/2 ¿Í»§¶Ë | ¼òµ¥µÄ h2 ¿Í»§¶Ë |
-| `http2_out_client.cpp` | HTTP/2 ³öÕ¾¿Í»§¶Ë | Ê¹ÓÃ out_connect |
+| `simple_h2_server.cpp` | HTTP/2 æœåŠ¡å™¨ | å« ALPN h2 |
+| `simple_h2_client.cpp` | HTTP/2 å®¢æˆ·ç«¯ | h2 å®¢æˆ·ç«¯ç¤ºä¾‹ |
+| `http2_out_client.cpp` | HTTP/2 å‡ºç«™å®¢æˆ·ç«¯ | out_connect ç¤ºä¾‹ |
 
-### ? WebSocket Ê¾Àı
+## WebSocket ç¤ºä¾‹
 
-| Ê¾Àı | ¹¦ÄÜ | ËµÃ÷ |
+| ç¤ºä¾‹ | åŠŸèƒ½ | è¯´æ˜ |
 |------|------|------|
-| `ws_broadcast_user.cpp` | ÓÃ»§¹ã²¥ | WebSocket ¹ã²¥ÏûÏ¢ |
-| `ws_broadcast_periodic.cpp` | ÖÜÆÚĞÔ¹ã²¥ | ¶¨Ê±¹ã²¥Ê¾Àı |
-| `ws_bench_client.cpp` | ĞÔÄÜ²âÊÔ¿Í»§¶Ë | WS Ñ¹Á¦²âÊÔ |
-| `ws_stickbridge_client.cpp` | StickBridge ¿Í»§¶Ë | ÌØÊâ WS ¿Í»§¶Ë |
+| `ws_broadcast_user.cpp` | ç”¨æˆ·å¹¿æ’­ | WebSocket å¹¿æ’­ç¤ºä¾‹ |
+| `ws_broadcast_periodic.cpp` | å®šæ—¶å¹¿æ’­ | å®šæœŸæ¨é€ |
+| `ws_bench_client.cpp` | å‹æµ‹å®¢æˆ·ç«¯ | WebSocket å‹æµ‹ |
+| `ws_stickbridge_client.cpp` | StickBridge å®¢æˆ·ç«¯ | ä¸šåŠ¡åœºæ™¯ |
 
-### ? ¿Í»§¶ËÊ¾Àı
+## å®¢æˆ·ç«¯ç¤ºä¾‹
 
-| Ê¾Àı | ¹¦ÄÜ | ËµÃ÷ |
+| ç¤ºä¾‹ | åŠŸèƒ½ | è¯´æ˜ |
 |------|------|------|
-| `http_out_client.cpp` | HTTP ³öÕ¾¿Í»§¶Ë | »ù´¡ HTTP ¿Í»§¶Ë |
-| `biz_http_client.cpp` | ÒµÎñ HTTP ¿Í»§¶Ë | ÒµÎñ²ã¿Í»§¶Ë |
-| `router_client.cpp` | Â·ÓÉ¿Í»§¶Ë | Í³Ò»Â·ÓÉ¿Í»§¶Ë |
-| `router_biz_client.cpp` | ÒµÎñÂ·ÓÉ¿Í»§¶Ë | ´øÒµÎñÂß¼­µÄÂ·ÓÉ |
-| `client_conn_factory_example.cpp` | ¿Í»§¶ËÁ¬½Ó¹¤³§ | Á¬½Ó¹¤³§Ê¾Àı |
+| `http_out_client.cpp` | HTTP å‡ºç«™å®¢æˆ·ç«¯ | åŸºæœ¬è¯·æ±‚ |
+| `biz_http_client.cpp` | ä¸šåŠ¡ HTTP å®¢æˆ·ç«¯ | ä¸šåŠ¡é€»è¾‘ç¤ºä¾‹ |
+| `router_client.cpp` | ç»Ÿä¸€è·¯ç”±å®¢æˆ·ç«¯ | å¤šåè®®è·¯ç”± |
+| `router_biz_client.cpp` | ä¸šåŠ¡è·¯ç”±å®¢æˆ·ç«¯ | å«ä¸šåŠ¡é€»è¾‘ |
+| `client_conn_factory_example.cpp` | å®¢æˆ·ç«¯è¿æ¥å·¥å‚ | åŠ¨æ€æ„å»ºè¿æ¥ |
 
-### ? ¸ß¼¶¹¦ÄÜÊ¾Àı
+## é«˜çº§åŠŸèƒ½
 
-| Ê¾Àı | ¹¦ÄÜ | ËµÃ÷ |
+| ç¤ºä¾‹ | åŠŸèƒ½ | è¯´æ˜ |
 |------|------|------|
-| `multi_protocol_server.cpp` | ¶àĞ­Òé·şÎñÆ÷ | Ö§³Ö¶àÖÖĞ­Òé |
-| `multi_thread_server.cpp` | ¶àÏß³Ì·şÎñÆ÷ | ¶àÏß³Ì´¦Àí |
-| `http_server_close_demo.cpp` | ÓÅÑÅ¹Ø±Õ | HTTP ·şÎñÆ÷¹Ø±Õ |
-| `http_close_demo.cpp` | Á¬½Ó¹Ø±Õ | Á¬½Ó¹Ø±ÕÑİÊ¾ |
+| `multi_protocol_server.cpp` | å¤šåè®®æœåŠ¡å™¨ | æ”¯æŒ HTTP/HTTPS/WS |
+| `multi_thread_server.cpp` | å¤šçº¿ç¨‹æœåŠ¡å™¨ | å·¥ä½œçº¿ç¨‹è°ƒåº¦ |
+| `http_server_close_demo.cpp` | HTTP å…³é—­æµç¨‹ | å“åº”åå…³é—­è¿æ¥ |
+| `http_close_demo.cpp` | è¿æ¥å…³é—­ | å»¶è¿Ÿå…³é—­ç¤ºä¾‹ |
 
-### ? ×Ô¶¨ÒåĞ­ÒéÊ¾Àı
+## è‡ªå®šä¹‰åè®®
 
-| Ê¾Àı | ¹¦ÄÜ | ËµÃ÷ |
+| ç¤ºä¾‹ | åŠŸèƒ½ | è¯´æ˜ |
 |------|------|------|
-| `xproto_server.cpp` | ×Ô¶¨ÒåĞ­Òé·şÎñÆ÷ | Ê¹ÓÃ MultiProtocolFactory |
-| `xproto_client.cpp` | ×Ô¶¨ÒåĞ­Òé¿Í»§¶Ë | ×Ô¶¨ÒåĞ­Òé¿Í»§¶Ë |
+| `xproto_server.cpp` | è‡ªå®šä¹‰åè®®æœåŠ¡å™¨ | åŸºäº MultiProtocolFactory |
+| `xproto_client.cpp` | è‡ªå®šä¹‰åè®®å®¢æˆ·ç«¯ | é…åˆæœåŠ¡å™¨ |
 
-### ? ¹ÉÆ±ÏµÍ³Ê¾Àı (¿ÉÑ¡)
+## è‚¡ç¥¨ç³»ç»Ÿç¤ºä¾‹ï¼ˆå¯é€‰ï¼‰
 
-| Ê¾Àı | ¹¦ÄÜ | ËµÃ÷ |
+| ç¤ºä¾‹ | åŠŸèƒ½ | è¯´æ˜ |
 |------|------|------|
-| `stock_index_server.cpp` | ĞĞÇé·şÎñÆ÷ | ¹ÉÆ±ĞĞÇéÍÆËÍ |
-| `stock_bridge_server.cpp` | ÇÅ½Ó·şÎñÆ÷ | Êı¾İÇÅ½Ó |
-| `stock_driver.cpp` | Çı¶¯³ÌĞò | Êı¾İÇı¶¯ |
-
-**×¢**: ¹ÉÆ±ÏµÍ³Ê¾ÀıĞèÒªÏàÓ¦µÄÔ´ÎÄ¼ş²Å»á±àÒë¡£
+| `stock_index_server.cpp` | æŒ‡æ•°æœåŠ¡ | è‚¡ç¥¨ç¤ºä¾‹ |
+| `stock_bridge_server.cpp` | æ¡¥æ¥æœåŠ¡ | è‚¡ç¥¨ç¤ºä¾‹ |
+| `stock_driver.cpp` | é©±åŠ¨ | è‚¡ç¥¨ç¤ºä¾‹ |
 
 ---
 
-## ? ĞÂÊÖÈëÃÅÂ·Ïß
-
-### µÚÒ»²½£º×î¼òµ¥µÄ HTTP ·şÎñÆ÷
-
-```bash
-# ±àÒë
-cd build
-make unified_simple_http
-
-# ÔËĞĞ
-./examples/unified_simple_http 8080
-
-# ²âÊÔ
-curl http://127.0.0.1:8080/
-```
-
-**ÎÄ¼ş**: `unified_simple_http.cpp`  
-**ÌØµã**: ½ö 100 ĞĞ´úÂë£¬×îÈİÒ×Àí½â
-
----
-
-### µÚ¶ş²½£ºÒì²½ÏìÓ¦ºÍ¶¨Ê±Æ÷
-
-```bash
-# ±àÒë
-make simple_async_test
-
-# ÔËĞĞ
-./examples/simple_async_test 8080
-
-# ²âÊÔ
-curl http://127.0.0.1:8080/async
-```
-
-**ÎÄ¼ş**: `simple_async_test.cpp`  
-**ÌØµã**: Ñ§Ï°Òì²½´¦ÀíºÍ¶¨Ê±Æ÷Ê¹ÓÃ
-
----
-
-### µÚÈı²½£ºLevel 2 ¸ß¼¶ÌØĞÔ
-
-```bash
-# ±àÒë
-make unified_level2_demo
-
-# ÔËĞĞ
-./examples/unified_level2_demo 8080
-
-# ²âÊÔ
-curl http://127.0.0.1:8080/async
-```
-
-**ÎÄ¼ş**: `unified_level2_demo.cpp`  
-**ÌØµã**: Context API¡¢Á÷Ê½ÏìÓ¦¡¢Òì²½¿ØÖÆ
-
----
-
-### µÚËÄ²½£ºHTTPS/WSS ¼ÓÃÜÍ¨ĞÅ
-
-```bash
-# ±àÒë
-make unified_https_wss_server
-
-# ÔËĞĞ
-./examples/unified_https_wss_server 8443
-
-# ²âÊÔ
-curl -k https://127.0.0.1:8443/
-```
-
-**ÎÄ¼ş**: `unified_https_wss_server.cpp`  
-**ÌØµã**: TLS ¼ÓÃÜ¡¢HTTPS¡¢WSS
-
----
-
-## ? ±àÒëËùÓĞÊ¾Àı
-
-```bash
-cd /home/rong/myframe
-mkdir -p build && cd build
-cmake ..
-make -j$(nproc)
-```
-
-ËùÓĞÊ¾Àı½«±àÒëµ½ `build/examples/` Ä¿Â¼¡£
-
----
-
-## ? Ñ§Ï°Â·¾¶½¨Òé
-
-### ³õ¼¶£¨1-2Ìì£©
-
-1. ? `unified_simple_http.cpp` - HTTP »ù´¡
-2. ? `simple_async_test.cpp` - Òì²½ºÍ¶¨Ê±Æ÷
-3. ? `unified_mixed_server.cpp` - HTTP + WebSocket
-
-### ÖĞ¼¶£¨3-5Ìì£©
-
-4. ? `unified_level2_demo.cpp` - Level 2 Context API
-5. ? `unified_https_wss_server.cpp` - TLS ¼ÓÃÜ
-6. ? `async_http_server_demo.cpp` - ÍêÕûÒì²½·şÎñÆ÷
-7. ? `simple_h2_server.cpp` - HTTP/2
-
-### ¸ß¼¶£¨1-2ÖÜ£©
-
-8. ? `multi_protocol_server.cpp` - ¶àĞ­Òé
-9. ? `multi_thread_server.cpp` - ¶àÏß³Ì
-10. ? `xproto_server.cpp` - ×Ô¶¨ÒåĞ­Òé
-11. ? ¿Í»§¶ËÊ¾Àı - ¸÷ÖÖ¿Í»§¶ËÊµÏÖ
-
----
-
-## ? ÅäÌ×ÎÄµµ
-
-### Í³Ò»Ğ­Òé¿ò¼Ü
-
-- `docs/UNIFIED_PROTOCOL_DESIGN.md` - Éè¼ÆÎÄµµ
-- `docs/UNIFIED_PROTOCOL_COMPLETE.md` - ÍêÕûÖ¸ÄÏ
-- `docs/UNIFIED_PROTOCOL_STATUS.md` - ÊµÏÖ×´Ì¬
-
-### Òì²½ÏìÓ¦ºÍ¶¨Ê±Æ÷
-
-- `docs/ASYNC_TIMER_QUICK_REF.md` - **¿ìËÙ²Î¿¼** ?
-- `docs/TIMER_USAGE_GUIDE.md` - ¶¨Ê±Æ÷ÏêÏ¸Ö¸ÄÏ
-- `docs/ASYNC_RESPONSE_GUIDE.md` - Òì²½ÏìÓ¦Ö¸ÄÏ
-- `docs/ASYNC_AND_TIMER_COMPLETE.md` - ÍêÕûÊµÏÖ×Ü½á
-
-### ÆäËû¹¦ÄÜ
-
-- `docs/THREAD_ACCESS_GUIDE.md` - Ïß³Ì·ÃÎÊÖ¸ÄÏ
-- `examples/README_ASYNC_HTTP.md` - Òì²½ HTTP ËµÃ÷
-- `examples/README_NEW_EXAMPLES.md` - ĞÂÊ¾ÀıËµÃ÷
-- `examples/README_STOCK_SYSTEM.md` - ¹ÉÆ±ÏµÍ³ËµÃ÷
-
----
-
-## ? °´¹¦ÄÜ²éÕÒÊ¾Àı
-
-### ÎÒÏëÑ§Ï°...
-
-#### HTTP ·şÎñÆ÷
-¡ú `unified_simple_http.cpp` (×î¼òµ¥)  
-¡ú `simple_http_server.cpp` (´«Í³·½Ê½)
-
-#### Òì²½´¦Àí
-¡ú `simple_async_test.cpp` (ÍÆ¼ö)  
-¡ú `async_http_server_demo.cpp` (ÍêÕû)
-
-#### WebSocket
-¡ú `unified_mixed_server.cpp` (HTTP + WS)  
-¡ú `ws_broadcast_user.cpp` (¹ã²¥)
-
-#### HTTPS/TLS
-¡ú `unified_https_wss_server.cpp` (ÍÆ¼ö)  
-¡ú `simple_https_server.cpp` (´«Í³)
-
-#### HTTP/2
-¡ú `simple_h2_server.cpp` (·şÎñÆ÷)  
-¡ú `http2_out_client.cpp` (¿Í»§¶Ë)
-
-#### ×Ô¶¨ÒåĞ­Òé
-¡ú `xproto_server.cpp` + `xproto_client.cpp`
-
-#### ¿Í»§¶Ë¿ª·¢
-¡ú `router_client.cpp` (Í³Ò»Â·ÓÉ)  
-¡ú `biz_http_client.cpp` (ÒµÎñ¿Í»§¶Ë)
-
----
-
-## ?? ¹ÊÕÏÅÅ³ı
-
-### ±àÒë´íÎó
-
-```bash
-# 1. È·±£ÒÀÀµÒÑ°²×°
-sudo apt-get install libssl-dev
-
-# 2. ÇåÀí²¢ÖØĞÂ±àÒë
-cd build
-rm -rf *
-cmake ..
-make -j$(nproc)
-```
-
-### ÔËĞĞ´íÎó
-
-```bash
-# 1. ¼ì²é¶Ë¿ÚÊÇ·ñ±»Õ¼ÓÃ
-netstat -tulpn | grep 8080
-
-# 2. Ê¹ÓÃÆäËû¶Ë¿Ú
-./examples/unified_simple_http 9090
-
-# 3. ²é¿´ÏêÏ¸ÈÕÖ¾
-export MYFRAME_DEBUG=1
-./examples/unified_simple_http 8080
-```
-
-### SSL Ö¤ÊéÎÊÌâ
-
-```bash
-# Éú³É²âÊÔÖ¤Êé
-openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
-
-# Ê¹ÓÃ curl ²âÊÔ HTTPS£¨ºöÂÔÖ¤ÊéÑéÖ¤£©
-curl -k https://127.0.0.1:8443/
-```
-
----
-
-## ? Ê¾ÀıÃüÃû¹æ·¶
-
-- `simple_*.cpp` - »ù´¡Ê¾Àı£¬ÊÊºÏÈëÃÅ
-- `unified_*.cpp` - Ê¹ÓÃÍ³Ò»Ğ­Òé¿ò¼ÜµÄÊ¾Àı
-- `*_demo.cpp` - ¹¦ÄÜÑİÊ¾³ÌĞò
-- `*_client.cpp` - ¿Í»§¶Ë³ÌĞò
-- `*_server.cpp` - ·şÎñÆ÷³ÌĞò
-
----
-
-## ? ¹±Ï×Ö¸ÄÏ
-
-Ìí¼ÓĞÂÊ¾ÀıÊ±£º
-
-1. ÔÚ `CMakeLists.txt` ÖĞÌí¼Ó±àÒëÄ¿±ê
-2. ¸üĞÂ±¾ README ÎÄµµ
-3. Ìí¼ÓÏêÏ¸µÄ´úÂë×¢ÊÍ
-4. Ìá¹©ÔËĞĞºÍ²âÊÔËµÃ÷
-
----
-
-## ? »ñÈ¡°ïÖú
-
-- ²é¿´ `docs/` Ä¿Â¼ÏÂµÄÏêÏ¸ÎÄµµ
-- ÔÄ¶ÁÊ¾Àı´úÂëÖĞµÄ×¢ÊÍ
-- ²Î¿¼ `README*.md` ÎÄ¼ş
-
----
-
-**ÌáÊ¾**: ´Ó `unified_simple_http.cpp` ¿ªÊ¼£¬Öğ²½Ñ§Ï°¸ü¸ß¼¶µÄ¹¦ÄÜ£¡
-
-**×îºó¸üĞÂ**: 2025-10-22
-
+æ›´å¤šä½¿ç”¨è¯´æ˜è¯·å‚è€ƒ `docs/examples/README_PROTOCOL_LEVELS.md`ã€‚

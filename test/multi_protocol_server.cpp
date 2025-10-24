@@ -1,5 +1,5 @@
 #include "../include/server.h"
-#include "../core/app_handler.h"
+#include "../core/app_handler_v2.h"
 #include "../include/multi_protocol_factory.h"
 #include "../core/ssl_context.h"
 #include <iostream>
@@ -8,9 +8,9 @@
 #include <thread>
 #include <chrono>
 
-class MultiProtocolHandler : public IAppHandler {
+class MultiProtocolHandler : public myframe::IApplicationHandler {
 public:
-    void on_http(const HttpRequest& req, HttpResponse& res) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& res) override {
         std::cout << "[MULTI-HTTP] " << req.method << " " << req.url << std::endl;
         
         res.status = 200;
@@ -58,33 +58,33 @@ public:
         std::cout << "[MULTI-HTTP] 响应: " << res.status << " (" << res.body.length() << " bytes)" << std::endl;
     }
     
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
+    void on_ws(const myframe::WsFrame& recv, myframe::WsFrame& send) override {
         std::cout << "[MULTI-WSS] 收到WebSocket消息: " << recv.payload << std::endl;
         
         if (recv.payload == "ping") {
-            send = WsFrame::text("pong-multi");
+            send = myframe::WsFrame::text("pong-multi");
             std::cout << "[MULTI-WSS] 发送: pong-multi" << std::endl;
         } 
         else if (recv.payload == "status") {
-            send = WsFrame::text("{\"status\":\"running\",\"server\":\"multi-protocol\",\"framework\":\"myframe\"}");
+            send = myframe::WsFrame::text("{\"status\":\"running\",\"server\":\"multi-protocol\",\"framework\":\"myframe\"}");
             std::cout << "[MULTI-WSS] 发送状态信息" << std::endl;
         } 
         else if (recv.payload.substr(0, 5) == "echo ") {
             std::string echo_msg = "Multi-Echo: " + recv.payload.substr(5);
-            send = WsFrame::text(echo_msg);
+            send = myframe::WsFrame::text(echo_msg);
             std::cout << "[MULTI-WSS] 发送回显: " << echo_msg << std::endl;
         } 
         else if (recv.payload == "protocols") {
-            send = WsFrame::text("HTTPS+WSS on same port via MyFrame MultiProtocolFactory");
+            send = myframe::WsFrame::text("HTTPS+WSS on same port via MyFrame MultiProtocolFactory");
             std::cout << "[MULTI-WSS] 发送协议信息" << std::endl;
         }
         else {
-            send = WsFrame::text("Multi-Protocol: " + recv.payload);
+            send = myframe::WsFrame::text("Multi-Protocol: " + recv.payload);
             std::cout << "[MULTI-WSS] 发送确认: " << recv.payload << std::endl;
         }
     }
     
-    void on_connect() override {
+    void on_connect(const myframe::ConnectionInfo&) override {
         std::cout << "[MULTI] 新连接建立" << std::endl;
     }
     

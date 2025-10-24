@@ -233,10 +233,23 @@ void common_obj_container::obj_process()
         remove_real_net(*tmp_itr);
     }
 
-    for (std::vector<std::shared_ptr<base_net_obj> >::iterator tmp_itr = exception_vec.begin(); 
-            tmp_itr != exception_vec.end(); tmp_itr++) {
-        (*tmp_itr)->destroy();
-        erase((*tmp_itr)->get_id()._id);
+    auto detach_from_epoll = [](const std::shared_ptr<base_net_obj>& obj) {
+        if (!obj) return;
+        if (auto* container = obj->get_net_container()) {
+            if (auto* ep = container->get_epoll()) {
+                try {
+                    ep->del_from_epoll(obj.get());
+                } catch (...) {
+                    // best effort during teardown
+                }
+            }
+        }
+    };
+
+    for (auto& obj : exception_vec) {
+        detach_from_epoll(obj);
+        obj->destroy();
+        erase(obj->get_id()._id);
     }
 
     std::map<ObjId, std::shared_ptr<base_net_obj> > exp_list;
@@ -246,6 +259,7 @@ void common_obj_container::obj_process()
     for (std::map<ObjId, std::shared_ptr<base_net_obj> >::iterator itr = exp_list.begin(); itr != exp_list.end(); ++itr)
     {         	
         PDEBUG("step2: _id:%d, _thread_index:%d", itr->second->get_id()._id, itr->second->get_id()._thread_index);            
+        detach_from_epoll(itr->second);
         itr->second->destroy();
         erase(itr->first._id);
     }

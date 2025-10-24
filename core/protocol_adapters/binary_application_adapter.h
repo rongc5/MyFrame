@@ -56,7 +56,6 @@ private:
     IApplicationHandler* _handler;
     std::string _recv_buffer;
     std::deque<std::string> _send_queue;
-    std::string _current_send;
     ConnectionInfo _conn_info;
 };
 

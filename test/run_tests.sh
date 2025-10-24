@@ -39,10 +39,10 @@ run_test "编译框架库" "cd /home/rong/myframe && ./scripts/build.sh >/dev/nu
 
 # 2. 单元测试
 if [ -x "/home/rong/myframe/build/test/test_unit" ]; then
-    run_test "IAppHandler适配测试" "cd /home/rong/myframe/build/test && timeout 5s ./test_unit 2>/dev/null | grep -q 'HTTP调用次数'"
+    run_test "IApplicationHandler适配测试" "cd /home/rong/myframe/build/test && timeout 5s ./test_unit 2>/dev/null | grep -q 'HTTP调用次数'"
 else
-    echo -e "${YELLOW}运行测试: IAppHandler适配测试${NC}"
-    echo -e "${BLUE}⏭️  IAppHandler适配测试 - SKIPPED（未找到 test_unit）${NC}"
+    echo -e "${YELLOW}运行测试: IApplicationHandler适配测试${NC}"
+    echo -e "${BLUE}⏭️  IApplicationHandler适配测试 - SKIPPED（未找到 test_unit）${NC}"
     ((TESTS_SKIPPED++))
     echo ""
 fi

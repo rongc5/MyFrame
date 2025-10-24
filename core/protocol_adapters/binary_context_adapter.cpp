@@ -127,6 +127,7 @@ BinaryContextAdapter::BinaryContextAdapter(
     if (_handler) {
         ConnectionInfo info;
         // TODO: Fill connection info
+        detail::HandlerContextScope scope(this);
         _handler->on_connect(info);
     }
 
@@ -182,6 +183,9 @@ size_t BinaryContextAdapter::parse_tlv_message(const char* data, size_t len) {
     std::memcpy(&proto_id, data, sizeof(uint32_t));
     std::memcpy(&data_len, data + 4, sizeof(uint32_t));
 
+    proto_id = ntohl(proto_id);
+    data_len = ntohl(data_len);
+
     // 检查长度的合理性（防止攻击）
     if (data_len > 10 * 1024 * 1024) {  // 最大10MB
         PDEBUG("[BinaryContextAdapter] Invalid data length: %u", data_len);
@@ -200,6 +204,7 @@ size_t BinaryContextAdapter::parse_tlv_message(const char* data, size_t len) {
     _context->set_message(proto_id, payload);
 
     // 调用用户处理器
+    detail::HandlerContextScope scope(this);
     _handler->on_binary_message(*_context);
 
     PDEBUG("[BinaryContextAdapter] Processed message: proto_id=%u, len=%u", proto_id, data_len);
@@ -220,28 +225,34 @@ std::string* BinaryContextAdapter::get_send_buf() {
     }
 
     // 构造 TLV 格式响应
-    uint32_t data_len = static_cast<uint32_t>(data.size());
+    const uint32_t data_len = static_cast<uint32_t>(data.size());
+    uint32_t net_proto_id = htonl(proto_id);
+    uint32_t net_data_len = htonl(data_len);
+    std::string* frame = new std::string;
+    frame->resize(8 + data_len);
+    char* raw = frame->empty() ? nullptr : &(*frame)[0];
 
-    _current_send.clear();
-    _current_send.resize(8 + data_len);
-
-    std::memcpy(&_current_send[0], &proto_id, sizeof(uint32_t));
-    std::memcpy(&_current_send[4], &data_len, sizeof(uint32_t));
-    std::memcpy(&_current_send[8], data.data(), data_len);
+    std::memcpy(raw, &net_proto_id, sizeof(uint32_t));
+    std::memcpy(raw + 4, &net_data_len, sizeof(uint32_t));
+    if (data_len > 0) {
+        std::memcpy(raw + 8, data.data(), data_len);
+    }
 
     PDEBUG("[BinaryContextAdapter] Sending message: proto_id=%u, len=%u", proto_id, data_len);
 
-    return &_current_send;
+    return frame;
 }
 
 void BinaryContextAdapter::handle_msg(std::shared_ptr<::normal_msg>& msg) {
     if (_handler) {
+        detail::HandlerContextScope scope(this);
         _handler->handle_msg(msg);
     }
 }
 
 void BinaryContextAdapter::handle_timeout(std::shared_ptr<::timer_msg>& t_msg) {
     if (_handler) {
+        detail::HandlerContextScope scope(this);
         _handler->handle_timeout(t_msg);
     }
 }
@@ -250,13 +261,13 @@ void BinaryContextAdapter::peer_close() {
     PDEBUG("[BinaryContextAdapter] Connection closing");
 
     if (_handler) {
+        detail::HandlerContextScope scope(this);
         _handler->on_disconnect();
     }
 }
 
 void BinaryContextAdapter::reset() {
     _recv_buffer.clear();
-    _current_send.clear();
 }
 
 void BinaryContextAdapter::destroy() {
@@ -275,7 +286,8 @@ void BinaryContextImpl::add_timer(uint64_t timeout_ms, std::shared_ptr<::timer_m
 
 void BinaryContextImpl::send_msg(std::shared_ptr<::normal_msg> msg) {
     if (_conn && msg) {
-        _conn->handle_msg(msg);
+        ObjId target = _conn->get_id();
+        base_net_thread::put_obj_msg(target, msg);
     }
 }
 

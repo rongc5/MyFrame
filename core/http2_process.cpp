@@ -3,8 +3,6 @@
 
 #include <cstring>
 #include "hpack.h"
-#include "http_base_process.h" // for HttpRequest/HttpResponse structures live in app_handler.h
-
 using namespace h2;
 
 void http2_process::on_connected_once() {
@@ -319,7 +317,7 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
     return true;
 }
 
-void http2_process::send_response(uint32_t stream_id, const HttpResponse& rsp) {
+void http2_process::send_response(uint32_t stream_id, const myframe::HttpResponse& rsp) {
     using namespace hpack;
     // Minimal response: status + content-type + content-length + body
     std::string body = rsp.body;
@@ -398,19 +396,30 @@ void http2_process::finish_stream(uint32_t stream_id) {
     StreamState st = std::move(it->second);
     _streams.erase(it);
 
-    HttpRequest req; req.version = "HTTP/2";
+    myframe::HttpRequest req; req.version = "HTTP/2";
     req.method = st.method.empty() ? "GET" : st.method;
     req.url = st.path.empty() ? "/" : st.path;
     req.body = std::move(st.body);
     if (!st.authority.empty()) req.headers["host"] = st.authority;
     for (auto& kv : st.headers) req.headers[kv.first] = kv.second;
 
-    HttpResponse rsp; rsp.status = 200; rsp.reason = "OK";
-    if (_app) _app->on_http(req, rsp);
+    myframe::HttpResponse rsp; rsp.status = 200; rsp.reason = "OK";
+    if (_app) {
+        myframe::detail::HandlerContextScope scope(this);
+        _app->on_http(req, rsp);
+    }
     if (rsp.headers.find("Content-Type") == rsp.headers.end()) rsp.set_content_type("text/plain");
     if (rsp.body.empty()) rsp.body = "OK";
     PDEBUG("[h2] stream=%u %s %s body=%zu", stream_id, req.method.c_str(), req.url.c_str(), req.body.size());
     send_response(stream_id, rsp);
+}
+
+void http2_process::handle_msg(std::shared_ptr<normal_msg>& msg) {
+    if (_app) { _app->handle_msg(msg); }
+}
+
+void http2_process::handle_timeout(std::shared_ptr<timer_msg>& t_msg) {
+    if (_app) { _app->handle_timeout(t_msg); }
 }
 
 uint32_t http2_process::try_send_data(uint32_t stream_id) {

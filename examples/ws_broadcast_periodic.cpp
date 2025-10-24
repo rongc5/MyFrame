@@ -1,15 +1,15 @@
 #include "server.h"
 #include "multi_protocol_factory.h"
-#include "app_handler.h"
+#include "app_handler_v2.h"
 #include "../core/ws_push_hub.h"
 #include <thread>
 #include <atomic>
 #include <chrono>
 #include <iostream>
 
-class WsPeriodicApp : public IAppHandler {
+class WsPeriodicApp : public myframe::IApplicationHandler {
 public:
-    void on_http(const HttpRequest& req, HttpResponse& res) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& res) override {
         if (req.url == "/") {
             res.status = 200; res.set_content_type("text/html; charset=utf-8");
             res.body =
@@ -22,9 +22,9 @@ public:
         }
         res.status = 404; res.set_content_type("text/plain; charset=utf-8"); res.body = "Not Found";
     }
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
-        if (recv.opcode == WsFrame::PING || recv.payload == "ping") send = WsFrame::text("pong");
-        else send = WsFrame::text("echo:" + recv.payload);
+    void on_ws(const myframe::WsFrame& recv, myframe::WsFrame& send) override {
+        if (recv.opcode == myframe::WsFrame::PING || recv.payload == "ping") send = myframe::WsFrame::text("pong");
+        else send = myframe::WsFrame::text("echo:" + recv.payload);
     }
 };
 

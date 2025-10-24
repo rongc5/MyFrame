@@ -1,6 +1,6 @@
 #include "../core/base_net_thread.h"
 #include "../core/client_conn_router.h"
-#include "../core/app_handler.h"
+#include "../core/app_handler_v2.h"
 #include <iostream>
 #include <map>
 #include <regex>
@@ -15,14 +15,14 @@ static std::string scheme_of(const std::string& url) {
     return s;
 }
 
-class SimpleHandler : public IAppHandler {
+class SimpleHandler : public myframe::IApplicationHandler {
 public:
-    void on_http(const HttpRequest& req, HttpResponse& rsp) override { (void)req; (void)rsp; }
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& rsp) override { (void)req; (void)rsp; }
+    void on_ws(const myframe::WsFrame& recv, myframe::WsFrame& send) override {
         std::cout << "[ws] recv opcode=" << (int)recv.opcode << ", size=" << recv.payload.size() << std::endl;
-        if (recv.opcode == WsFrame::TEXT) std::cout << "[ws] text: " << recv.payload << std::endl;
+        if (recv.opcode == myframe::WsFrame::TEXT) std::cout << "[ws] text: " << recv.payload << std::endl;
         // echo
-        send = WsFrame::text(std::string("echo: ") + recv.payload);
+        send = myframe::WsFrame::text(std::string("echo: ") + recv.payload);
     }
 };
 

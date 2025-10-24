@@ -1,7 +1,7 @@
 #ifndef __PROTOCOL_PROBES_H__
 #define __PROTOCOL_PROBES_H__
 
-#include "app_handler.h"
+#include "app_handler_v2.h"
 #include "http_res_process.h"
 #include "web_socket_res_process.h"
 #include "app_http_data_process.h"
@@ -22,13 +22,13 @@ public:
         create(std::shared_ptr<base_net_obj> conn) const = 0;
     virtual ~IProtocolProbe() {}
 protected:
-    explicit IProtocolProbe(IAppHandler* app = 0) : _app(app) {}
-    IAppHandler* _app;
+    explicit IProtocolProbe(myframe::IApplicationHandler* app = nullptr) : _app(app) {}
+    myframe::IApplicationHandler* _app;
 };
 
 class HttpProbe : public IProtocolProbe {
 public:
-    explicit HttpProbe(IAppHandler* app = 0) : IProtocolProbe(app) {}
+    explicit HttpProbe(myframe::IApplicationHandler* app = nullptr) : IProtocolProbe(app) {}
     bool match(const char* buf, size_t len) const override {
         if (len < 3) return false;
         if (len >= 4 && (memcmp(buf, "GET ", 4) == 0 || memcmp(buf, "PUT ", 4) == 0)) return true;
@@ -48,7 +48,7 @@ public:
 
 class WsProbe : public IProtocolProbe {
 public:
-    explicit WsProbe(IAppHandler* app = 0) : IProtocolProbe(app) {}
+    explicit WsProbe(myframe::IApplicationHandler* app = nullptr) : IProtocolProbe(app) {}
     bool match(const char* buf, size_t len) const override {
         if (len < 10) return false;
         std::string request(buf, len), lower = request;
@@ -69,7 +69,7 @@ public:
 
 class TlsProbe : public IProtocolProbe {
 public:
-    explicit TlsProbe(IAppHandler* app = 0) : IProtocolProbe(app) {}
+    explicit TlsProbe(myframe::IApplicationHandler* app = nullptr) : IProtocolProbe(app) {}
     bool match(const char* buf, size_t len) const override {
         if (len < 3) return false;
         return buf[0] == 0x16 && buf[1] == 0x03 && (buf[2] >= 0x01 && buf[2] <= 0x04);
@@ -83,7 +83,7 @@ public:
 
 class Http2Probe : public IProtocolProbe {
 public:
-    explicit Http2Probe(IAppHandler* app = 0) : IProtocolProbe(app) {}
+    explicit Http2Probe(myframe::IApplicationHandler* app = nullptr) : IProtocolProbe(app) {}
     bool match(const char* buf, size_t len) const override {
         if (len < h2::CONNECTION_PREFACE_LEN) return false;
         return std::memcmp(buf, h2::CONNECTION_PREFACE, h2::CONNECTION_PREFACE_LEN) == 0;
@@ -97,7 +97,7 @@ public:
 
 class CustomProbe : public IProtocolProbe {
 public:
-    explicit CustomProbe(IAppHandler* app = 0) : IProtocolProbe(app) {}
+    explicit CustomProbe(myframe::IApplicationHandler* app = nullptr) : IProtocolProbe(app) {}
     bool match(const char* buf, size_t len) const override { return len >= 4 && (std::memcmp(buf, "CSTM", 4) == 0); }
     std::unique_ptr<base_data_process>
     create(std::shared_ptr<base_net_obj> conn) const override {

@@ -5,6 +5,9 @@
 
 #include "app_handler_v2.h"
 #include "base_net_obj.h"
+#include "base_data_process.h"
+#include "base_net_thread.h"
+#include "common_def.h"
 #include <functional>
 #include <map>
 #include <string>
@@ -89,6 +92,20 @@ public:
 
     // 发送自定义消息（用于线程之间通信）
     virtual void send_msg(std::shared_ptr<::normal_msg> msg) = 0;
+};
+
+// 统一的 HTTP 异步任务消息编号（'H''C''T''1'）
+constexpr int HTTP_CONTEXT_TASK_MSG_OP = 0x48435431;
+
+// 用于在网络线程执行回调的通用消息封装
+struct HttpContextTaskMessage : public ::normal_msg {
+    HttpContextTaskMessage()
+        : ::normal_msg(HTTP_CONTEXT_TASK_MSG_OP) {}
+
+    explicit HttpContextTaskMessage(std::function<void(HttpContext&)> fn)
+        : ::normal_msg(HTTP_CONTEXT_TASK_MSG_OP), task(std::move(fn)) {}
+
+    std::function<void(HttpContext&)> task;
 };
 
 // ============================================================================
@@ -287,7 +304,7 @@ public:
     }
 
     // ========== ��Ϣ�ͳ�ʱ���� ==========
-    
+
     // ������Ϣ�������첽���������߳�ͨ�ŵȣ�
     virtual void handle_msg(std::shared_ptr<::normal_msg>& msg) {
         (void)msg;
@@ -301,10 +318,66 @@ public:
     // ========== �̷߳��� ==========
     // ��ȡ��ǰҵ�����߳�
     // ���� nullptr ��ʾ�߳���Ϣ������
-    virtual ::base_net_thread* get_current_thread() const {
+    virtual ::base_net_thread* get_current_thread() const;
+
+    // ========== ����ʱ������ ==========
+    uint32_t schedule_timeout(uint32_t delay_ms, uint32_t timer_type = APPLICATION_TIMER_TYPE) const;
+
+    // ========== ��������ʶ ==========
+    ObjId current_connection_id() const;
+};
+
+inline uint32_t IProtocolHandler::schedule_timeout(uint32_t delay_ms, uint32_t timer_type) const {
+    if (delay_ms == 0) {
+        delay_ms = 1;
+    }
+
+    ::base_data_process* process = detail::current_process();
+    if (!process) {
+        return 0;
+    }
+
+    std::shared_ptr<base_net_obj> net = process->get_base_net();
+    if (!net) {
+        return 0;
+    }
+
+    std::shared_ptr<timer_msg> timer(new timer_msg);
+    timer->_obj_id = net->get_id()._id;
+    timer->_timer_type = timer_type ? timer_type : APPLICATION_TIMER_TYPE;
+    timer->_time_length = delay_ms;
+
+    process->add_timer(timer);
+    return timer->_timer_id;
+}
+
+inline ::base_net_thread* IProtocolHandler::get_current_thread() const {
+    ::base_data_process* process = detail::current_process();
+    if (!process) {
         return nullptr;
     }
-};
+
+    std::shared_ptr<base_net_obj> net = process->get_base_net();
+    if (!net) {
+        return nullptr;
+    }
+
+    const ObjId& id = net->get_id();
+    return base_net_thread::get_base_net_thread_obj(id._thread_index);
+}
+
+inline ObjId IProtocolHandler::current_connection_id() const {
+    ::base_data_process* process = detail::current_process();
+    if (!process) {
+        return ObjId{};
+    }
+
+    std::shared_ptr<base_net_obj> net = process->get_base_net();
+    if (!net) {
+        return ObjId{};
+    }
+    return net->get_id();
+}
 
 } // namespace myframe
 

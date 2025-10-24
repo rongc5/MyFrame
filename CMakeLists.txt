@@ -93,6 +93,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/protocol_adapters)
 file(COPY core/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include
      FILES_MATCHING PATTERN "*.h")
+file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/include/app_handler.h")
 if (HAVE_SIGN_LIB AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign/include")
     file(COPY utils/str2sign/include/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include
          FILES_MATCHING PATTERN "*.h")

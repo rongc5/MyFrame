@@ -5,21 +5,21 @@
 #include "../core/base_net_thread.h"
 #include "../core/base_connect.h"
 #include "../core/http_res_process.h"
-#include "../core/app_handler.h"
+#include "../core/app_handler_v2.h"
 #include "../core/app_http_data_process.h"
 #include <iostream>
 #include <memory>
 
 // 1) Business handler: generate a simple response
-class CloseDemoHandler : public IAppHandler {
+class CloseDemoHandler : public myframe::IApplicationHandler {
 public:
-    void on_http(const HttpRequest& req, HttpResponse& rsp) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& rsp) override {
         rsp.status = 200; rsp.reason = "OK";
         rsp.set_header("Content-Type", "text/plain; charset=utf-8");
         rsp.body = std::string("Close-Demo\nMethod: ") + req.method + "\nPath: " + req.url + "\n";
     }
-    void on_ws(const WsFrame&, WsFrame& send) override {
-        send = WsFrame::text("close-demo server does not support ws");
+    void on_ws(const myframe::WsFrame&, myframe::WsFrame& send) override {
+        send = myframe::WsFrame::text("close-demo server does not support ws");
     }
 };
 
@@ -37,7 +37,7 @@ public:
 // 3) Simple HTTP-only factory using CloseAfterSendDP (no TLS/WS here)
 class HttpCloseFactory : public IFactory {
 public:
-    explicit HttpCloseFactory(IAppHandler* h) : _handler(h) {}
+    explicit HttpCloseFactory(myframe::IApplicationHandler* h) : _handler(h) {}
     void net_thread_init(base_net_thread* th) override { _container = th ? th->get_net_container() : nullptr; }
     void handle_thread_msg(std::shared_ptr<normal_msg>& msg) override {
         if (!msg || msg->_msg_op != NORMAL_MSG_CONNECT || !_container) return;
@@ -54,7 +54,7 @@ public:
     void register_worker(uint32_t) override {}
     void on_accept(base_net_thread*, int) override {}
 private:
-    IAppHandler* _handler{nullptr};
+    myframe::IApplicationHandler* _handler{nullptr};
     common_obj_container* _container{nullptr};
 };
 
@@ -73,4 +73,3 @@ int main(int argc, char** argv) {
     srv.join();
     return 0;
 }
-

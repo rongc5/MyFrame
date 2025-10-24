@@ -1,6 +1,6 @@
 #include "../include/server.h"
 #include "../include/multi_protocol_factory.h"
-#include "../include/app_handler.h"
+#include "../include/app_handler_v2.h"
 #include "../core/ssl_context.h"
 #include "../core/listen_factory.h"
 #include <thread>
@@ -8,9 +8,9 @@
 #include <iostream>
 #include <signal.h>
 
-class SimpleWssHandler : public IAppHandler {
+class SimpleWssHandler : public myframe::IApplicationHandler {
 public:
-    void on_http(const HttpRequest& req, HttpResponse& res) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& res) override {
         std::cout << "[WSS-HTTP] " << req.method << " " << req.url << std::endl;
         
         res.status = 200;
@@ -25,21 +25,21 @@ public:
         }
     }
     
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
+    void on_ws(const myframe::WsFrame& recv, myframe::WsFrame& send) override {
         std::cout << "[WSS] 收到: " << recv.payload << std::endl;
         
         if (recv.payload == "ping") {
-            send = WsFrame::text("pong");
+            send = myframe::WsFrame::text("pong");
         } else if (recv.payload == "status") {
-            send = WsFrame::text("{\"status\":\"running\",\"protocol\":\"wss\",\"port\":7778}");
+            send = myframe::WsFrame::text("{\"status\":\"running\",\"protocol\":\"wss\",\"port\":7778}");
         } else {
-            send = WsFrame::text("Echo: " + recv.payload);
+            send = myframe::WsFrame::text("Echo: " + recv.payload);
         }
         
         std::cout << "[WSS] 发送: " << send.payload << std::endl;
     }
     
-    void on_connect() override {
+    void on_connect(const myframe::ConnectionInfo&) override {
         std::cout << "[WSS] WebSocket连接建立" << std::endl;
     }
     

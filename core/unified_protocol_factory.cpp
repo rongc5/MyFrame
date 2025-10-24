@@ -7,6 +7,7 @@
 #include "protocol_adapters/ws_context_adapter.h"
 #include "protocol_adapters/binary_application_adapter.h"
 #include "protocol_adapters/binary_context_adapter.h"
+#include "tls_unified_entry_process.h"
 #include "common_def.h"
 #include "common_obj_container.h"
 #include "base_net_thread.h"
@@ -237,13 +238,34 @@ void UnifiedProtocolFactory::handle_thread_msg(std::shared_ptr<::normal_msg>& ms
     // 创建协议检测器
     // 需要将 ProtocolEntry 转换为 ProtocolDetector 可用的格式
     std::vector<ProtocolEntry> detector_protocols;
-    detector_protocols.reserve(_protocols.size());
+    detector_protocols.reserve(_protocols.size() + 1);  // +1 for potential TLS
+
+    // 自动添加 TLS 检测（如果配置了 TLS）- 优先级最高
+    // TLS 检测：检查 TLS Client Hello (0x16 0x03 ...)
+    auto tls_detect = [](const char* buf, size_t len) -> bool {
+        if (len < 3) return false;
+        return buf[0] == 0x16 && buf[1] == 0x03 && (buf[2] >= 0x01 && buf[2] <= 0x04);
+    };
+
+    // TLS 创建函数：创建 TlsUnifiedEntryProcess（它会在TLS握手后递归检测内部协议）
+    // 使用 shared_ptr 确保协议列表在所有 lambda 生命周期内有效
+    auto protocols_ptr = std::make_shared<std::vector<ProtocolEntry>>(_protocols);
+    auto tls_create = [protocols_ptr](std::shared_ptr<base_net_obj> conn) -> std::unique_ptr<::base_data_process> {
+        PDEBUG("[UnifiedFactory] Creating TLS unified entry process");
+        // 传递协议列表，TlsUnifiedEntryProcess会过滤掉TLS避免递归
+        return std::unique_ptr<::base_data_process>(
+            new myframe::TlsUnifiedEntryProcess(conn, *protocols_ptr));
+    };
+
+    // 始终添加 TLS 检测器（优先级0，最高）
+    detector_protocols.emplace_back("TLS", tls_detect, tls_create, 0);
+
     for (const auto& proto : _protocols) {
         detector_protocols.push_back(proto);
     }
 
     std::unique_ptr<ProtocolDetector> detector(
-        new ProtocolDetector(conn, detector_protocols));
+        new ProtocolDetector(conn, detector_protocols, false));
 
     // 设置到连接
     conn->set_process(detector.release());

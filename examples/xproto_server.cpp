@@ -1,18 +1,21 @@
 #include "../include/server.h"
 #include "../include/multi_protocol_factory.h"
-#include "../core/app_handler.h"
+#include "../core/app_handler_v2.h"
 #include <iostream>
 
-class XProtoHandler : public IAppHandler {
+class XProtoHandler : public myframe::IApplicationHandler {
 public:
-    void on_http(const HttpRequest& req, HttpResponse& rsp) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& rsp) override {
         rsp.status = 200; rsp.body = "XPROTO server: http ok"; rsp.set_content_type("text/plain");
     }
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
-        send = WsFrame::text("XPROTO server: ws ok:" + recv.payload);
+    void on_ws(const myframe::WsFrame& recv, myframe::WsFrame& send) override {
+        send = myframe::WsFrame::text("XPROTO server: ws ok:" + recv.payload);
     }
-    void on_custom(uint32_t protocol, const char* data, std::size_t len) override {
-        std::cout << "[XPROTO] protocol=" << protocol << " recv=" << std::string(data, len) << std::endl;
+    void on_binary(const myframe::BinaryRequest& req, myframe::BinaryResponse& res) override {
+        std::cout << "[XPROTO] protocol=" << req.protocol_id
+                  << " recv=" << std::string(reinterpret_cast<const char*>(req.payload.data()), req.payload.size())
+                  << std::endl;
+        res.data = req.payload;
     }
 };
 

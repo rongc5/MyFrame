@@ -199,6 +199,7 @@ void WsContextDataProcess::msg_recv_finish() {
     _context->set_frame(frame);
 
     // 调用用户处理器
+    detail::HandlerContextScope scope(this);
     _handler->on_ws_frame(*_context);
 }
 
@@ -206,6 +207,7 @@ void WsContextDataProcess::on_connect() {
     PDEBUG("[WsContextDataProcess] on_connect called");
 
     if (_handler) {
+        detail::HandlerContextScope scope(this);
         ConnectionInfo info;
         // TODO: Fill connection info from base_net_obj
         _handler->on_connect(info);
@@ -216,6 +218,7 @@ void WsContextDataProcess::on_close() {
     PDEBUG("[WsContextDataProcess] on_close called");
 
     if (_handler) {
+        detail::HandlerContextScope scope(this);
         _handler->on_disconnect();
     }
 }
@@ -232,7 +235,8 @@ void WsContextImpl::add_timer(uint64_t timeout_ms, std::shared_ptr<::timer_msg> 
 
 void WsContextImpl::send_msg(std::shared_ptr<::normal_msg> msg) {
     if (_conn && msg) {
-        _conn->handle_msg(msg);
+        ObjId target = _conn->get_id();
+        base_net_thread::put_obj_msg(target, msg);
     }
 }
 

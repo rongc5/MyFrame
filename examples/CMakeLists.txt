@@ -16,6 +16,16 @@ set(COMMON_LIBS
 add_executable(http_server simple_http_server.cpp)
 target_link_libraries(http_server ${COMMON_LIBS})
 
+# Level demonstrations
+add_executable(level1_multi_protocol level1_multi_protocol.cpp)
+target_link_libraries(level1_multi_protocol ${COMMON_LIBS})
+
+add_executable(level2_multi_protocol level2_multi_protocol.cpp)
+target_link_libraries(level2_multi_protocol ${COMMON_LIBS})
+
+add_executable(level3_custom_echo level3_custom_echo.cpp)
+target_link_libraries(level3_custom_echo ${COMMON_LIBS})
+
 # Async HTTP Server Demo - showcases async response handling
 add_executable(async_http_demo async_http_server_demo.cpp)
 target_link_libraries(async_http_demo ${COMMON_LIBS})
@@ -140,6 +150,7 @@ target_link_libraries(simple_async_test ${COMMON_LIBS})
 # Always-present example targets
 set_target_properties(
     http_server async_http_demo https_server wss_server
+    level1_multi_protocol level2_multi_protocol level3_custom_echo
     h2_client http_out_client http2_out_client biz_http_client http_close_demo http_server_close_demo router_client router_biz_client client_conn_factory_example xproto_server xproto_client ws_bench_client
     demo_multi_protocol_server demo_multi_thread_server h2_server ws_stickbridge_client
     ws_broadcast_user ws_broadcast_periodic 

@@ -237,6 +237,7 @@ void HttpContextDataProcess::msg_recv_finish() {
         _context->_request.body = _recv_body;  // ����������
 
         // ���ô�����
+        detail::HandlerContextScope scope(this);
         _handler->on_http_request(*_context);
 
         // ������Ӧ���� _context->_response ���Ƶ� res_head��
@@ -309,6 +310,34 @@ void HttpContextDataProcess::complete_async_response() {
     http_base_data_process::complete_async_response();
 }
 
+void HttpContextDataProcess::handle_timeout(std::shared_ptr<::timer_msg>& t_msg) {
+    if (_handler) {
+        detail::HandlerContextScope scope(this);
+        _handler->handle_timeout(t_msg);
+    }
+    http_base_data_process::handle_timeout(t_msg);
+}
+
+void HttpContextDataProcess::handle_msg(std::shared_ptr<::normal_msg>& msg) {
+    if (!msg) {
+        return;
+    }
+
+    if (msg->_msg_op == HTTP_CONTEXT_TASK_MSG_OP) {
+        auto task_msg = std::dynamic_pointer_cast<HttpContextTaskMessage>(msg);
+        if (task_msg && task_msg->task && _context) {
+            detail::HandlerContextScope scope(this);
+            task_msg->task(*_context);
+        }
+        return;
+    }
+
+    if (_handler) {
+        detail::HandlerContextScope scope(this);
+        _handler->handle_msg(msg);
+    }
+}
+
 void HttpContextImpl::add_timer(uint64_t timeout_ms, std::shared_ptr<::timer_msg> t_msg) {
     if (_conn && t_msg) {
         if (timeout_ms > 0) {
@@ -321,7 +350,8 @@ void HttpContextImpl::add_timer(uint64_t timeout_ms, std::shared_ptr<::timer_msg
 
 void HttpContextImpl::send_msg(std::shared_ptr<::normal_msg> msg) {
     if (_conn && msg) {
-        _conn->handle_msg(msg);
+        ObjId target = _conn->get_id();
+        base_net_thread::put_obj_msg(target, msg);
     }
 }
 

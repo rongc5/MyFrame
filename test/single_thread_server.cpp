@@ -1,5 +1,5 @@
 #include "include/server.h"
-#include "core/app_handler.h"
+#include "core/app_handler_v2.h"
 #include "include/multi_protocol_factory.h"
 #include "core/ssl_context.h"
 #include <iostream>
@@ -8,9 +8,9 @@
 #include <thread>
 #include <chrono>
 
-class SingleThreadHandler : public IAppHandler {
+class SingleThreadHandler : public myframe::IApplicationHandler {
 public:
-    void on_http(const HttpRequest& req, HttpResponse& res) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& res) override {
         std::cout << "[SINGLE-HTTP] " << req.method << " " << req.url << std::endl;
         
         res.status = 200;
@@ -38,11 +38,12 @@ public:
         std::cout << "[SINGLE-HTTP] 响应: " << res.status << " (" << res.body.size() << " bytes)" << std::endl;
     }
     
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
-        send = WsFrame::text("Single Thread WebSocket");
+    void on_ws(const myframe::WsFrame& recv, myframe::WsFrame& send) override {
+        (void)recv;
+        send = myframe::WsFrame::text("Single Thread WebSocket");
     }
     
-    void on_connect() override {
+    void on_connect(const myframe::ConnectionInfo&) override {
         std::cout << "[SINGLE-HTTP] 新连接 (单线程模式)" << std::endl;
     }
     

@@ -106,6 +106,8 @@ public:
     std::string* get_send_body(int& result) override;
     void msg_recv_finish() override;
     void complete_async_response() override;
+    void handle_timeout(std::shared_ptr<::timer_msg>& t_msg) override;
+    void handle_msg(std::shared_ptr<::normal_msg>& msg) override;
 
 private:
     IProtocolHandler* _handler;

@@ -2,7 +2,7 @@
 
 #include "web_socket_data_process.h"
 #include "web_socket_process.h"
-#include "app_handler.h"
+#include "app_handler_v2.h"
 #include <string>
 #include <algorithm>
 
@@ -11,7 +11,7 @@ class WsPushHub;
 
 class app_ws_data_process : public web_socket_data_process {
 public:
-    app_ws_data_process(web_socket_process* p, IAppHandler* h)
+    app_ws_data_process(web_socket_process* p, myframe::IApplicationHandler* h)
         : web_socket_data_process(p), _handler(h) {}
 
     ~app_ws_data_process() override {
@@ -66,27 +66,28 @@ public:
 
     // 主动发送文本帧（服务端->客户端非掩码）
     void send_text(const std::string& payload) {
-        std::string header = _process->get_recent_send_frame_header().gen_frame_header(payload.size(), std::string(), (int8_t)WsFrame::TEXT);
+        std::string header = _process->get_recent_send_frame_header().gen_frame_header(payload.size(), std::string(), (int8_t)myframe::WsFrame::TEXT);
         std::string* out = new std::string;
         out->reserve(header.size() + payload.size());
         out->append(header);
         out->append(payload);
-        ws_msg_type m; m.init(); m._p_msg = out; m._con_type = (int8_t)WsFrame::TEXT;
+        ws_msg_type m; m.init(); m._p_msg = out; m._con_type = (int8_t)myframe::WsFrame::TEXT;
         put_send_msg(m);
         _process->notice_send();
     }
 
     virtual void msg_recv_finish() override {
         // 构造接收帧
-        WsFrame recv;
+        myframe::WsFrame recv;
         int8_t op = _process->get_recent_recv_frame_header()._op_code;
-        if (op == 0x1) recv.opcode = WsFrame::TEXT; else recv.opcode = WsFrame::BINARY;
+        if (op == 0x1) recv.opcode = myframe::WsFrame::TEXT; else recv.opcode = myframe::WsFrame::BINARY;
         recv.payload = _recent_msg;
         _recent_msg.clear();
 
         // 回调业务
-        WsFrame send = WsFrame::text("");
+        myframe::WsFrame send = myframe::WsFrame::text("");
         if (_handler) {
+            myframe::detail::HandlerContextScope scope(this);
             _handler->on_ws(recv, send);
         }
 
@@ -100,9 +101,21 @@ public:
         ws_msg_type m; m.init(); m._p_msg = out; m._con_type = (int8_t)send.opcode;
         put_send_msg(m);
     }
+    void handle_msg(std::shared_ptr<normal_msg>& msg) override {
+        if (_handler) {
+            myframe::detail::HandlerContextScope scope(this);
+            _handler->handle_msg(msg);
+        }
+    }
+    void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override {
+        if (_handler) {
+            myframe::detail::HandlerContextScope scope(this);
+            _handler->handle_timeout(t_msg);
+        }
+    }
 
 private:
-    IAppHandler* _handler;
+    myframe::IApplicationHandler* _handler;
     std::string _username;
 
     void register_self();

@@ -93,6 +93,7 @@ size_t BinaryApplicationAdapter::parse_tlv_message() {
 
     try {
         // �����û�������
+        detail::HandlerContextScope scope(this);
         _handler->on_binary(req, res);
 
         // ������Ӧ
@@ -129,24 +130,32 @@ void BinaryApplicationAdapter::send_binary_response(
 }
 
 std::string* BinaryApplicationAdapter::get_send_buf() {
-    if (_send_queue.empty()) return nullptr;
-    _current_send = std::move(_send_queue.front());
+    if (_send_queue.empty()) {
+        return nullptr;
+    }
+
+    std::string* frame = new std::string(std::move(_send_queue.front()));
     _send_queue.pop_front();
-    return &_current_send;
+    return frame;
 }
 
 void BinaryApplicationAdapter::handle_msg(std::shared_ptr<normal_msg>& msg) {
-    // Ĭ��ʵ�֣��ɱ����า��
-    (void)msg;
+    if (_handler) {
+        detail::HandlerContextScope scope(this);
+        _handler->handle_msg(msg);
+    }
 }
 
 void BinaryApplicationAdapter::handle_timeout(std::shared_ptr<timer_msg>& t_msg) {
-    // Ĭ��ʵ�֣��ɱ����า��
-    (void)t_msg;
+    if (_handler) {
+        detail::HandlerContextScope scope(this);
+        _handler->handle_timeout(t_msg);
+    }
 }
 
 void BinaryApplicationAdapter::peer_close() {
     if (_handler) {
+        detail::HandlerContextScope scope(this);
         _handler->on_disconnect();
     }
     base_data_process::peer_close();
@@ -155,7 +164,6 @@ void BinaryApplicationAdapter::peer_close() {
 void BinaryApplicationAdapter::reset() {
     _recv_buffer.clear();
     _send_queue.clear();
-    _current_send.clear();
     base_data_process::reset();
 }
 

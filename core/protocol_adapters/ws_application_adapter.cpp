@@ -104,6 +104,7 @@ void WsApplicationDataProcess::msg_recv_finish() {
         WsFrame send_frame;
 
         // 调用用户处理器
+        detail::HandlerContextScope scope(this);
         _handler->on_ws(recv_frame, send_frame);
 
         // 发送响应

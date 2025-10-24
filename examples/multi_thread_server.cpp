@@ -1,6 +1,6 @@
 #include "../include/server.h"
 #include "../include/multi_protocol_factory.h"
-#include "../include/app_handler.h"
+#include "../include/app_handler_v2.h"
 #include "../core/listen_factory.h"
 #include <thread>
 #include <clocale>
@@ -82,12 +82,12 @@ static void setup_console_locale() {
 }
 
 // 高并发处理器：展示多线程负载均衡
-class MultiThreadHandler : public IAppHandler {
+class MultiThreadHandler : public myframe::IApplicationHandler {
 private:
     std::atomic<int> _request_counter{0};
     
 public:
-    void on_http(const HttpRequest& req, HttpResponse& res) override {
+    void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& res) override {
         auto* stats = get_current_thread_stats();
         stats->requests++;
         g_total_requests++;
@@ -187,7 +187,7 @@ public:
         }
     }
     
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
+    void on_ws(const myframe::WsFrame& recv, myframe::WsFrame& send) override {
         auto* stats = get_current_thread_stats();
         stats->messages++;
         g_total_messages++;
@@ -196,19 +196,19 @@ public:
         std::cout << "[WebSocket-" << thread_id << "] 消息: " << recv.payload << std::endl;
         
         if (recv.payload == "ping") {
-            send = WsFrame::text("pong from thread " + std::to_string(std::hash<std::thread::id>{}(thread_id)));
+            send = myframe::WsFrame::text("pong from thread " + std::to_string(std::hash<std::thread::id>{}(thread_id)));
         }
         else if (recv.payload == "thread-info") {
             std::stringstream ss;
             ss << "Thread: " << thread_id << ", Stats: " << stats->to_string();
-            send = WsFrame::text(ss.str());
+            send = myframe::WsFrame::text(ss.str());
         }
         else {
-            send = WsFrame::text("[Thread-" + std::to_string(std::hash<std::thread::id>{}(thread_id)) + "] Echo: " + recv.payload);
+            send = myframe::WsFrame::text("[Thread-" + std::to_string(std::hash<std::thread::id>{}(thread_id)) + "] Echo: " + recv.payload);
         }
     }
-    
-    void on_connect() override {
+
+    void on_connect(const myframe::ConnectionInfo&) override {
         auto* stats = get_current_thread_stats();
         stats->connections++;
         g_total_connections++;

@@ -3,7 +3,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <mutex>
+#include "rwlock.h"
 
 class app_ws_data_process;
 
@@ -16,14 +16,14 @@ public:
 
     void Register(const std::string& user, app_ws_data_process* proc) {
         if (user.empty() || !proc) return;
-        std::lock_guard<std::mutex> lk(mu_);
+        WriteLockGuard lk(rwlock_);
         users_[user].insert(proc);
         rev_[proc] = user;
     }
 
     void Unregister(app_ws_data_process* proc) {
         if (!proc) return;
-        std::lock_guard<std::mutex> lk(mu_);
+        WriteLockGuard lk(rwlock_);
         auto it = rev_.find(proc);
         if (it != rev_.end()) {
             auto uit = users_.find(it->second);
@@ -42,5 +42,5 @@ private:
     WsPushHub() = default;
     std::unordered_map<std::string, std::unordered_set<app_ws_data_process*>> users_;
     std::unordered_map<app_ws_data_process*, std::string> rev_;
-    std::mutex mu_;
+    RWLock rwlock_;
 };
