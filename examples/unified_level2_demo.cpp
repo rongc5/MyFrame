@@ -6,7 +6,9 @@
 #include "unified_protocol_factory.h"
 #include "protocol_context.h"
 #include <iostream>
+#include <memory>
 #include <sstream>
+#include <cstdint>
 #include <ctime>
 #include <thread>
 
@@ -23,6 +25,21 @@ public:
         auto& res = ctx.response();
 
         std::cout << "[HTTP] " << req.method << " " << req.url << std::endl;
+
+        // 为每条连接维护计数和首次访问时间，直接编码在 user_data 的 void* 中
+        auto raw_count = reinterpret_cast<std::uintptr_t>(ctx.get_user_data("request_count"));
+        uint32_t request_count = static_cast<uint32_t>(raw_count);
+        request_count++;
+        ctx.set_user_data("request_count", reinterpret_cast<void*>(static_cast<std::uintptr_t>(request_count)));
+
+        auto raw_first = reinterpret_cast<std::uintptr_t>(ctx.get_user_data("first_seen"));
+        std::time_t first_seen;
+        if (raw_first == 0) {
+            first_seen = std::time(nullptr);
+            ctx.set_user_data("first_seen", reinterpret_cast<void*>(static_cast<std::uintptr_t>(first_seen)));
+        } else {
+            first_seen = static_cast<std::time_t>(raw_first);
+        }
 
         if (req.url == "/") {
             res.set_html(R"(
@@ -41,18 +58,29 @@ public:
             res.set_json(R"({"message":"Hello from Level 2 HTTP Context Handler"})");
         } else if (req.url == "/api/data") {
             // �첽��Ӧʾ��
+            // 需要在异步回调中再次访问上下文时，通过消息回到网络线程
             ctx.async_response([&ctx]() {
                 // ģ�ⳤʱ����������ݿ��ѯ�ȣ�
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                ctx.response().set_json(
-                    R"({"data":"Async response from HTTP handler","timestamp":)" +
-                    std::to_string(std::time(nullptr)) + "}");
-                // ��Ҫ���ô˷������첽��Ӧ
-                ctx.complete_async_response();
+                auto timestamp = std::time(nullptr);
+                // 通过 HttpContextTaskMessage 回到网络线程，安全访问上下文
+                auto task = std::make_shared<HttpContextTaskMessage>(
+                    [timestamp](HttpContext& context) {
+                        auto async_raw = reinterpret_cast<std::uintptr_t>(context.get_user_data("request_count"));
+                        uint32_t seen = static_cast<uint32_t>(async_raw);
+                        std::string json = std::string(R"({"data":"Async response from HTTP handler","timestamp":)") +
+                                            std::to_string(timestamp) +
+                                            R"(,"requests_on_connection":)" + std::to_string(seen) + "}";
+                        context.response().set_json(json);
+                        context.complete_async_response();
+                    });
+                ctx.send_msg(task);
             });
         } else if (req.url == "/api/status") {
             std::stringstream json;
-            json << R"({"status":"ok","time":)" << std::time(nullptr) << R"(})";
+            json << R"({"status":"ok","time":)" << std::time(nullptr)
+                 << R"(,"requests_on_connection":)" << request_count
+                 << R"(,"first_seen":)" << first_seen << R"(})";
             res.set_json(json.str());
         } else if (req.url == "/ws") {
             res.set_html(R"HTML(
@@ -111,20 +139,18 @@ public:
         const auto& frame = ctx.frame();
 
         // ״̬����ʾ��
-        int* message_count = static_cast<int*>(ctx.get_user_data("msg_count"));
-        if (!message_count) {
-            message_count = new int(0);
-            ctx.set_user_data("msg_count", message_count);
-        }
-        (*message_count)++;
+        auto raw_count = reinterpret_cast<std::uintptr_t>(ctx.get_user_data("msg_count"));
+        uint32_t count = static_cast<uint32_t>(raw_count);
+        count++;
+        ctx.set_user_data("msg_count", reinterpret_cast<void*>(static_cast<std::uintptr_t>(count)));
 
-        std::cout << "[WS] Received message #" << *message_count << ": "
+        std::cout << "[WS] Received message #" << count << ": "
                   << frame.payload.substr(0, 50) << std::endl;
 
         if (frame.opcode == WsFrame::TEXT) {
             // �����ı���Ϣ
             std::string response = "Echo: " + frame.payload +
-                                 " (msg#" + std::to_string(*message_count) + ")";
+                                 " (msg#" + std::to_string(count) + ")";
             ctx.send_text(response);
 
             // �Զ��ظ� PING

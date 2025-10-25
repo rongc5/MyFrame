@@ -230,25 +230,27 @@ void HttpContextDataProcess::msg_recv_finish() {
         // ���������Ϣ��ֱ�ӷ���˽�г�Ա����Ϊ�� friend��
         auto& req_head = _base_process->get_req_head_para();
         
-        _context->_request.method = req_head._method;
-        _context->_request.url = req_head._url_path;
-        _context->_request.version = req_head._version;
-        _context->_request.headers = req_head._headers;
-        _context->_request.body = _recv_body;  // ����������
+        auto& ctx_req = _context->mutable_request();
+        ctx_req.method = req_head._method;
+        ctx_req.url = req_head._url_path;
+        ctx_req.version = req_head._version;
+        ctx_req.headers = req_head._headers;
+        ctx_req.body = _recv_body;  // ����������
 
         // ���ô�����
         detail::HandlerContextScope scope(this);
         _handler->on_http_request(*_context);
 
-        // ������Ӧ���� _context->_response ���Ƶ� res_head��
+        // ������Ӧ���䵽 res_head
         auto& res_head = _base_process->get_res_head_para();
         
-        res_head._response_code = _context->_response.status;
-        res_head._response_str = _context->_response.reason;
-        res_head._headers = _context->_response.headers;
+        const auto& ctx_res = _context->response();
+        res_head._response_code = ctx_res.status;
+        res_head._response_str = ctx_res.reason;
+        res_head._headers = ctx_res.headers;
 
         // ������Ӧ�嵽 _send_body
-        _send_body = _context->_response.body;
+        _send_body = ctx_res.body;
         
         // �Զ����� Content-Length
         if (!_send_body.empty()) {
@@ -288,12 +290,13 @@ void HttpContextDataProcess::complete_async_response() {
         auto& res_head = _base_process->get_res_head_para();
 
         // 更新响应状态和头
-        res_head._response_code = _context->_response.status;
-        res_head._response_str = _context->_response.reason;
-        res_head._headers = _context->_response.headers;
+        const auto& ctx_res = _context->response();
+        res_head._response_code = ctx_res.status;
+        res_head._response_str = ctx_res.reason;
+        res_head._headers = ctx_res.headers;
 
         // 同步响应体
-        _send_body = _context->_response.body;
+        _send_body = ctx_res.body;
 
         // 自动设置 Content-Length
         if (!_send_body.empty()) {

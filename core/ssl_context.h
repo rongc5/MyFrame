@@ -17,6 +17,7 @@ struct ssl_config {
     std::string _cert_file;
     std::string _key_file;
     std::string _protocols; // e.g., "TLSv1.2,TLSv1.3"
+    std::string _alpn;      // e.g., "http/1.1" or "h2,http/1.1"
     bool _verify_peer = false;
     std::string _ca_file; // optional CA bundle for client verification
     std::string _cipher_list; // optional cipher list
@@ -104,12 +105,17 @@ public:
             }
 #endif
         }
-        // 启用 ALPN，优先 h2 回退 http/1.1；可由环境限制
+        // 启用 ALPN，优先 h2 回退 http/1.1；可由配置或环境限制
         _allow_h2 = true; _allow_h11 = true;
-        // 从环境变量覆盖：MYFRAME_SSL_ALPN (例如: "h2,http/1.1" 或 "http/1.1")
-        const char* env_alpn = ::getenv("MYFRAME_SSL_ALPN");
-        if (env_alpn && *env_alpn) {
-            std::string s(env_alpn); for (auto& c : s) c = (char)tolower(c);
+        std::string alpn_pref;
+        if (!conf._alpn.empty()) {
+            alpn_pref = conf._alpn;
+        } else if (const char* env_alpn = ::getenv("MYFRAME_SSL_ALPN"); env_alpn && *env_alpn) {
+            alpn_pref = env_alpn;
+        }
+        if (!alpn_pref.empty()) {
+            std::string s = alpn_pref;
+            for (auto& c : s) c = (char)tolower(c);
             _allow_h2  = (s.find("h2") != std::string::npos);
             _allow_h11 = (s.find("http/1.1") != std::string::npos) || (s.find("http1.1") != std::string::npos);
         }

@@ -33,13 +33,18 @@ public:
         const uint64_t req_id = info.connection_id;
         std::cout << "[ASYNC] start request " << req_id << std::endl;
 
-        ctx.async_response([&, req_id]() {
+        ctx.async_response([&ctx, req_id]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             std::cout << "[ASYNC] finish request " << req_id << std::endl;
-            ctx.response().set_json(
-                std::string("{\"type\":\"async\",\"request_id\":") +
-                std::to_string(req_id) + "}");
-            ctx.complete_async_response();
+            auto payload = std::string("{\"type\":\"async\",\"request_id\":") +
+                           std::to_string(req_id) + "}";
+            // 将结果封装在 HttpContextTaskMessage 中，回到网络线程再操作上下文
+            auto task = std::make_shared<myframe::HttpContextTaskMessage>(
+                [payload](myframe::HttpContext& context) {
+                    context.response().set_json(payload);
+                    context.complete_async_response();
+                });
+            ctx.send_msg(task);
         });
     }
 

@@ -52,8 +52,10 @@ public:
     void add_timer(uint64_t timeout_ms, std::shared_ptr<::timer_msg> t_msg) override;
     void send_msg(std::shared_ptr<::normal_msg> msg) override;
 
-    // ���� HttpContextDataProcess ����˽�г�Ա
-    friend class HttpContextDataProcess;
+    // Internal helpers for adapters
+    HttpRequest& mutable_request() { return _request; }
+    HttpResponse& mutable_response() { return _response; }
+    http_base_process* get_process() { return _process; }
 
 private:
     http_base_process* _process;

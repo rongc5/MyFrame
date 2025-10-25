@@ -21,6 +21,7 @@ public:
 
     virtual size_t process_recv_buf(const char* buf, size_t len) override;
     virtual std::string* get_send_buf() override { return nullptr; }
+    virtual bool want_peek() const override { return !_installed; }
 
 private:
     bool ensure_ssl_installed();

@@ -8,8 +8,11 @@
 #include "ssl_context.h"
 #include <iostream>
 #include <sstream>
+#include <fstream>
 #include <ctime>
 #include <cstring>
+#include <initializer_list>
+#include <vector>
 
 using namespace myframe;
 
@@ -22,6 +25,9 @@ public:
     void on_http(const HttpRequest& req, HttpResponse& res) override {
         std::cout << "[HTTP] " << req.method << " " << req.url
                   << " (protocol: " << req.version << ")" << std::endl;
+
+        // 默认开启 Keep-Alive，避免每次请求后都被 app_http_data_process 改为 close
+        res.set_header("Connection", "keep-alive");
 
         if (req.url == "/" || req.url == "/index.html") {
             res.set_html(R"HTML(
@@ -134,6 +140,25 @@ public:
 // ������
 // ============================================================================
 
+// 简单文件存在性检查
+static bool file_exists(const std::string& path) {
+    if (path.empty()) return false;
+    std::ifstream fin(path.c_str(), std::ios::binary);
+    return fin.good();
+}
+
+static std::string locate_cert_file(const char* env_value, std::initializer_list<const char*> fallbacks) {
+    if (env_value && file_exists(env_value)) {
+        return env_value;
+    }
+    for (const char* candidate : fallbacks) {
+        if (file_exists(candidate)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
 int main(int argc, char* argv[]) {
     unsigned short port = 443;  // Ĭ�� HTTPS �˿�
     bool use_tls = true;
@@ -159,14 +184,33 @@ int main(int argc, char* argv[]) {
         ssl_config conf;
 
         // ���Դӻ���������Ĭ��·����ȡ֤��
-        const char* cert_file = std::getenv("MYFRAME_SSL_CERT");
-        const char* key_file = std::getenv("MYFRAME_SSL_KEY");
+        const char* env_cert = std::getenv("MYFRAME_SSL_CERT");
+        const char* env_key = std::getenv("MYFRAME_SSL_KEY");
 
-        if (!cert_file) cert_file = "tests/common/cert/server.crt";
-        if (!key_file) key_file = "tests/common/cert/server.key";
+        std::string cert_file = locate_cert_file(env_cert, {
+            "server.crt",
+            "test_certs/server.crt",
+            "tests/cert/server.crt"
+        });
+
+        std::string key_file = locate_cert_file(env_key, {
+            "server.key",
+            "test_certs/server.key",
+            "tests/cert/server.key"
+        });
+
+        if (cert_file.empty() || key_file.empty()) {
+            std::cerr << "[TLS] ERROR: Unable to find certificate or key file." << std::endl;
+            std::cerr << "Searched paths:" << std::endl;
+            std::cerr << "  Certificates: server.crt, test_certs/server.crt, tests/cert/server.crt" << std::endl;
+            std::cerr << "  Keys        : server.key, test_certs/server.key, tests/cert/server.key" << std::endl;
+            return 1;
+        }
 
         conf._cert_file = cert_file;
         conf._key_file = key_file;
+        // 仅需 HTTP/1.1，避免客户端协商 h2
+        conf._alpn = "http/1.1";
 
         std::cout << "TLS Config:" << std::endl;
         std::cout << "  Certificate: " << conf._cert_file << std::endl;

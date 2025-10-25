@@ -4,6 +4,7 @@
 #define __PROTOCOL_DETECTOR_H__
 
 #include "base_data_process.h"
+#include "base_connect.h"
 #include "unified_protocol_factory.h"
 #include <string>
 #include <vector>
@@ -18,7 +19,6 @@ namespace myframe {
 
 class ProtocolDetector : public ::base_data_process {
 public:
-    // 构造函数
     ProtocolDetector(
         std::shared_ptr<base_net_obj> conn,
         const std::vector<UnifiedProtocolFactory::ProtocolEntry>& protocols,
@@ -26,31 +26,31 @@ public:
 
     virtual ~ProtocolDetector();
 
-    // base_data_process 接口实现
-    virtual size_t process_recv_buf(const char* buf, size_t len) override;
-    virtual std::string* get_send_buf() override;
-    virtual void handle_msg(std::shared_ptr<::normal_msg>& msg) override;
-    virtual void handle_timeout(std::shared_ptr<::timer_msg>& t_msg) override;
-    virtual void peer_close() override;
-    virtual void reset() override;
-    virtual void destroy() override;
+    size_t process_recv_buf(const char* buf, size_t len) override;
+    std::string* get_send_buf() override;
+    void handle_msg(std::shared_ptr<::normal_msg>& msg) override;
+    void handle_timeout(std::shared_ptr<::timer_msg>& t_msg) override;
+    void peer_close() override;
+    void reset() override;
+    void destroy() override;
 
-    // 查询接口
-    bool is_detected() const { return _detected; }
-    const std::string& detected_protocol() const { return _detected_protocol; }
-    bool want_peek() const override { return !_detected && !_over_tls; }
+    bool want_peek() const override { return !_over_tls && !_detected; }
 
 private:
-    std::vector<UnifiedProtocolFactory::ProtocolEntry> _protocols;     // 协议列表（已排序）
-    std::unique_ptr<::base_data_process> _delegate; // 实际的协议处理器
-    bool _over_tls;                              // 是否运行在 TLS 之上（需要禁用 MSG_PEEK）
-    bool _detected;                             // 是否已检测到协议
-    std::string _buffer;                        // 检测缓冲区
-    std::string _detected_protocol;             // 检测到的协议名称
+    bool handoff_to_protocol(const UnifiedProtocolFactory::ProtocolEntry& proto,
+                             base_connect<base_data_process>* holder,
+                             const char* data,
+                             size_t len);
 
-    // 安全限制
-    static const size_t MAX_DETECT_BUFFER_SIZE = 4096;  // 最大检测缓冲区 4KB
-    static const uint64_t DETECT_TIMEOUT_MS = 5000;     // 检测超时 5秒
+    std::vector<UnifiedProtocolFactory::ProtocolEntry> _protocols;
+    bool _over_tls;
+    bool _detected;
+    std::string _buffer;
+    uint64_t _start_ms;
+    uint32_t _timer_id;
+
+    static const size_t MAX_DETECT_BUFFER_SIZE = 4096;
+    static const uint64_t DETECT_TIMEOUT_MS = 5000;
 };
 
 } // namespace myframe
