@@ -117,14 +117,17 @@ public:
         ctx.send_msg(msg);
     }
 
-    void handle_msg(std::shared_ptr<normal_msg>& msg) override {
-        if (!msg) return;
+    bool handle_thread_msg(std::shared_ptr<::normal_msg>& msg) override {
+        if (!msg) {
+            return true;
+        }
         if (msg->_msg_op == 2001) {
             auto casted = std::static_pointer_cast<EchoBinaryMessage>(msg);
             std::cout << "[L2 MSG] payload='" << casted->payload << "'" << std::endl;
         } else {
             std::cout << "[L2 MSG] op=" << msg->_msg_op << std::endl;
         }
+        return true;
     }
 
     void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override {

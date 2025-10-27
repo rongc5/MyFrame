@@ -92,9 +92,12 @@ public:
                   << " (conn=" << t_msg->_obj_id << ")" << std::endl;
     }
 
-    void handle_msg(std::shared_ptr<::normal_msg>& msg) override {
-        if (!msg) return;
+    bool handle_thread_msg(std::shared_ptr<::normal_msg>& msg) override {
+        if (!msg) {
+            return true;
+        }
         std::cout << "[MSG] op=" << msg->_msg_op << std::endl;
+        return true;
     }
 };
 

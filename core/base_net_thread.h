@@ -55,6 +55,8 @@ class base_net_thread:public base_thread
 
     protected:
 
+        virtual bool handle_thread_msg(std::shared_ptr<normal_msg> & p_msg);
+
         int _channel_num;
         std::vector< std::shared_ptr<base_connect<channel_data_process> > > _channel_msg_vec;
 

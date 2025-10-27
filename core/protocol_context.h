@@ -310,6 +310,11 @@ public:
         (void)msg;
     }
 
+    virtual bool handle_thread_msg(std::shared_ptr<::normal_msg>& msg) {
+        handle_msg(msg);
+        return true;
+    }
+
     // ������ʱ�����ڶ�ʱ������ʱ���Ƶȣ�
     virtual void handle_timeout(std::shared_ptr<::timer_msg>& t_msg) {
         (void)t_msg;

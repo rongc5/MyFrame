@@ -48,10 +48,12 @@ public:
         });
     }
 
-    void handle_msg(std::shared_ptr<normal_msg>& msg) override {
-        if (msg) {
-            std::cout << "[MSG] op=" << msg->_msg_op << std::endl;
+    bool handle_thread_msg(std::shared_ptr<::normal_msg>& msg) override {
+        if (!msg) {
+            return true;
         }
+        std::cout << "[MSG] op=" << msg->_msg_op << std::endl;
+        return true;
     }
 
     void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override {
@@ -97,10 +99,12 @@ public:
         }
     }
 
-    void handle_msg(std::shared_ptr<normal_msg>& msg) override {
-        if (msg) {
-            std::cout << "[MSG L1] op=" << msg->_msg_op << std::endl;
+    bool handle_thread_msg(std::shared_ptr<::normal_msg>& msg) override {
+        if (!msg) {
+            return true;
         }
+        std::cout << "[MSG L1] op=" << msg->_msg_op << std::endl;
+        return true;
     }
 
     void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override {

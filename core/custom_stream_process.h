@@ -45,7 +45,7 @@ public:
     void handle_msg(std::shared_ptr<normal_msg>& msg) override {
         if (_app_handler) {
             myframe::detail::HandlerContextScope scope(this);
-            _app_handler->handle_msg(msg);
+            _app_handler->handle_thread_msg(msg);
         }
     }
     void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override {

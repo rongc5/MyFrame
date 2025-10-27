@@ -337,7 +337,7 @@ void HttpContextDataProcess::handle_msg(std::shared_ptr<::normal_msg>& msg) {
 
     if (_handler) {
         detail::HandlerContextScope scope(this);
-        _handler->handle_msg(msg);
+        _handler->handle_thread_msg(msg);
     }
 }
 

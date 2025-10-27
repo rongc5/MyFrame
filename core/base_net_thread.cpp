@@ -85,9 +85,22 @@ void base_net_thread::put_msg(uint32_t obj_id, std::shared_ptr<normal_msg> & p_m
 
 void base_net_thread::handle_msg(std::shared_ptr<normal_msg> & p_msg)
 {
+    if (!p_msg) {
+        return;
+    }
+
+    if (handle_thread_msg(p_msg)) {
+        return;
+    }
+
     if (_factory_for_thread) {
         _factory_for_thread->handle_thread_msg(p_msg);
     }
+}
+
+bool base_net_thread::handle_thread_msg(std::shared_ptr<normal_msg> &)
+{
+    return false;
 }
 
 base_net_thread * base_net_thread::get_base_net_thread_obj(uint32_t thread_index)

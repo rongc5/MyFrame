@@ -415,7 +415,12 @@ void http2_process::finish_stream(uint32_t stream_id) {
 }
 
 void http2_process::handle_msg(std::shared_ptr<normal_msg>& msg) {
-    if (_app) { _app->handle_msg(msg); }
+    if (!_app) {
+        return;
+    }
+    if (!_app->handle_thread_msg(msg)) {
+        _app->handle_msg(msg);
+    }
 }
 
 void http2_process::handle_timeout(std::shared_ptr<timer_msg>& t_msg) {

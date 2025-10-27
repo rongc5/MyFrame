@@ -79,7 +79,7 @@ public:
     void handle_msg(std::shared_ptr<normal_msg>& msg) override {
         if (_handler) {
             myframe::detail::HandlerContextScope scope(this);
-            _handler->handle_msg(msg);
+            _handler->handle_thread_msg(msg);
         }
     }
     void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override {
