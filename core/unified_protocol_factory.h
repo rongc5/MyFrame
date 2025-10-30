@@ -108,6 +108,10 @@ public:
     void register_worker(uint32_t thread_index);
     void on_accept(base_net_thread* listen_th, int fd);
 
+    // Allows callers to disable the Level-3 detector when the listener handles a single plain protocol.
+    void set_detector_enabled(bool enabled) { _detector_enabled = enabled; }
+    bool detector_enabled() const { return _detector_enabled; }
+
     // ========================================================================
     // 查询接口
     // ========================================================================
@@ -125,9 +129,10 @@ public:
         DetectFn detect;
         CreateFn create;
         int priority;  // 数字越小优先级越高
+        bool terminal; // Whether selecting this entry finalizes protocol detection
 
-        ProtocolEntry(const std::string& n, DetectFn d, CreateFn c, int p)
-            : name(n), detect(d), create(c), priority(p) {}
+        ProtocolEntry(const std::string& n, DetectFn d, CreateFn c, int p, bool term = true)
+            : name(n), detect(d), create(c), priority(p), terminal(term) {}
 
         bool operator<(const ProtocolEntry& other) const {
             return priority < other.priority;
@@ -148,6 +153,7 @@ private:
     std::vector<uint32_t> _worker_indices;     // worker 线程索引
     uint32_t _rr_hint;                         // round-robin 提示
     common_obj_container* _container;          // 网络容器
+    bool _detector_enabled;
 };
 
 } // namespace myframe

@@ -2,6 +2,7 @@
 #define __BASE_NET_OBJ_H__
 
 #include "common_util.h"
+#include <string>
 
 class base_data_process;
 class common_obj_container;
@@ -51,6 +52,14 @@ class base_net_obj: public std::enable_shared_from_this<base_net_obj>
 
         net_addr & get_peer_addr();
 
+        // Bind a resolved protocol tag to this connection. When lock is true,
+        // callers promise the protocol will not change for the lifetime of the
+        // connection.
+        void set_protocol_tag(const std::string& tag, bool lock = true);
+        const std::string& protocol_tag() const { return _protocol_tag; }
+        bool protocol_locked() const { return _protocol_locked; }
+        void clear_protocol_tag();
+
     protected:
         void add_timer();
 
@@ -64,6 +73,8 @@ class base_net_obj: public std::enable_shared_from_this<base_net_obj>
 
         net_addr _peer_net;
         uint64_t _last_active_ms{0};
+        std::string _protocol_tag;
+        bool _protocol_locked{false};
 };
 
 

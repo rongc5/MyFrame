@@ -1,27 +1,10 @@
 // MyFrame Unified Protocol Architecture - Protocol Detector Implementation
 #include "protocol_detector.h"
+#include "base_net_obj.h"
 #include "common_def.h"
 #include <algorithm>
 
 namespace myframe {
-
-namespace {
-
-inline bool handoff_to_protocol(base_connect<base_data_process>* holder,
-                                std::unique_ptr<base_data_process> next,
-                                const char* data,
-                                size_t len)
-{
-    if (!holder || !next) return false;
-    auto* raw = next.release();
-    holder->set_process(raw);
-    if (len > 0) {
-        (void)raw->process_recv_buf(data, len);
-    }
-    return true;
-}
-
-} // namespace
 
 ProtocolDetector::ProtocolDetector(
     std::shared_ptr<base_net_obj> conn,
@@ -53,6 +36,11 @@ bool ProtocolDetector::handoff_to_protocol(const UnifiedProtocolFactory::Protoco
         return false;
     }
 
+    auto net = get_base_net();
+    if (net) {
+        net->set_protocol_tag(proto.name, proto.terminal);
+    }
+
     auto* raw = next.release();
     holder->set_process(raw);
     if (len > 0) {
@@ -78,11 +66,25 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
         _timer_id = t->_timer_id;
     }
 
-    _buffer.append(buf, len);
-    if (_buffer.size() > MAX_DETECT_BUFFER_SIZE) {
-        PDEBUG("[ProtocolDetector] Buffer overflow (> %zu), closing", _buffer.size());
+    if (len == 0) {
+        return 0;
+    }
+
+    size_t remaining = (MAX_DETECT_BUFFER_SIZE > _buffer.size())
+                           ? (MAX_DETECT_BUFFER_SIZE - _buffer.size())
+                           : 0;
+    if (remaining == 0 || len > remaining) {
+        PDEBUG("[ProtocolDetector] Buffer overflow attempt (current=%zu, incoming=%zu, cap=%zu). Closing.",
+               _buffer.size(), static_cast<size_t>(len), static_cast<size_t>(MAX_DETECT_BUFFER_SIZE));
         peer_close();
         return len;
+    }
+
+    _buffer.append(buf, len);
+    size_t buffered_now = _buffer.size();
+    if (buffered_now >= (MAX_DETECT_BUFFER_SIZE * 3) / 4) {
+        PDEBUG("[ProtocolDetector] Buffer nearing cap (%zu/%zu)",
+               buffered_now, static_cast<size_t>(MAX_DETECT_BUFFER_SIZE));
     }
 
     base_connect<base_data_process>* holder =
@@ -95,8 +97,8 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
 
     for (const auto& proto : _protocols) {
         if (proto.detect(_buffer.data(), _buffer.size())) {
-            std::string buffered = std::move(_buffer);
-            _buffer.clear();
+            std::string buffered;
+            buffered.swap(_buffer); // frees the old capacity
             bool ok = handoff_to_protocol(proto, holder,
                                           buffered.data(), buffered.size());
             if (!ok) {
@@ -107,6 +109,7 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
             return len;
         }
     }
+
     return len;
 }
 
@@ -129,6 +132,11 @@ void ProtocolDetector::reset() {
     _buffer.clear();
     _start_ms = 0;
     _timer_id = 0;
+    if (auto net = get_base_net()) {
+        if (!net->protocol_locked()) {
+            net->clear_protocol_tag();
+        }
+    }
     base_data_process::reset();
 }
 

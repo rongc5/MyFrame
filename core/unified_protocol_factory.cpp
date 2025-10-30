@@ -18,6 +18,7 @@ namespace myframe {
 UnifiedProtocolFactory::UnifiedProtocolFactory()
     : _rr_hint(0)
     , _container(nullptr)
+    , _detector_enabled(true)
 {
 }
 
@@ -227,13 +228,62 @@ void UnifiedProtocolFactory::handle_thread_msg(std::shared_ptr<::normal_msg>& ms
     }
 
     std::shared_ptr<content_msg> cm = std::static_pointer_cast<content_msg>(msg);
-    int fd = cm->fd;
-
-    PDEBUG("[UnifiedFactory] Creating ProtocolDetector for fd=%d", fd);
+   int fd = cm->fd;
 
     // 创建连接对象
     std::shared_ptr<base_connect<base_data_process>> conn(
         new base_connect<base_data_process>(fd));
+
+    auto attach_direct = [&](const ProtocolEntry& entry,
+                             const char* reason) -> bool {
+        std::unique_ptr<::base_data_process> direct = entry.create(conn);
+        if (!direct) {
+            PDEBUG("[UnifiedFactory] Failed to create handler '%s' for fd=%d",
+                   entry.name.c_str(), fd);
+            return false;
+        }
+        conn->set_process(direct.release());
+        conn->set_net_container(_container);
+        std::shared_ptr<base_net_obj> net_obj = conn;
+        _container->push_real_net(net_obj);
+        PDEBUG("[UnifiedFactory] %s (protocol='%s', fd=%d)",
+               reason, entry.name.c_str(), fd);
+        return true;
+    };
+
+    bool tls_configured = false;
+#ifdef ENABLE_SSL
+    ssl_config tls_conf;
+    tls_configured = tls_get_server_config(tls_conf);
+#endif
+
+    if (_detector_enabled) {
+        if (!tls_configured && _protocols.size() == 1) {
+            if (!attach_direct(_protocols.front(),
+                               "Detector bypassed automatically for single protocol")) {
+                return;
+            }
+            return;
+        }
+    } else {
+        if (_protocols.empty()) {
+            PDEBUG("[UnifiedFactory] Detector disabled but no protocols registered; closing fd=%d", fd);
+            return;
+        }
+        if (tls_configured) {
+            PDEBUG("[UnifiedFactory] Detector disabled but TLS config active; keeping detector for fd=%d", fd);
+        } else if (_protocols.size() == 1) {
+            if (!attach_direct(_protocols.front(),
+                               "Detector disabled; attaching single protocol directly")) {
+                return;
+            }
+            return;
+        }
+        // Multiple protocols but detector disabled – fall back to detector with a warning.
+        PDEBUG("[UnifiedFactory] Detector disabled while multiple protocols registered; enabling detector.");
+    }
+
+    PDEBUG("[UnifiedFactory] Creating ProtocolDetector for fd=%d", fd);
 
     // 创建协议检测器
     // 需要将 ProtocolEntry 转换为 ProtocolDetector 可用的格式
@@ -257,8 +307,8 @@ void UnifiedProtocolFactory::handle_thread_msg(std::shared_ptr<::normal_msg>& ms
             new myframe::TlsUnifiedEntryProcess(conn, *protocols_ptr));
     };
 
-    // 始终添加 TLS 检测器（优先级0，最高）
-    detector_protocols.emplace_back("TLS", tls_detect, tls_create, 0);
+    // 添加 TLS 检测器（优先级0，最高）
+    detector_protocols.emplace_back("TLS", tls_detect, tls_create, 0, false);
 
     for (const auto& proto : _protocols) {
         detector_protocols.push_back(proto);

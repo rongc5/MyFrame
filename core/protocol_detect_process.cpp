@@ -4,6 +4,9 @@
 #include "base_connect.h"
 #include "base_timer.h"
 #include "common_util.h"
+#include "base_net_obj.h"
+#include <typeinfo>
+#include <string>
 #include <sys/socket.h>
 #include <cstring>
 
@@ -48,6 +51,21 @@ size_t protocol_detect_process::process_recv_buf(const char* buf, size_t buf_len
             if (holder) {
                 std::unique_ptr<base_data_process> next = probe->create(get_base_net());
                 // base_connect 将接管生命周期（包装为 unique_ptr）
+                if (!next) {
+                    PDEBUG("[detect] probe create returned null");
+                    THROW_COMMON_EXCEPT("protocol detect create failed");
+                }
+
+#ifdef ENABLE_SSL
+                bool lock_protocol = (dynamic_cast<tls_entry_process*>(next.get()) == nullptr);
+#else
+                bool lock_protocol = true;
+#endif
+                if (auto net = get_base_net()) {
+                    std::string tag = typeid(*next).name();
+                    net->set_protocol_tag(tag, lock_protocol);
+                }
+
                 holder->set_process(next.release());
 
                 // 让新流程预处理这批数据，但按探测缓冲长度告知上层擦除

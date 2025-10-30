@@ -200,6 +200,22 @@ net_addr & base_net_obj::get_peer_addr()
     return _peer_net;
 }
 
+void base_net_obj::set_protocol_tag(const std::string& tag, bool lock)
+{
+    _protocol_tag = tag;
+    _protocol_locked = lock;
+    PDEBUG("[net_obj] protocol tag set to '%s' (lock=%d)", _protocol_tag.c_str(), lock ? 1 : 0);
+}
+
+void base_net_obj::clear_protocol_tag()
+{
+    if (!_protocol_tag.empty()) {
+        PDEBUG("[net_obj] clearing protocol tag '%s'", _protocol_tag.c_str());
+    }
+    _protocol_tag.clear();
+    _protocol_locked = false;
+}
+
 void base_net_obj::handle_timeout(std::shared_ptr<timer_msg> & t_msg)
 {
 }
