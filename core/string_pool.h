@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <cstdlib>
+#include <memory>
 
 namespace myframe {
 
@@ -33,6 +34,18 @@ inline void string_release(std::string* s) {
     thread_local std::vector<std::string*> pool;
     if (pool.size() < pool_capacity()) { s->clear(); pool.push_back(s); }
     else { delete s; }
+}
+
+struct string_releaser {
+    void operator()(std::string* s) const noexcept {
+        string_release(s);
+    }
+};
+
+using pooled_string_ptr = std::unique_ptr<std::string, string_releaser>;
+
+inline pooled_string_ptr make_pooled_string(std::string* s) {
+    return pooled_string_ptr(s);
 }
 
 } // namespace myframe

@@ -9,6 +9,7 @@
 #include "common_epoll.h"
 #include "codec.h"
 #include "protocol_detect_process.h"
+#include "string_pool.h"
 #include <memory>
 #include <deque>
 #include <sys/uio.h>
@@ -310,7 +311,9 @@ class base_connect:public base_net_obj
             const size_t MAX_BATCH = 64 * 1024; // 64KB per batch
             // Ensure we have a current buffer
             if (!_p_send_buf) {
-                if (auto* next = _process->get_send_buf()) _p_send_buf.reset(next);
+                if (auto* next = _process->get_send_buf()) {
+                    _p_send_buf.reset(next);
+                }
             }
             if (!_p_send_buf && _pending_send.empty()) {
                 update_event(get_event() & ~EPOLLOUT);
@@ -321,7 +324,7 @@ class base_connect:public base_net_obj
             while ((int)_pending_send.size() + (_p_send_buf ? 1 : 0) < MAX_IOV) {
                 std::string* nxt = _process->get_send_buf();
                 if (!nxt) break;
-                _pending_send.emplace_back(nxt);
+                _pending_send.emplace_back(myframe::make_pooled_string(nxt));
             }
 
             // Build iovec array
@@ -378,10 +381,11 @@ class base_connect:public base_net_obj
 
     protected:
         std::string _recv_buf;
-        std::unique_ptr<std::string> _p_send_buf;
+        using send_buf_ptr = myframe::pooled_string_ptr;
+        send_buf_ptr _p_send_buf;
         std::unique_ptr<PROCESS> _process;
         std::unique_ptr<ICodec> _codec;
-        std::deque<std::unique_ptr<std::string>> _pending_send;
+        std::deque<send_buf_ptr> _pending_send;
 
     public:
         void set_codec(std::unique_ptr<ICodec> codec) { _codec = std::move(codec); }
