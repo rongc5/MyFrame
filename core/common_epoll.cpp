@@ -85,7 +85,7 @@ int common_epoll::epoll_wait(std::map<ObjId, std::shared_ptr<base_net_obj> > &ex
             base_net_obj * p = (base_net_obj*)(_epoll_events[i].data.ptr);
             if (p != NULL)
             {
-                std::shared_ptr<base_net_obj> p_obj=std::dynamic_pointer_cast<base_net_obj>(p->shared_from_this());
+                std::shared_ptr<base_net_obj> p_obj = p->shared_from_this();
                 try
                 {
                     //PDEBUG("get_sock[%d]\n", p->get_sfd());
