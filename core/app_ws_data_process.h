@@ -3,6 +3,7 @@
 #include "web_socket_data_process.h"
 #include "web_socket_process.h"
 #include "app_handler_v2.h"
+#include "string_pool.h"
 #include <string>
 #include <algorithm>
 
@@ -66,14 +67,12 @@ public:
 
     // 主动发送文本帧（服务端->客户端非掩码）
     void send_text(const std::string& payload) {
-        std::string header = _process->get_recent_send_frame_header().gen_frame_header(payload.size(), std::string(), (int8_t)myframe::WsFrame::TEXT);
-        std::string* out = new std::string;
-        out->reserve(header.size() + payload.size());
-        out->append(header);
-        out->append(payload);
-        ws_msg_type m; m.init(); m._p_msg = out; m._con_type = (int8_t)myframe::WsFrame::TEXT;
+        ws_msg_type m;
+        m.init();
+        m._p_msg = myframe::string_acquire();
+        m._p_msg->assign(payload);
+        m._con_type = (int8_t)myframe::WsFrame::TEXT;
         put_send_msg(m);
-        _process->notice_send();
     }
 
     virtual void msg_recv_finish() override {
@@ -91,14 +90,11 @@ public:
             _handler->on_ws(recv, send);
         }
 
-        // 组装发送帧：header + payload
-        std::string header = _process->get_recent_send_frame_header().gen_frame_header(send.payload.size(), std::string(), (int8_t)send.opcode);
-        std::string* out = new std::string;
-        out->reserve(header.size() + send.payload.size());
-        out->append(header);
-        out->append(send.payload);
-
-        ws_msg_type m; m.init(); m._p_msg = out; m._con_type = (int8_t)send.opcode;
+        ws_msg_type m;
+        m.init();
+        m._p_msg = myframe::string_acquire();
+        m._p_msg->assign(send.payload);
+        m._con_type = (int8_t)send.opcode;
         put_send_msg(m);
     }
     void handle_msg(std::shared_ptr<normal_msg>& msg) override {
