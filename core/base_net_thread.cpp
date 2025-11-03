@@ -17,6 +17,7 @@ base_net_thread::base_net_thread(IFactory* factory, int channel_num)
 }
 
 base_net_thread::~base_net_thread(){
+    clear_user_data();
     if (_base_container){
         delete _base_container;
     }
@@ -136,6 +137,37 @@ void base_net_thread::handle_timeout(std::shared_ptr<timer_msg> & t_msg)
 common_obj_container * base_net_thread::get_net_container()
 {
     return _base_container;
+}
+
+void base_net_thread::set_user_data_unowned(const std::string& key, void* value)
+{
+    if (!value) {
+        _user_data.erase(key);
+        return;
+    }
+    store_user_data(key, std::shared_ptr<void>(value, [](void*) {}), false);
+}
+
+void base_net_thread::clear_user_data(const std::string& key)
+{
+    _user_data.erase(key);
+}
+
+void base_net_thread::clear_user_data()
+{
+    _user_data.clear();
+}
+
+void base_net_thread::store_user_data(const std::string& key, std::shared_ptr<void> value, bool owns)
+{
+    if (!value) {
+        _user_data.erase(key);
+        return;
+    }
+    ThreadUserDataEntry entry;
+    entry.handle = std::move(value);
+    entry.owns = owns;
+    _user_data[key] = std::move(entry);
 }
 
 std::unordered_map<uint32_t, base_net_thread *> base_net_thread::_base_net_thread_map;

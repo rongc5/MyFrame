@@ -15,6 +15,8 @@ class listen_process;
 #include <vector>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <utility>
 
 class IFactory; // fwd
 
@@ -69,10 +71,81 @@ class base_net_thread:public base_thread
         void add_plugin(std::shared_ptr<IThreadPlugin> p) { _plugins.push_back(p); }
         void set_factory_for_thread(IFactory* f) { _factory_for_thread = f; }
         IFactory* get_factory() const { return _factory_for_thread; }
+
+        // ===== Custom Thread Data =====
+        // Stores a non-owning pointer; caller must guarantee the pointee outlives the entry.
+        void set_user_data(const std::string& key, void* value) { set_user_data_unowned(key, value); }
+        void set_user_data_unowned(const std::string& key, void* value);
+
+        // Takes ownership; pointer must be allocated with new T.
+        template<typename T>
+        void set_user_data_owned(const std::string& key, T* value) {
+            if (!value) {
+                _user_data.erase(key);
+                return;
+            }
+            store_user_data(key, std::shared_ptr<T>(value), true);
+        }
+
+        // Shares ownership via std::shared_ptr; reference counts stay in sync with callers.
+        template<typename T>
+        void set_user_data_shared(const std::string& key, std::shared_ptr<T> value) {
+            if (!value) {
+                _user_data.erase(key);
+                return;
+            }
+            store_user_data(key, std::static_pointer_cast<void>(std::move(value)), true);
+        }
+
+        void set_user_data_shared(const std::string& key, std::shared_ptr<void> value) {
+            if (!value) {
+                _user_data.erase(key);
+                return;
+            }
+            store_user_data(key, std::move(value), true);
+        }
+
+        template<typename T>
+        T* get_user_data(const std::string& key) const {
+            auto it = _user_data.find(key);
+            if (it == _user_data.end() || !it->second.handle) {
+                return nullptr;
+            }
+            return static_cast<T*>(it->second.handle.get());
+        }
+
+        // Attempts to fetch a shared_ptr when the entry owns the data; returns nullptr for unowned.
+        template<typename T>
+        std::shared_ptr<T> get_user_data_ptr(const std::string& key) const {
+            auto it = _user_data.find(key);
+            if (it == _user_data.end() || !it->second.handle || !it->second.owns) {
+                return nullptr;
+            }
+            return std::static_pointer_cast<T>(it->second.handle);
+        }
+
+        // Returns the stored pointer regardless of ownership; may dangle for unowned entries.
+        void* get_user_data(const std::string& key) const {
+            return get_user_data<void>(key);
+        }
+
+        bool has_user_data(const std::string& key) const {
+            return _user_data.find(key) != _user_data.end();
+        }
+
+        void clear_user_data(const std::string& key);
+        void clear_user_data();
     protected:
         IFactory* _factory_for_thread{nullptr};
         std::vector<uint32_t> _worker_pool; // 监听线程可维护的 worker 索引集合
         unsigned long _rr_hint{0};
+        struct ThreadUserDataEntry {
+            std::shared_ptr<void> handle;
+            bool owns{false};
+        };
+        std::unordered_map<std::string, ThreadUserDataEntry> _user_data;
+
+        void store_user_data(const std::string& key, std::shared_ptr<void> value, bool owns);
 };
 
 #endif

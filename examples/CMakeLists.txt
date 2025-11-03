@@ -29,6 +29,10 @@ target_link_libraries(level3_custom_echo ${COMMON_LIBS})
 add_executable(level3_multi_protocol level3_multi_protocol.cpp)
 target_link_libraries(level3_multi_protocol ${COMMON_LIBS})
 
+# Thread user-data API demo
+add_executable(thread_user_data_demo thread_user_data_demo.cpp)
+target_link_libraries(thread_user_data_demo ${COMMON_LIBS})
+
 # Async HTTP Server Demo - showcases async response handling
 add_executable(async_http_demo async_http_server_demo.cpp)
 target_link_libraries(async_http_demo ${COMMON_LIBS})
@@ -149,14 +153,23 @@ target_link_libraries(unified_async_demo ${COMMON_LIBS})
 add_executable(simple_async_test simple_async_test.cpp)
 target_link_libraries(simple_async_test ${COMMON_LIBS})
 
+# Test memory management
+add_executable(test_memory_management test_memory_management.cpp)
+target_link_libraries(test_memory_management ${COMMON_LIBS})
+
+# Test edge cases
+add_executable(test_edge_cases test_edge_cases.cpp)
+target_link_libraries(test_edge_cases ${COMMON_LIBS})
+
 # Set output directory
 # Always-present example targets
 set_target_properties(
     http_server async_http_demo https_server wss_server
     level1_multi_protocol level2_multi_protocol level3_custom_echo level3_multi_protocol
+    thread_user_data_demo test_memory_management test_edge_cases
     h2_client http_out_client http2_out_client biz_http_client http_close_demo http_server_close_demo router_client router_biz_client client_conn_factory_example xproto_server xproto_client ws_bench_client
     demo_multi_protocol_server demo_multi_thread_server h2_server ws_stickbridge_client
-    ws_broadcast_user ws_broadcast_periodic 
+    ws_broadcast_user ws_broadcast_periodic
     unified_simple_http unified_mixed_server unified_ws_client_test unified_level2_demo unified_https_wss_server unified_async_demo simple_async_test
     PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
