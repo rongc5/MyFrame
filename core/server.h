@@ -37,6 +37,9 @@ public:
     
     // 获取线程数量
     size_t size() const;
+
+    // Expose worker thread instances without transferring ownership
+    const std::vector<base_net_thread*>& worker_threads() const;
     
 private:
     int _threads;

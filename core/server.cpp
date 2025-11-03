@@ -85,4 +85,6 @@ void server::join() {
 
 size_t server::size() const { return (size_t)_threads; }
 
+const std::vector<base_net_thread*>& server::worker_threads() const { return _workers; }
+
 void server::add_plugin(std::shared_ptr<IThreadPlugin> p) { _plugins.push_back(p); }
