@@ -40,6 +40,7 @@ public:
 
     // Expose worker thread instances without transferring ownership
     const std::vector<base_net_thread*>& worker_threads() const;
+    base_net_thread* listen_thread() const;
     
 private:
     int _threads;
