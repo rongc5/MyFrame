@@ -148,7 +148,7 @@ class base_connect:public base_net_obj
                 int ret = (int)_codec->recv(_fd, (char*)buf, len);
                 if (ret == 0)
                 {
-                    _process->peer_close();
+                    _process->notify_peer_close();
                     THROW_COMMON_EXCEPT("the client close the socket(" << _fd << ")");
                 }
                 else if (ret < 0)
@@ -174,7 +174,7 @@ class base_connect:public base_net_obj
             int ret = recv(_fd, buf, len, flags);
             if (ret == 0)
             {
-                _process->peer_close();
+                _process->notify_peer_close();
                 THROW_COMMON_EXCEPT("the client close the socket(" << _fd << ")");
             }
             else if (ret < 0)

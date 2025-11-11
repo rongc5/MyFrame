@@ -5,6 +5,7 @@
 #include "../core/out_connect.h"
 #include "../core/web_socket_req_process.h"
 #include "../core/web_socket_data_process.h"
+#include "../core/string_pool.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -53,7 +54,8 @@ public:
 
             // 发送关闭帧
             ws_msg_type close_msg;
-            close_msg._p_msg = new std::string("Goodbye");
+            close_msg._p_msg = myframe::string_acquire();
+            close_msg._p_msg->assign("Goodbye");
             close_msg._con_type = 0x8; // CLOSE
             put_send_msg(close_msg);
             _process->notice_send();
@@ -67,7 +69,8 @@ public:
 private:
     void send_text_message(const string& text) {
         ws_msg_type msg;
-        msg._p_msg = new std::string(text);
+        msg._p_msg = myframe::string_acquire();
+        msg._p_msg->assign(text);
         msg._con_type = 0x1; // TEXT
         put_send_msg(msg);
         _process->notice_send();

@@ -76,7 +76,7 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
     if (remaining == 0 || len > remaining) {
         PDEBUG("[ProtocolDetector] Buffer overflow attempt (current=%zu, incoming=%zu, cap=%zu). Closing.",
                _buffer.size(), static_cast<size_t>(len), static_cast<size_t>(MAX_DETECT_BUFFER_SIZE));
-        peer_close();
+        notify_peer_close();
         return len;
     }
 
@@ -91,7 +91,7 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
         dynamic_cast<base_connect<base_data_process>*>(get_base_net().get());
     if (!holder) {
         PDEBUG("[ProtocolDetector] holder cast failed");
-        peer_close();
+        notify_peer_close();
         return len;
     }
 
@@ -102,7 +102,7 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
             bool ok = handoff_to_protocol(proto, holder,
                                           buffered.data(), buffered.size());
             if (!ok) {
-                peer_close();
+                notify_peer_close();
                 return len;
             }
             _detected = true;
@@ -119,7 +119,7 @@ void ProtocolDetector::handle_msg(std::shared_ptr<::normal_msg>&) {}
 void ProtocolDetector::handle_timeout(std::shared_ptr<::timer_msg>& t_msg) {
     if (t_msg && t_msg->_timer_id == _timer_id && !_detected) {
         PDEBUG("[ProtocolDetector] Detection timeout");
-        peer_close();
+        notify_peer_close();
     }
 }
 

@@ -16,6 +16,7 @@
 #include "http_base_data_process.h"
 #include "web_socket_res_process.h"
 #include "web_socket_data_process.h"
+#include "string_pool.h"
 
 #include <algorithm>
 #include <chrono>
@@ -283,7 +284,8 @@ public:
         std::cout << "[L3 WS] handshake complete" << std::endl;
         ws_msg_type welcome;
         welcome.init();
-        welcome._p_msg = new std::string("Welcome to Level3 WebSocket echo server!");
+        welcome._p_msg = myframe::string_acquire();
+        welcome._p_msg->assign("Welcome to Level3 WebSocket echo server!");
         welcome._con_type = 0x1; // TEXT
         put_send_msg(welcome);
     }
@@ -296,19 +298,22 @@ public:
         if (hdr._op_code == 0x1) { // text
             ws_msg_type reply;
             reply.init();
-            reply._p_msg = new std::string("Echo: " + _recent_msg);
+            reply._p_msg = myframe::string_acquire();
+            reply._p_msg->assign("Echo: " + _recent_msg);
             reply._con_type = 0x1;
             put_send_msg(reply);
         } else if (hdr._op_code == 0x2) { // binary -> respond with text summary
             ws_msg_type reply;
             reply.init();
-            reply._p_msg = new std::string("Binary payload size=" + std::to_string(_recent_msg.size()));
+            reply._p_msg = myframe::string_acquire();
+            reply._p_msg->assign("Binary payload size=" + std::to_string(_recent_msg.size()));
             reply._con_type = 0x1;
             put_send_msg(reply);
         } else if (hdr._op_code == 0x9) { // ping -> answer pong with same payload
             ws_msg_type pong;
             pong.init();
-            pong._p_msg = new std::string(_recent_msg);
+            pong._p_msg = myframe::string_acquire();
+            pong._p_msg->assign(_recent_msg);
             pong._con_type = 0xA; // PONG
             put_send_msg(pong);
         } else if (hdr._op_code == 0x8) { // close

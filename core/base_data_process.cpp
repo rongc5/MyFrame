@@ -94,7 +94,7 @@ std::shared_ptr<base_net_obj>  base_data_process::get_base_net()
 void base_data_process::destroy()
 {
     PDEBUG("%p", this);
-    _closing = true;
+    notify_peer_close();
 }
 
 void base_data_process::add_timer(std::shared_ptr<timer_msg> & t_msg)
@@ -135,4 +135,15 @@ void base_data_process::request_close_now()
     // - calls destroy() on the net object (process-level cleanup)
     // - erases the object from maps; base_net_obj dtor removes epoll and closes fd
     THROW_COMMON_EXCEPT("process requested close");
+}
+
+void base_data_process::notify_peer_close()
+{
+    if (_peer_close_notified) {
+        _closing = true;
+        return;
+    }
+    _peer_close_notified = true;
+    _closing = true;
+    peer_close();
 }

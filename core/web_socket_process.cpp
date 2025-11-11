@@ -114,7 +114,7 @@ std::string* web_socket_process::get_send_buf()
 void web_socket_process::peer_close()
 {
     if (_p_data_process != NULL)
-        _p_data_process->peer_close();
+        _p_data_process->notify_peer_close();
 }
 
 void web_socket_process::destroy()

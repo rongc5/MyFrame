@@ -26,6 +26,9 @@ class base_data_process
 
         virtual void handle_timeout(std::shared_ptr<timer_msg> & t_msg);
 
+        // Ensure peer_close() callback fires exactly once across all teardown paths.
+        void notify_peer_close();
+
         void put_send_buf(std::string * str);
         // Helpers that leverage per-thread string pool
         void put_send_copy(const std::string& data);
@@ -69,6 +72,7 @@ class base_data_process
         std::weak_ptr<base_net_obj> _p_connect;
         std::deque<std::string*> _send_list;
         bool _closing{false};
+        bool _peer_close_notified{false};
 };
 
 #endif

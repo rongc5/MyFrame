@@ -126,7 +126,7 @@ void http_base_process::destroy()
 
 void http_base_process::peer_close()
 {
-    _data_process->peer_close();
+    if (_data_process) _data_process->notify_peer_close();
 }
 
 /****************************以上是五个口子，以下是供底层调用********************************************/

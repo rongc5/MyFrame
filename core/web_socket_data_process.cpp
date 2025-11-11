@@ -3,6 +3,7 @@
 #include "web_socket_process.h"
 
 #include "base_net_obj.h"
+#include "string_pool.h"
 
 
 
@@ -15,10 +16,10 @@ web_socket_data_process::web_socket_data_process(web_socket_process *p):base_dat
 web_socket_data_process::~web_socket_data_process()
 {
     PDEBUG("%p", this);
-    for(std::list<ws_msg_type>::iterator itr = _send_list.begin(); itr != _send_list.end(); ++itr)
-    {
-        delete itr->_p_msg;
-    }	
+    for (auto& msg : _send_list) {
+        myframe::string_release(msg._p_msg);
+    }
+    _send_list.clear();
 }
 
 void web_socket_data_process::on_handshake_ok()		
@@ -82,6 +83,5 @@ ws_msg_type web_socket_data_process::get_send_msg()
 size_t web_socket_data_process::process_recv_buf(const char *buf, size_t len)
 {
     _recent_msg.append(buf, len); 
-
     return len;
 }
