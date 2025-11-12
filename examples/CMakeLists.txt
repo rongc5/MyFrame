@@ -54,6 +54,10 @@ target_link_libraries(h2_client ${COMMON_LIBS})
 add_executable(http_out_client http_out_client.cpp)
 target_link_libraries(http_out_client ${COMMON_LIBS})
 
+# TLS multi-fetch demo (HTTPS client sample)
+add_executable(tls_multi_fetch tls_multi_fetch.cpp)
+target_link_libraries(tls_multi_fetch ${COMMON_LIBS})
+
 # HTTP/2 Outbound Client using out_connect
 add_executable(http2_out_client http2_out_client.cpp)
 target_link_libraries(http2_out_client ${COMMON_LIBS})
@@ -121,6 +125,14 @@ target_link_libraries(ws_broadcast_user ${COMMON_LIBS})
 add_executable(ws_broadcast_periodic ws_broadcast_periodic.cpp)
 target_link_libraries(ws_broadcast_periodic ${COMMON_LIBS})
 
+# Framework WS smoke-test pair
+add_executable(framework_ws_server framework_ws_server.cpp)
+target_link_libraries(framework_ws_server ${COMMON_LIBS})
+add_executable(framework_ws_client framework_ws_client.cpp)
+target_link_libraries(framework_ws_client ${COMMON_LIBS})
+add_executable(framework_ws_client_idle framework_ws_client_idle.cpp)
+target_link_libraries(framework_ws_client_idle ${COMMON_LIBS})
+
 # StickBridge client demo leveraging myframe websocket stack
 add_executable(ws_stickbridge_client ws_stickbridge_client.cpp)
 target_link_libraries(ws_stickbridge_client ${COMMON_LIBS})
@@ -167,9 +179,9 @@ set_target_properties(
     http_server async_http_demo https_server wss_server
     level1_multi_protocol level2_multi_protocol level3_custom_echo level3_multi_protocol
     thread_user_data_demo test_memory_management test_edge_cases
-    h2_client http_out_client http2_out_client biz_http_client http_close_demo http_server_close_demo router_client router_biz_client client_conn_factory_example xproto_server xproto_client ws_bench_client
+    h2_client http_out_client http2_out_client biz_http_client http_close_demo http_server_close_demo router_client router_biz_client client_conn_factory_example xproto_server xproto_client ws_bench_client tls_multi_fetch
     demo_multi_protocol_server demo_multi_thread_server h2_server ws_stickbridge_client
-    ws_broadcast_user ws_broadcast_periodic
+    ws_broadcast_user ws_broadcast_periodic framework_ws_server framework_ws_client framework_ws_client_idle
     unified_simple_http unified_mixed_server unified_ws_client_test unified_level2_demo unified_https_wss_server unified_async_demo simple_async_test
     PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
