@@ -78,23 +78,27 @@ void http_client_data_process::msg_recv_finish() {
         z_stream strm; memset(&strm, 0, sizeof(strm));
         int ret = inflateInit2(&strm, 16 + MAX_WBITS);
         if (ret == Z_OK) {
-            strm.next_in = (Bytef*)_resp_body.data();
-            strm.avail_in = (uInt)_resp_body.size();
-            std::string dec; std::string out; out.resize(64 * 1024);
+            strm.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(_resp_body.data()));
+            strm.avail_in = static_cast<uInt>(_resp_body.size());
+            std::string dec;
+            dec.reserve(_resp_body.size() * 2);
             int zret = Z_OK;
-            while (zret == Z_OK) {
-                out.resize(dec.size() + 64 * 1024);
-                strm.next_out = (Bytef*)(&out[dec.size()]);
-                strm.avail_out = 64 * 1024;
+            do {
+                unsigned char out[64 * 1024];
+                strm.next_out = out;
+                strm.avail_out = sizeof(out);
                 zret = inflate(&strm, Z_NO_FLUSH);
-                size_t have = 64 * 1024 - strm.avail_out;
-                dec.append(out.data() + dec.size(), have);
-            }
+                size_t produced = sizeof(out) - strm.avail_out;
+                if (produced) {
+                    dec.append(reinterpret_cast<const char*>(out), produced);
+                }
+            } while (zret == Z_OK);
             inflateEnd(&strm);
             if (zret == Z_STREAM_END) {
                 PDEBUG("Decompressed (gzip) Length: %zu", dec.size());
                 if (dec.size() < 1000) PDEBUG("Response Body (gunzipped): %s", dec.c_str());
                 else { auto s = dec.substr(0,500) + "..."; PDEBUG("Response Body (gunzipped, first 500 chars): %s", s.c_str()); }
+                _resp_body = std::move(dec);
             } else {
                 PDEBUG("[http] gzip decompress failed, zret=%d", zret);
                 if (_resp_body.length() < 1000) PDEBUG("Response Body (raw): %s", _resp_body.c_str());

@@ -115,7 +115,6 @@ protected:
         SSL_set_tlsext_host_name(_ssl, _host.c_str());
         if (!_host.empty()) {
             X509_VERIFY_PARAM* param = SSL_get0_param(_ssl);
-            // Enforce exact hostname match; SANs are preferred but CN fallback applies.
             X509_VERIFY_PARAM_set1_host(param, _host.c_str(), 0);
         }
         SSL_set_fd(_ssl, this->_fd);

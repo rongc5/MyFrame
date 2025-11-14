@@ -17,8 +17,7 @@ static bool parse_url(const std::string& url, std::string& scheme, std::string& 
 }
 
 // This example shows a minimal business client using http_req_process.
-// One-shot request, auto-exit after response.
-// Note: http_client_data_process::msg_recv_finish() already calls stop_all_thread().
+// One-shot request that waits for the response and exits cleanly.
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <http(s)://host[:port]/path> [GET|POST] [body] [--timeout-ms N]\n";
@@ -36,7 +35,11 @@ int main(int argc, char** argv) {
         if (std::string(argv[i]) == "--timeout-ms") timeout_ms = atoi(argv[i+1]);
     }
 
-    base_net_thread th; th.start();
+    base_net_thread th;
+    if (!th.start()) {
+        std::cerr << "[biz_http_client] Failed to start network thread" << std::endl;
+        return 3;
+    }
 
     std::shared_ptr< out_connect<http_req_process> > conn;
 #ifdef ENABLE_SSL
@@ -56,16 +59,27 @@ int main(int argc, char** argv) {
     //  - Collect response body
     //  - Print status/body summary
     //  - Stop event threads once done (one-shot)
-    proc->set_process(new http_client_data_process(proc, method, host, path, headers, body));
+    auto client = new http_client_data_process(proc, method, host, path, headers, body);
+    proc->set_process(client);
 
     conn->set_process(proc);
     conn->set_net_container(th.get_net_container());
     std::shared_ptr<base_net_obj> net = conn; th.get_net_container()->push_real_net(net);
-    conn->connect();
-
-    if (timeout_ms > 0) {
-        std::thread([timeout_ms]{ std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms)); base_thread::stop_all_thread(); }).detach();
+    bool success = false;
+    try {
+        conn->connect();
+        success = client->wait_done(timeout_ms > 0 ? timeout_ms : 0);
+    } catch (const std::exception& ex) {
+        std::cerr << "[biz_http_client] request failed: " << ex.what() << std::endl;
     }
+    if (!success) {
+        if (timeout_ms > 0) {
+            std::cerr << "[biz_http_client] timeout after " << timeout_ms << " ms" << std::endl;
+        } else {
+            std::cerr << "[biz_http_client] request did not complete" << std::endl;
+        }
+    }
+    th.stop();
     th.join_thread();
-    return 0;
+    return success ? 0 : 4;
 }
