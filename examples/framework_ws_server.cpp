@@ -1,6 +1,6 @@
 #include "../include/server.h"
 #include "../core/unified_protocol_factory.h"
-#include "../core/app_handler_v2.h"
+#include "../core/protocol_context.h"
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -14,13 +14,17 @@ using namespace myframe;
 
 namespace {
 
-class FrameworkWsHandler : public IApplicationHandler {
+// Level 2 handler: use protocol contexts for HTTP and WebSocket
+class FrameworkWsHandler : public IProtocolHandler {
 public:
     FrameworkWsHandler()
         : connection_count_(0)
         , message_count_(0) {}
 
-    void on_http(const HttpRequest& req, HttpResponse& res) override {
+    // Level 2 HTTP entry
+    void on_http_request(HttpContext& ctx) override {
+        const HttpRequest& req = ctx.request();
+        HttpResponse& res = ctx.response();
         const auto host = req.get_header("Host");
         const std::string ws_host = host.empty() ? "127.0.0.1:19090" : host;
 
@@ -41,18 +45,20 @@ public:
         res.set_text("Not Found");
     }
 
-    void on_ws(const WsFrame& recv, WsFrame& send) override {
+    // Level 2 WS entry
+    void on_ws_frame(WsContext& ctx) override {
+        const auto& recv = ctx.frame();
         const auto msg_id = ++message_count_;
         std::cout << "[WS] payload: " << recv.payload << " (#" << msg_id << ")" << std::endl;
 
         if (recv.payload == "ping") {
-            send = WsFrame::text("pong");
+            ctx.send_text("pong");
             return;
         }
 
         std::ostringstream oss;
         oss << "ack[" << msg_id << "]: " << recv.payload;
-        send = WsFrame::text(oss.str());
+        ctx.send_text(oss.str());
     }
 
     void on_connect(const ConnectionInfo& info) override {
@@ -126,8 +132,9 @@ int main(int argc, char** argv) {
 
         auto handler = std::make_shared<FrameworkWsHandler>();
         auto factory = std::make_shared<UnifiedProtocolFactory>();
-        factory->register_http_handler(handler.get());
-        factory->register_ws_handler(handler.get());
+        // Level 2 registration: use context handlers
+        factory->register_http_context_handler(handler.get());
+        factory->register_ws_context_handler(handler.get());
 
         srv.bind("0.0.0.0", port);
         srv.set_business_factory(factory);

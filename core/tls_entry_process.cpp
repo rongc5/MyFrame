@@ -68,10 +68,15 @@ bool tls_entry_process::init_server_ssl(SSL*& out_ssl) {
 bool tls_entry_process::ensure_ssl_installed() {
 #ifdef ENABLE_SSL
     if (_installed) return true;
-    SSL* ssl = 0; if (!init_server_ssl(ssl)) return false;
+    SSL* ssl = 0;
+    if (!init_server_ssl(ssl)) return false;
     // 安装SSL后切回探测
-    base_connect<base_data_process>* holder = dynamic_cast< base_connect<base_data_process>* >(get_base_net().get());
-    if (!holder) return false;
+    base_connect<base_data_process>* holder =
+        dynamic_cast< base_connect<base_data_process>* >(get_base_net().get());
+    if (!holder) {
+        if (ssl) { SSL_free(ssl); }
+        return false;
+    }
     // 在连接上安装 SSL 编解码器
     PDEBUG("[tls] Installing SslCodec and switching to over-TLS detector");
     holder->set_codec(std::unique_ptr<ICodec>(new SslCodec(ssl)));
@@ -84,16 +89,19 @@ bool tls_entry_process::ensure_ssl_installed() {
     holder->update_event(holder->get_event() | EPOLLOUT);
 
     // 切到探测（TLS 之上继续探测 HTTP/WS/自定义）
-    std::unique_ptr<protocol_detect_process> detector(new protocol_detect_process(get_base_net(), _app_handler, true));
+    std::unique_ptr<protocol_detect_process> detector(
+        new protocol_detect_process(get_base_net(), _app_handler, true));
     detector->add_probe(std::unique_ptr<IProtocolProbe>(new WsProbe(_app_handler)));
     // Prefer HTTP/2 when client sends h2 preface
     detector->add_probe(std::unique_ptr<IProtocolProbe>(new Http2Probe(_app_handler)));
     detector->add_probe(std::unique_ptr<IProtocolProbe>(new HttpProbe(_app_handler)));
-    #ifdef HAS_CUSTOM_PROBE
+#ifdef HAS_CUSTOM_PROBE
     detector->add_probe(std::unique_ptr<IProtocolProbe>(new CustomProbe()));
-    #endif
-    holder->set_process(detector.release());
-    _installed = true; return true;
+#endif
+    // IMPORTANT: set flag before handing ownership away; set_process() deletes `this`
+    _installed = true;
+    holder->set_process(std::move(detector));
+    return true;
 #else
     return false;
 #endif

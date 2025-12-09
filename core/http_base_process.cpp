@@ -60,7 +60,7 @@ size_t http_base_process::process_recv_buf(const char *buf, size_t len)
 
     //PDEBUG("%s\n", buf);
 
-    if (_http_status == RECV_BODY) //避免数据不被拷贝多次
+    if (_http_status == RECV_BODY) //莶
     {	
         int result = 0;
         if (staus_change)
@@ -129,7 +129,7 @@ void http_base_process::peer_close()
     if (_data_process) _data_process->notify_peer_close();
 }
 
-/****************************以上是五个口子，以下是供底层调用********************************************/
+/****************************樱枪撞********************************************/
 
 void http_base_process::change_http_status(HTTP_STATUS status, bool if_change_send)
 {
@@ -166,7 +166,7 @@ void http_base_process::check_head_finish(std::string & recv_head, std::string &
     }
     else
     {
-        if (recv_head.length() > MAX_HTTP_HEAD_LEN) //http头不要超过10k
+        if (recv_head.length() > MAX_HTTP_HEAD_LEN) //http头要10k
         {
             THROW_COMMON_EXCEPT("http head too long (" << recv_head.length() << ")");
         }

@@ -231,7 +231,9 @@ class base_connect:public base_net_obj
         {
             if (_peek_drain_backlog > 0) {
                 size_t flushed = drain_peek_bytes(_peek_drain_backlog);
-                _peek_drain_backlog -= std::min(_peek_drain_backlog, flushed);
+                if (flushed > 0) {
+                    _peek_drain_backlog -= std::min(_peek_drain_backlog, flushed);
+                }
             }
             // If protocol doesn't want to receive, and there is no codec
             // that may still need read events (e.g., TLS handshake), skip.
@@ -294,7 +296,7 @@ class base_connect:public base_net_obj
                     size_t flushed = drain_peek_bytes(need);
                     _peek_drain_backlog -= flushed;
                 }
-            }        
+            }		
 
             PDEBUG("process_recv_buf _recv_buf[%zu] ip[%s] flag[%d]", _recv_buf.length(), _peer_net.ip.c_str(), flag);
         }
@@ -398,7 +400,9 @@ class base_connect:public base_net_obj
 
     protected:
         size_t drain_peek_bytes(size_t need) {
-            if (need == 0) return 0;
+            if (need == 0) {
+                return 0;
+            }
             char drop_buf[SIZE_LEN_32768];
             size_t flushed = 0;
             while (flushed < need) {
@@ -407,8 +411,9 @@ class base_connect:public base_net_obj
                 if (rc > 0) {
                     flushed += static_cast<size_t>(rc);
                 } else if (rc == 0) {
-                    if (_process) _process->notify_peer_close();
-                    break;
+                    _peek_drain_backlog = 0;
+                    _process->notify_peer_close();
+                    THROW_COMMON_EXCEPT("peer closed while draining peek buffer");
                 } else {
                     if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         break;
@@ -418,6 +423,7 @@ class base_connect:public base_net_obj
             }
             return flushed;
         }
+
         std::string _recv_buf;
         using send_buf_ptr = myframe::pooled_string_ptr;
         send_buf_ptr _p_send_buf;

@@ -37,7 +37,7 @@ void web_socket_process::set_process(web_socket_data_process * data_process)
     _p_data_process = data_process;
 }
 
-//´¦Àí½ÓÊÕµÄÊý¾Ý
+//Õµ
 size_t web_socket_process::process_recv_buf(const char *buf, const size_t len)
 {
     if (WB_INIT_STAUTS == _wb_status)
@@ -91,15 +91,15 @@ void web_socket_process::handle_msg(std::shared_ptr<normal_msg> & p_msg)
 std::string* web_socket_process::get_send_buf()
 {
     std::string *p_str = NULL;
-    if (WB_HEAD_FINISH == _wb_status) //·¢ËÍÍ·
+    if (WB_HEAD_FINISH == _wb_status) //Í·
     {								
         p_str = SEND_WB_HEAD_FINISH_PROCESS();
     }
-    else if (WB_HANDSHAKE_OK == _wb_status) // ·¢ËÍÊý¾Ý
+    else if (WB_HANDSHAKE_OK == _wb_status) // 
     {
         p_str = SEND_WB_HANDSHAKE_OK_PROCESS();
     }
-    else if (WB_INIT_STAUTS == _wb_status)//²»´æÔÚµÄ×´Ì¬
+    else if (WB_INIT_STAUTS == _wb_status)//Úµ×´Ì¬
     {
         p_str = SEND_WB_INIT_STAUTS_PROCESS();
     }
@@ -125,7 +125,7 @@ void web_socket_process::destroy()
 
 void web_socket_process::send_ping(const char op_code, const std::string &ping_data)
 {
-    if (ping_data.length() < 125) //´óÓÚ125×Ö½ÚµÄping°ü²»ÈÃ·¢³öÈ¥ÁË
+    if (ping_data.length() < 125) //125Ö½ÚµpingÃ·È¥
     {
         PDEBUG("send  ping to server");
         std::string *p_str = new std::string;
@@ -186,7 +186,7 @@ bool web_socket_process::check_head_finish()
     }
     else
     {
-        if (_recv_header.length() > MAX_HTTP_HEAD_LEN) //httpÍ·²»Òª³¬¹ý10k
+        if (_recv_header.length() > MAX_HTTP_HEAD_LEN) //httpÍ·Òª10k
         {
             THROW_COMMON_EXCEPT("http head too long (" << _recv_header.length() << ")");
         }
@@ -257,11 +257,11 @@ size_t web_socket_process::RECV_WB_HANDSHAKE_OK_PROCESS(const char *buf, const s
 
         if (_recent_recv_web_header._wb_body_status == WB_FRAME_BODY_STAUS)
         {
-            uint32_t tmp_left = _recent_recv_web_header.update(left_len);//×´Ì¬ÔÚÀï±ß±ä»»
+            uint32_t tmp_left = _recent_recv_web_header.update(left_len);//×´Ì¬ß±ä»»
             int8_t tmp_code = _recent_recv_web_header._op_code;
-            if (tmp_code != 0x09 && tmp_code != 0x0a) //ping°ü,pung°ü²»Òªµ½ÉÏ²ã´¦ÀíÁË
+            if (tmp_code != 0x09 && tmp_code != 0x0a) //ping,pungÒªÏ²ã´¦
             {	
-                if (_recent_recv_web_header._payload_len == 0)//Ö±½ÓÈ¡ÏÂÒ»ÌõÏûÏ¢
+                if (_recent_recv_web_header._payload_len == 0)//Ö±È¡Ò»Ï¢
                 {
                     _recent_recv_web_header.clear();
                     continue;
@@ -285,15 +285,15 @@ size_t web_socket_process::RECV_WB_HANDSHAKE_OK_PROCESS(const char *buf, const s
                     if (_recent_recv_web_header.if_finish())
                     {
                         _p_data_process->msg_recv_finish();
-                    }	
+                    }
                 }                                        
             }
-            else //ping°ü, pung°ü´¦Àí
+            else //ping, pung
             {
                 _ping_data.append(left_buf,  left_len - tmp_left);
                 left_buf = left_buf + (left_len - tmp_left);
                 left_len = tmp_left; 
-                if(_recent_recv_web_header.if_finish()) //¸üÐÂ×´Ì¬,ping°ü¾ÍÔÚµ×²ã´¦ÀíÁË
+                if(_recent_recv_web_header.if_finish()) //×´Ì¬,pingÚµ×²ã´¦
                 {				
                     _p_data_process->on_ping(tmp_code, _ping_data);
                     _ping_data.clear();
@@ -303,4 +303,3 @@ size_t web_socket_process::RECV_WB_HANDSHAKE_OK_PROCESS(const char *buf, const s
     }
     return len;
 }
-

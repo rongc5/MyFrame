@@ -35,6 +35,18 @@ UnifiedProtocolFactory& UnifiedProtocolFactory::register_http_handler(
     // HTTP 检测函数
     DetectFn detect = [](const char* buf, size_t len) -> bool {
         if (len < 4) return false;
+        std::string data(buf, len);
+        // Wait for full header to avoid misclassifying WebSocket upgrades
+        if (data.find("\r\n\r\n") == std::string::npos) {
+            return false;
+        }
+        std::string lowered = data;
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lowered.find("upgrade:") != std::string::npos &&
+            lowered.find("websocket") != std::string::npos) {
+            return false;
+        }
         // 检测常见 HTTP 方法
         return (memcmp(buf, "GET ", 4) == 0 ||
                 memcmp(buf, "POST ", 5) == 0 ||
@@ -99,6 +111,17 @@ UnifiedProtocolFactory& UnifiedProtocolFactory::register_http_context_handler(
     // HTTP 检测函数
     DetectFn detect = [](const char* buf, size_t len) -> bool {
         if (len < 4) return false;
+        std::string data(buf, len);
+        if (data.find("\r\n\r\n") == std::string::npos) {
+            return false;
+        }
+        std::string lowered = data;
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lowered.find("upgrade:") != std::string::npos &&
+            lowered.find("websocket") != std::string::npos) {
+            return false;
+        }
         // 检测常见 HTTP 方法
         return (memcmp(buf, "GET ", 4) == 0 ||
                 memcmp(buf, "POST ", 5) == 0 ||

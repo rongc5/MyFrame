@@ -1,5 +1,6 @@
 # Build directories
 build/
+build_asan/
 lib/
 # include 目录需要纳入版本控制，勿忽略
 

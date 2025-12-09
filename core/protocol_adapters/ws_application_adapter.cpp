@@ -55,6 +55,7 @@ WsApplicationDataProcess::~WsApplicationDataProcess() {
 void WsApplicationDataProcess::on_handshake_ok() {
     PDEBUG("[WsApplicationDataProcess] WebSocket handshake completed");
     _handshake_done = true;
+    _recent_msg.clear();
 
     // 通知应用层连接建立
     if (_handler) {
@@ -69,11 +70,13 @@ void WsApplicationDataProcess::msg_recv_finish() {
 
     if (!_handshake_done) {
         PDEBUG("[WsApplicationDataProcess] Handshake not completed yet");
+        _recent_msg.clear();
         return;
     }
 
     if (!_handler) {
         PDEBUG("[WsApplicationDataProcess] Handler is null");
+        _recent_msg.clear();
         return;
     }
 
@@ -82,7 +85,7 @@ void WsApplicationDataProcess::msg_recv_finish() {
 
     // 构造 WsFrame
     WsFrame recv_frame;
-    recv_frame.payload = _recent_msg;
+    recv_frame.payload.swap(_recent_msg);
     recv_frame.fin = (frame_header._more_flag == 1);
 
     // 转换 opcode
