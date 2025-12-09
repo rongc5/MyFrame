@@ -1,76 +1,70 @@
-# MyFrame ÒµÎñÏß³Ì·ÃÎÊÖ¸ÄÏ
+# MyFrame ä¸šåŠ¡çº¿ç¨‹è®¿é—®æŒ‡å—
 
-**ÎÄµµ°æ±¾**: 1.0  
-**×îºó¸üĞÂ**: 2025-10-22
-
----
-
-## ¸ÅÊö
-
-MyFrame Í³Ò»Ğ­Òé¿ò¼ÜÏÖÔÚÖ§³ÖÔÚ Handler ºÍ Context ÖĞ·ÃÎÊµ±Ç°ÒµÎñ´¦ÀíÏß³Ì (`base_net_thread`)£¬Õâ¶ÔÓÚĞèÒªÏß³Ì¼¶±ğ¿ØÖÆµÄÒµÎñÂß¼­ºÜÖØÒª¡£
+**æ–‡æ¡£ç‰ˆæœ¬**: 1.0  
+**æœ€åæ›´æ–°**: 2025-10-22
 
 ---
 
-## ·ÃÎÊÏß³ÌµÄ·½·¨
+## æ¦‚è¿°
 
-### Level 1: IApplicationHandler ÖĞ·ÃÎÊÏß³Ì
+MyFrame ç»Ÿä¸€åè®®æ¡†æ¶ç°åœ¨æ”¯æŒåœ¨ Handler å’Œ Context ä¸­è®¿é—®å½“å‰ä¸šåŠ¡å¤„ç†çº¿ç¨‹ (`base_net_thread`)ï¼Œè¿™å¯¹äºéœ€è¦çº¿ç¨‹çº§åˆ«æ§åˆ¶çš„ä¸šåŠ¡é€»è¾‘å¾ˆé‡è¦ã€‚
+
+---
+
+## è®¿é—®çº¿ç¨‹çš„æ–¹æ³•
+
+### Level 1: IApplicationHandler ä¸­è®¿é—®çº¿ç¨‹
 
 ```cpp
 class MyHandler : public IApplicationHandler {
 public:
     void on_http(const HttpRequest& req, HttpResponse& res) override {
-        // »ñÈ¡µ±Ç°ÒµÎñÏß³Ì
         base_net_thread* thread = get_current_thread();
-        
+
         if (thread) {
             uint32_t thread_index = thread->get_thread_index();
             std::cout << "Current thread: " << thread_index << std::endl;
         }
-        
+
         res.set_json(R"({"status":"ok"})");
     }
 };
 ```
 
-### Level 2: HttpContext ÖĞ·ÃÎÊÏß³Ì
+### Level 2: HttpContext ä¸­è®¿é—®çº¿ç¨‹
 
 ```cpp
 class AdvancedHandler : public IProtocolHandler {
 public:
     void on_http_request(HttpContext& ctx) override {
-        // »ñÈ¡µ±Ç°´¦ÀíÏß³Ì
         base_net_thread* thread = ctx.get_thread();
-        
+
         if (thread) {
             uint32_t thread_index = thread->get_thread_index();
-            
-            // ¿ÉÒÔ»ùÓÚÏß³Ì½øĞĞÄ³Ğ©²Ù×÷
             handle_request_on_thread(ctx, thread_index);
         }
-        
+
         ctx.response().set_json(R"({"status":"ok"})");
     }
-    
+
 private:
     void handle_request_on_thread(HttpContext& ctx, uint32_t thread_idx) {
-        // Ïß³Ì¼¶±ğµÄÒµÎñÂß¼­
+        (void)ctx;
+        (void)thread_idx;
     }
 };
 ```
 
-### Level 2: WsContext ÖĞ·ÃÎÊÏß³Ì
+### Level 2: WsContext ä¸­è®¿é—®çº¿ç¨‹
 
 ```cpp
 class WsHandler : public IProtocolHandler {
 public:
     void on_ws_frame(WsContext& ctx) override {
         base_net_thread* thread = ctx.get_thread();
-        
+
         if (thread) {
-            // ¿ÉÒÔÔÚÏß³Ì¼¶´æ´¢Á¬½ÓÏà¹ØµÄ×ÊÔ´
             void* thread_context = get_thread_local_data(thread->get_thread_index());
-            
-            // Ê¹ÓÃÏß³Ì¼¶ÉÏÏÂÎÄ´¦ÀíÏûÏ¢
             process_message(ctx, thread_context);
         }
     }
@@ -79,42 +73,43 @@ public:
 
 ---
 
-## Ê¹ÓÃ³¡¾°
+## ä½¿ç”¨åœºæ™¯
 
-### ³¡¾° 1: Ïß³Ì±¾µØ´æ´¢
+### åœºæ™¯ 1: çº¿ç¨‹æœ¬åœ°å­˜å‚¨
 
-Ä³Ğ©ÒµÎñĞèÒªÔÚÏß³Ì¼¶±ğÎ¬»¤×´Ì¬£¬ÀıÈçÊı¾İ¿âÁ¬½Ó³Ø£º
+æŸäº›ä¸šåŠ¡éœ€è¦åœ¨çº¿ç¨‹çº§åˆ«ç»´æŠ¤çŠ¶æ€ï¼Œä¾‹å¦‚æ•°æ®åº“è¿æ¥æ± ï¼š
 
 ```cpp
 class DatabaseHandler : public IApplicationHandler {
 private:
     std::map<uint32_t, DbConnection*> _thread_connections;
     std::mutex _mutex;
-    
+
 public:
     void on_http(const HttpRequest& req, HttpResponse& res) override {
         base_net_thread* thread = get_current_thread();
-        
+
         if (!thread) {
             res.status = 500;
             return;
         }
-        
+
         uint32_t thread_idx = thread->get_thread_index();
         DbConnection* conn = get_thread_connection(thread_idx);
-        
+
         try {
             auto result = conn->query("SELECT ...");
             res.set_json(result);
         } catch (const std::exception& e) {
+            (void)e;
             res.status = 500;
         }
     }
-    
+
 private:
     DbConnection* get_thread_connection(uint32_t thread_idx) {
         std::lock_guard<std::mutex> lock(_mutex);
-        
+
         auto it = _thread_connections.find(thread_idx);
         if (it == _thread_connections.end()) {
             _thread_connections[thread_idx] = new DbConnection();
@@ -124,28 +119,28 @@ private:
 };
 ```
 
-### ³¡¾° 2: Í³¼ÆĞÅÏ¢ÊÕ¼¯
+### åœºæ™¯ 2: ç»Ÿè®¡ä¿¡æ¯æ”¶é›†
 
-ÔÚÏß³Ì¼¶±ğÊÕ¼¯ĞÔÄÜÍ³¼Æ£º
+åœ¨çº¿ç¨‹çº§åˆ«æ”¶é›†æ€§èƒ½ç»Ÿè®¡ï¼š
 
 ```cpp
 class StatsHandler : public IApplicationHandler {
 private:
     std::map<uint32_t, Stats> _thread_stats;
-    
+
 public:
     void on_http(const HttpRequest& req, HttpResponse& res) override {
         base_net_thread* thread = get_current_thread();
-        
+
         if (thread) {
             uint32_t idx = thread->get_thread_index();
             _thread_stats[idx].request_count++;
             _thread_stats[idx].total_bytes += req.body.size();
         }
-        
+
         res.set_json(R"({"status":"ok"})");
     }
-    
+
     void print_stats() {
         for (const auto& [idx, stats] : _thread_stats) {
             std::cout << "Thread " << idx << ": "
@@ -156,31 +151,30 @@ public:
 };
 ```
 
-### ³¡¾° 3: Òì²½ÈÎÎñ·ÖÅä
+### åœºæ™¯ 3: å¼‚æ­¥ä»»åŠ¡åˆ†é…
 
-»ùÓÚÏß³ÌĞÅÏ¢½øĞĞÖÇÄÜµÄÒì²½ÈÎÎñ·ÖÅä£º
+åŸºäºçº¿ç¨‹ä¿¡æ¯è¿›è¡Œæ™ºèƒ½çš„å¼‚æ­¥ä»»åŠ¡åˆ†é…ï¼š
 
 ```cpp
 class TaskDispatchHandler : public IProtocolHandler {
 private:
     std::vector<TaskQueue> _thread_queues;
-    
+
 public:
     void on_http_request(HttpContext& ctx) override {
         base_net_thread* thread = ctx.get_thread();
-        
+
         if (!thread) {
             ctx.response().status = 500;
             return;
         }
-        
+
         uint32_t thread_idx = thread->get_thread_index();
-        
-        // ÔÚÏß³Ì¶ÓÁĞÖĞÌá½»ÈÎÎñ
+
         ctx.async_response([this, thread_idx, &ctx]() {
             Task task = parse_request(ctx.request());
             _thread_queues[thread_idx].enqueue(task);
-            
+
             auto result = execute_task(task);
             ctx.response().set_json(result);
         });
@@ -190,135 +184,117 @@ public:
 
 ---
 
-## Ïß³ÌĞÅÏ¢»ñÈ¡
+## çº¿ç¨‹ä¿¡æ¯è·å–
 
-### ´Ó Handler »ñÈ¡£¨Level 1£©
+### ä» Handler è·å–ï¼ˆLevel 1ï¼‰
 
 ```cpp
-// Ä¬ÈÏÊµÏÖ·µ»Ø nullptr
 base_net_thread* thread = handler->get_current_thread();
 ```
 
-**½¨Òé**: Èç¹û Handler ĞèÒªÏß³ÌĞÅÏ¢£¬¿¼ÂÇÉı¼¶µ½ Level 2 Ê¹ÓÃ Context¡£
+**å»ºè®®**: å¦‚æœ Handler éœ€è¦çº¿ç¨‹ä¿¡æ¯ï¼Œè€ƒè™‘å‡çº§åˆ° Level 2 ä½¿ç”¨ Contextã€‚
 
-### ´Ó Context »ñÈ¡£¨Level 2£©
+### ä» Context è·å–ï¼ˆLevel 2ï¼‰
 
 ```cpp
-// HTTP Context
-base_net_thread* thread = ctx.get_thread();
-
-// WebSocket Context
-base_net_thread* thread = ctx.get_thread();
-
-// Binary Context
 base_net_thread* thread = ctx.get_thread();
 ```
 
-**±£Ö¤**: Context Ìá¹©µÄÏß³ÌÖ¸ÕëÔÚÇëÇó´¦ÀíÆÚ¼äÓĞĞ§¡£
+**ä¿è¯**: Context æä¾›çš„çº¿ç¨‹æŒ‡é’ˆåœ¨è¯·æ±‚å¤„ç†æœŸé—´æœ‰æ•ˆã€‚
 
 ---
 
-## Ïß³Ì¶ÔÏóµÄ³£ÓÃ·½·¨
+## çº¿ç¨‹å¯¹è±¡çš„å¸¸ç”¨æ–¹æ³•
 
 ```cpp
 base_net_thread* thread = ctx.get_thread();
 
 if (thread) {
-    // »ñÈ¡Ïß³Ì±àºÅ
     uint32_t index = thread->get_thread_index();
-    
-    // ÆäËû¿ÉÓÃ·½·¨È¡¾öÓÚ¿ò¼ÜÊµÏÖ
-    // ²Î¿¼ core/base_net_thread.h ÁË½âÍêÕû API
+    (void)index;
 }
 ```
 
 ---
 
-## ×î¼ÑÊµ¼ù
+## æœ€ä½³å®è·µ
 
-### ? ÍÆ¼ö×ö·¨
+### æ¨èåšæ³•
 
-1. **ÔÚ Level 2 ÖĞÊ¹ÓÃ**
+1. **åœ¨ Level 2 ä¸­ä½¿ç”¨**
    ```cpp
-   // ÍÆ¼ö£ºÊ¹ÓÃ Context »ñÈ¡Ïß³Ì
    void on_http_request(HttpContext& ctx) override {
        auto thread = ctx.get_thread();
-       // ...
+       (void)thread;
    }
    ```
 
-2. **¼ì²éÖ¸ÕëÓĞĞ§ĞÔ**
+2. **æ£€æŸ¥æŒ‡é’ˆæœ‰æ•ˆæ€§**
    ```cpp
-   // ×ÜÊÇ¼ì²é null
    if (auto thread = ctx.get_thread()) {
-       // Ê¹ÓÃÏß³Ì
+       (void)thread;
    }
    ```
 
-3. **Ïß³Ì°²È«·ÃÎÊ¹²Ïí×ÊÔ´**
+3. **çº¿ç¨‹å®‰å…¨è®¿é—®å…±äº«èµ„æº**
    ```cpp
-   // Ê¹ÓÃËø±£»¤Ïß³Ì¼¶¹²ÏíÊı¾İ
    std::lock_guard<std::mutex> lock(_mutex);
    _thread_data[thread->get_thread_index()] = value;
    ```
 
-### ? ±ÜÃâ×ö·¨
+### é¿å…åšæ³•
 
-1. **²»Òª±£´æÏß³ÌÖ¸Õë**
+1. **ä¸è¦ä¿å­˜çº¿ç¨‹æŒ‡é’ˆ**
    ```cpp
-   // ´íÎó£ºÏß³Ì¿ÉÄÜÔÚÇëÇóºóÏú»Ù
-   base_net_thread* _saved_thread = ctx.get_thread();  // ?
+   base_net_thread* _saved_thread = ctx.get_thread();
    ```
 
-2. **²»Òª½øĞĞºÄÊ±²Ù×÷¶øËø³ÖÏß³Ì**
+2. **ä¸è¦è¿›è¡Œè€—æ—¶æ“ä½œè€Œé”æŒçº¿ç¨‹**
    ```cpp
-   // ´íÎó£º³¤Ê±¼ä³ÖÓĞ I/O Ïß³Ì
    void on_http(const HttpRequest& req, HttpResponse& res) override {
-       std::this_thread::sleep_for(std::chrono::seconds(10));  // ?
+       std::this_thread::sleep_for(std::chrono::seconds(10));
    }
    ```
 
-3. **²»Òª¿çÏß³ÌÖ±½Ó´«µİÏß³ÌÖ¸Õë**
+3. **ä¸è¦è·¨çº¿ç¨‹ç›´æ¥ä¼ é€’çº¿ç¨‹æŒ‡é’ˆ**
    ```cpp
-   // ´íÎó£ºÔÚÁíÒ»¸öÏß³ÌÖĞÊ¹ÓÃ»áºÜÎ£ÏÕ
-   ctx.async_response([thread = ctx.get_thread()]() {  // ?
-       auto idx = thread->get_thread_index();  // ¿ÉÄÜÎŞĞ§
+   ctx.async_response([thread = ctx.get_thread()]() {
+       auto idx = thread->get_thread_index();
+       (void)idx;
    });
    ```
 
 ---
 
-## ¹ÊÕÏÅÅ³ı
+## æ•…éšœæ’é™¤
 
-### ÎÊÌâ: `get_thread()` ·µ»Ø nullptr
+### é—®é¢˜: `get_thread()` è¿”å› nullptr
 
-**Ô­Òò**: ¿ò¼ÜÖĞµÄÁ¬½Ó¶ÔÏóÃ»ÓĞÊµÏÖÏß³Ì·ÃÎÊ½Ó¿Ú¡£
+**åŸå› **: æ¡†æ¶ä¸­çš„è¿æ¥å¯¹è±¡æ²¡æœ‰å®ç°çº¿ç¨‹è®¿é—®æ¥å£ã€‚
 
-**½â¾ö·½°¸**:
-1. ¼ì²é `base_net_obj` ÊÇ·ñÓĞ `get_thread()` ·½·¨
-2. ×ÉÑ¯¿ò¼ÜÎÄµµÁË½âÏß³ÌĞÅÏ¢µÄ»ñÈ¡·½Ê½
-3. ×÷Îª±¸Ñ¡£¬Ê¹ÓÃÏß³Ì±¾µØ´æ´¢ (TLS)
+**è§£å†³æ–¹æ¡ˆ**:
+1. æ£€æŸ¥ `base_net_obj` æ˜¯å¦æœ‰ `get_thread()` æ–¹æ³•
+2. æŸ¥çœ‹æ¡†æ¶æ–‡æ¡£äº†è§£çº¿ç¨‹ä¿¡æ¯çš„è·å–æ–¹å¼
+3. ä½œä¸ºå¤‡é€‰ï¼Œä½¿ç”¨çº¿ç¨‹æœ¬åœ°å­˜å‚¨ (TLS)
 
-### ÎÊÌâ: Ïß³ÌË÷Òı³¬³ö·¶Î§
+### é—®é¢˜: çº¿ç¨‹ç´¢å¼•è¶…å‡ºèŒƒå›´
 
-**Ô­Òò**: Worker Ïß³ÌÊıÁ¿Óë²éÑ¯µÄË÷Òı²»Æ¥Åä¡£
+**åŸå› **: Worker çº¿ç¨‹æ•°é‡ä¸æŸ¥è¯¢çš„ç´¢å¼•ä¸åŒ¹é…ã€‚
 
-**½â¾ö·½°¸**:
+**è§£å†³æ–¹æ¡ˆ**:
 ```cpp
-// Ê¼ÖÕÑéÖ¤Ïß³ÌË÷Òı
 if (thread) {
     uint32_t idx = thread->get_thread_index();
     if (idx < _thread_data.size()) {
-        // Ê¹ÓÃÊı¾İ
     }
 }
 ```
 
 ---
 
-## ¼¯³ÉÊ¾Àı
+## é›†æˆç¤ºä¾‹
 
-### ÍêÕûµÄÍ³¼ÆÏµÍ³
+### å®Œæ•´çš„ç»Ÿè®¡ç³»ç»Ÿ
 
 ```cpp
 class StatisticsHandler : public IProtocolHandler {
@@ -329,39 +305,38 @@ private:
         std::atomic<int64_t> total_bytes_received{0};
         std::vector<std::chrono::milliseconds> response_times;
     };
-    
+
     std::vector<ThreadStats> _stats;
     std::mutex _stats_mutex;
-    
+
 public:
     StatisticsHandler(int thread_count) : _stats(thread_count) {}
-    
+
     void on_http_request(HttpContext& ctx) override {
         auto start = std::chrono::high_resolution_clock::now();
-        
+
         if (auto thread = ctx.get_thread()) {
             uint32_t idx = thread->get_thread_index();
-            
+
             _stats[idx].total_requests++;
             _stats[idx].total_bytes_received += ctx.request().body.size();
-            
-            // ´¦ÀíÇëÇó
+
             ctx.response().set_json(R"({"status":"ok"})");
-            
+
             auto end = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<
                 std::chrono::milliseconds>(end - start);
-            
+
             _stats[idx].total_bytes_sent += 
                 ctx.response().body.size();
-            
+
             {
                 std::lock_guard<std::mutex> lock(_stats_mutex);
                 _stats[idx].response_times.push_back(duration);
             }
         }
     }
-    
+
     void print_report() {
         std::cout << "=== Thread Statistics ===" << std::endl;
         for (size_t i = 0; i < _stats.size(); ++i) {
@@ -377,12 +352,12 @@ public:
 
 ---
 
-## ²Î¿¼×ÊÔ´
+## å‚è€ƒèµ„æº
 
-- `core/base_net_thread.h` - Ïß³Ì¶ÔÏó½Ó¿Ú
-- `core/app_handler_v2.h` - Level 1 Handler ½Ó¿Ú
-- `core/protocol_context.h` - Level 2 Context ½Ó¿Ú
+- `core/base_net_thread.h` - çº¿ç¨‹å¯¹è±¡æ¥å£
+- `core/app_handler_v2.h` - Level 1 Handler æ¥å£
+- `core/protocol_context.h` - Level 2 Context æ¥å£
 
 ---
 
-**ÎÄµµÍê³ÉÊ±¼ä**: 2025-10-22
+**æ–‡æ¡£å®Œæˆæ—¶é—´**: 2025-10-22

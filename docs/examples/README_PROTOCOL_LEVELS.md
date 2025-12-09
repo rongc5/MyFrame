@@ -16,7 +16,7 @@
   ```bash
   curl -k https://127.0.0.1:8080/api/hello
   websocat wss://127.0.0.1:8080/ws
-  nghttp -n 8080 https://127.0.0.1:8080/api/hello   # HTTP/2
+  nghttp -n 8080 https://127.0.0.1:8080/api/hello
   ```
 
 - **Level 2**

@@ -55,10 +55,10 @@ public:
 
 | 字段 | 说明 | 必填 | 典型值 |
 | ---- | ---- | ---- | ------ |
-| `_obj_id` | 对应的连接 ID，不设置会导致触发失败 | ✅ | `get_base_net()->get_id()._id` |
-| `_timer_type` | 自定义类型，用于区分不同定时器 | ✅ | `enum class TimerType { Async = 1, Timeout = 2 };` |
-| `_time_length` | 延迟毫秒数 | ✅ | `1000` (1 秒), `5000` (5 秒) |
-| `_timer_id` | 系统自动写入，无需手动赋值 | ❌ | - |
+| `_obj_id` | 对应的连接 ID，不设置会导致触发失败 | 必填 | `get_base_net()->get_id()._id` |
+| `_timer_type` | 自定义类型，用于区分不同定时器 | 必填 | `enum class TimerType { Async = 1, Timeout = 2 };` |
+| `_time_length` | 延迟毫秒数 | 必填 | `1000` (1 秒), `5000` (5 秒) |
+| `_timer_id` | 系统自动写入，无需手动赋值 | 选填 | - |
 
 ---
 

@@ -30,25 +30,19 @@
    ```cpp
    virtual void msg_recv_finish() override {
        if (需要异步处理) {
-           // 1. 设置异步标志
            set_async_response_pending(true);
 
-           // 2. 启动异步操作（定时器/线程/异步IO等）
            auto timer = std::make_shared<timer_msg>();
            timer->_timer_type = ASYNC_QUERY_TIMER;
-           timer->_time_length = 1000;  // 1秒
+           timer->_time_length = 1000;
 
-           // 3. 必须设置 _obj_id
            if (auto conn = get_base_net()) {
                timer->_obj_id = conn->get_id()._id;
            }
 
            add_timer(timer);
-           // 不调用 notify_send_ready()，等待异步完成
        } else {
-           // 同步处理：立即生成响应
            generate_response();
-           // 框架会自动调用 notify_send_ready()
        }
    }
    ```
@@ -57,15 +51,9 @@
    ```cpp
    virtual void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override {
        if (t_msg->_timer_type == ASYNC_QUERY_TIMER) {
-           // 1. 生成响应
            generate_response();
 
-           // 2. 使用便利方法完成异步响应（清除标志 + 通知发送）
            complete_async_response();
-
-           // 或者分步调用：
-           // set_async_response_pending(false);
-           // _base_process->notify_send_ready();
        }
    }
    ```
@@ -90,37 +78,32 @@ cd /home/rong/myframe/build/examples
 同步请求（立即响应）：
 ```bash
 curl http://127.0.0.1:8090/sync
-# 耗时 < 10ms
 ```
 
 异步请求（1秒延迟）：
 ```bash
 time curl http://127.0.0.1:8090/async
-# 耗时 ~1s
 ```
 
 查看时间差异：
 ```bash
-time curl http://127.0.0.1:8090/sync    # real 0m0.004s
-time curl http://127.0.0.1:8090/async   # real 0m1.015s
+time curl http://127.0.0.1:8090/sync
+time curl http://127.0.0.1:8090/async
 ```
 
 ## 关键注意事项
 
 1. **线程模型**
-   - ✅ `_async_response_pending` 仅在连接所属的网络线程内读写
-   - ✅ 定时器回调通过事件循环回到同一线程执行
-   - ✅ 框架采用单线程事件循环模型，状态访问顺序执行
-   - ℹ️ 如需在独立线程池处理业务，应通过消息/定时器投递回网络线程
+   - `_async_response_pending` 仅在连接所属的网络线程内读写
+   - 定时器回调通过事件循环回到同一线程执行
+   - 框架采用单线程事件循环模型，状态访问顺序执行
+   - 如需在独立线程池处理业务，应通过消息或定时器投递回网络线程
 
 2. **便利方法**
-   - ✅ 已提供 `complete_async_response()` 简化调用
-   - 替代手动调用 `set_async_response_pending(false)` + `notify_send_ready()`
+   - 已提供 `complete_async_response()` 简化调用
+   - 替代手动调用 `set_async_response_pending(false)` 与 `notify_send_ready()`
    ```cpp
-   // 推荐：一步完成
    complete_async_response();
-
-   // 或分步调用（等价）
    set_async_response_pending(false);
    _base_process->notify_send_ready();
    ```
@@ -131,7 +114,7 @@ time curl http://127.0.0.1:8090/async   # real 0m1.015s
    timer->_obj_id = get_base_net()->get_id()._id;
    ```
 
-### ✅ 最佳实践
+### 最佳实践
 
 1. **保存请求上下文**：异步处理时，在成员变量中保存请求信息
    ```cpp
@@ -151,22 +134,22 @@ time curl http://127.0.0.1:8090/async   # real 0m1.015s
    ```cpp
    auto timeout_timer = std::make_shared<timer_msg>();
    timeout_timer->_timer_type = ASYNC_TIMEOUT_TIMER;
-   timeout_timer->_time_length = 5000;  // 5秒超时
+   timeout_timer->_time_length = 5000;
    ```
 
 ## 示例代码结构
 
 ```
 async_http_server_demo.cpp
-├── async_http_data_process      # 数据处理类
-│   ├── msg_recv_finish()        # 接收完成，启动异步
-│   ├── handle_timeout()         # 定时器触发，完成响应
-│   └── generate_response()      # 生成 HTTP 响应
+├── async_http_data_process      - 数据处理类
+│   ├── msg_recv_finish()        - 接收完成，启动异步
+│   ├── handle_timeout()         - 定时器触发，完成响应
+│   └── generate_response()      - 生成 HTTP 响应
 │
-└── async_http_factory           # 工厂类
-    ├── net_thread_init()        # 线程初始化
-    ├── handle_thread_msg()      # 创建连接和数据处理器
-    └── on_accept()              # 接收新连接
+└── async_http_factory           - 工厂类
+    ├── net_thread_init()        - 线程初始化
+    ├── handle_thread_msg()      - 创建连接和数据处理器
+    └── on_accept()              - 接收新连接
 ```
 
 ## 服务器日志示例
@@ -188,14 +171,14 @@ async_http_server_demo.cpp
 
 ## 适用场景
 
-✅ 适合异步处理的场景：
+适合异步处理的场景：
 - 数据库查询（连接池异步查询）
 - 远程 API 调用（HTTP/RPC 客户端）
 - 缓存查询（Redis/Memcached）
 - 文件 I/O（异步读写）
 - 消息队列处理（发送/接收消息）
 
-❌ 不适合异步处理的场景：
+不适合异步处理的场景：
 - 简单的内存计算
 - 快速的数据转换
 - 配置读取等同步操作
@@ -203,11 +186,11 @@ async_http_server_demo.cpp
 ## 总结
 
 这个异步接口设计简洁实用：
-1. ✅ **同步兼容**：不影响现有同步代码
-2. ✅ **易于使用**：设置标志 → 启动异步 → 完成响应，简单明了
-3. ✅ **便利方法**：`complete_async_response()` 一步完成清除标志和通知发送
-4. ✅ **灵活扩展**：可用于定时器、线程、异步 I/O 等多种场景
-5. ✅ **线程安全**：基于单线程事件循环模型，状态访问顺序执行，无需额外同步
-6. ⚠️ **需注意**：定时器 `_obj_id` 设置、错误处理、超时保护
+1. **同步兼容**：不影响现有同步代码
+2. **易于使用**：设置标志 → 启动异步 → 完成响应，简单明了
+3. **便利方法**：`complete_async_response()` 一步完成清除标志和通知发送
+4. **灵活扩展**：可用于定时器、线程、异步 I/O 等多种场景
+5. **线程安全**：基于单线程事件循环模型，状态访问顺序执行，无需额外同步
+6. **注意事项**：定时器 `_obj_id` 设置、错误处理、超时保护
 
 后续可根据业务需要，在新的框架业务模块中调用这些接口。

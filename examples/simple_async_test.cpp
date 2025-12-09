@@ -1,5 +1,3 @@
-// MyFrame async HTTP example using http_base_data_process (ASCII version)
-
 #include "server.h"
 #include "unified_protocol_factory.h"
 #include "http_base_data_process.h"
@@ -126,7 +124,7 @@ private:
 
         auto timer = std::make_shared<timer_msg>();
         timer->_timer_type = TIMER_ASYNC;
-        timer->_time_length = 100; // 100 ms
+        timer->_time_length = 100;
         if (auto conn = get_base_net()) {
             timer->_obj_id = conn->get_id()._id;
         }

@@ -12,7 +12,7 @@
 
 **运行方式:**
 ```bash
-./http_server [端口]  # 默认端口8080
+./http_server [端口]
 ```
 
 **测试命令:**
@@ -29,7 +29,7 @@ HTTPS安全服务器示例，展示如何：
 
 **运行方式:**
 ```bash
-./https_server [端口]  # 默认端口7777
+./https_server [端口]
 ```
 
 **测试命令:**
@@ -46,14 +46,13 @@ curl -k https://127.0.0.1:7777/api/status
 
 **运行方式:**
 ```bash
-./h2_server [端口]  # 默认端口7779
+./h2_server [端口]
 ```
 
 **测试命令:**
 ```bash
 curl -k --http2 https://127.0.0.1:7779/hello
 curl -k --http2 https://127.0.0.1:7779/big
-# 或使用示例客户端：
 ./h2_client h2://127.0.0.1:7779/hello
 ```
 
@@ -65,7 +64,7 @@ WSS (WebSocket over SSL)服务器示例，展示如何：
 
 **运行方式:**
 ```bash
-./wss_server [端口]  # 默认端口7778
+./wss_server [端口]
 ```
 
 **测试命令:**
@@ -81,21 +80,27 @@ websocat wss://127.0.0.1:7778/websocket
 
 **运行方式:**
 ```bash
-./multi_protocol_server [端口] [--tls-only]  # 默认端口7782
+./multi_protocol_server [端口] [--tls-only]
 ```
 
 **测试命令:**
+HTTP:
 ```bash
-# HTTP
 curl http://127.0.0.1:7782/hello
+```
 
-# HTTPS  
+HTTPS:
+```bash
 curl -k https://127.0.0.1:7782/hello
+```
 
-# WebSocket
+WebSocket:
+```bash
 websocat ws://127.0.0.1:7782/websocket
+```
 
-# WSS
+WSS:
+```bash
 websocat wss://127.0.0.1:7782/websocket
 ```
 

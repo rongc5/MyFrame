@@ -1,6 +1,3 @@
-// MyFrame Unified Protocol - Async response demo (ASCII version)
-// Demonstrates using Level 1 and Level 2 handlers with async HTTP replies.
-
 #include "server.h"
 #include "unified_protocol_factory.h"
 #include "protocol_context.h"
@@ -38,7 +35,6 @@ public:
             std::cout << "[ASYNC] finish request " << req_id << std::endl;
             auto payload = std::string("{\"type\":\"async\",\"request_id\":") +
                            std::to_string(req_id) + "}";
-            // 将结果封装在 HttpContextTaskMessage 中，回到网络线程再操作上下文
             auto task = std::make_shared<myframe::HttpContextTaskMessage>(
                 [payload](myframe::HttpContext& context) {
                     context.response().set_json(payload);
