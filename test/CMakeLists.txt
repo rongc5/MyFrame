@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+# Test targets (inherits cmake_minimum_required from parent)
 
 # Common include dirs
 include_directories(
@@ -9,11 +9,11 @@ include_directories(
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 
-# Helper to add executable if source exists
+# Helper to add executable if source exists (CMake 2.8 compatible)
 function(maybe_add_exe name src)
     if (EXISTS "${src}")
         add_executable(${name} ${src})
-        target_link_libraries(${name} myframe OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+        target_link_libraries(${name} myframe ${OPENSSL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
         set_target_properties(${name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/test)
     endif()
 endfunction()

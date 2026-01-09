@@ -110,8 +110,11 @@ public:
         std::string alpn_pref;
         if (!conf._alpn.empty()) {
             alpn_pref = conf._alpn;
-        } else if (const char* env_alpn = ::getenv("MYFRAME_SSL_ALPN"); env_alpn && *env_alpn) {
-            alpn_pref = env_alpn;
+        } else {
+            const char* env_alpn = ::getenv("MYFRAME_SSL_ALPN");
+            if (env_alpn && *env_alpn) {
+                alpn_pref = env_alpn;
+            }
         }
         if (!alpn_pref.empty()) {
             std::string s = alpn_pref;

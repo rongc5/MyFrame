@@ -5,11 +5,11 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../include)
 
 # Common libraries - link with myframe library which includes all dependencies
+# CMake 2.8 compatible
 set(COMMON_LIBS
     myframe
-    Threads::Threads
-    OpenSSL::SSL 
-    OpenSSL::Crypto
+    ${CMAKE_THREAD_LIBS_INIT}
+    ${OPENSSL_LIBRARIES}
 )
 
 # HTTP Server Example
