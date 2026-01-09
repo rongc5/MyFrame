@@ -10,6 +10,11 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+// OpenSSL 1.0.2 compatibility
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#define TLS_client_method() SSLv23_client_method()
+#endif
+
 namespace {
 struct ParsedUrl { std::string scheme, host, port, path; };
 static ParsedUrl parse_url(const std::string& url) {

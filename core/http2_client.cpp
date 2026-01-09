@@ -11,6 +11,11 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+// OpenSSL 1.0.2 compatibility
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#define TLS_client_method() SSLv23_client_method()
+#endif
+
 namespace {
 struct ParsedUrl { std::string scheme, host, port, path; };
 static ParsedUrl parse_url(const std::string& url) {
@@ -117,7 +122,7 @@ public:
         const unsigned char alpn_protos[] = { 2, 'h', '2' };
         SSL_set_alpn_protos(ssl, alpn_protos, sizeof(alpn_protos));
         if (SSL_connect(ssl)!=1) { SSL_free(ssl); SSL_CTX_free(ctx); ::close(fd); return {}; }
-        // ³¢ÊÔ ALPN »ñÈ¡ h2£¬µ«ÔÚÎ´Ð­ÉÌ³É¹¦Ê±Ò²¼ÌÐø°´ h2 ·¢ËÍ preface£¬ÓÉ·þÎñ¶ËÌ½²â¾ö¶¨
+        // ï¿½ï¿½ï¿½ï¿½ ALPN ï¿½ï¿½È¡ h2ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î´Ð­ï¿½Ì³É¹ï¿½Ê±Ò²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ h2 ï¿½ï¿½ï¿½ï¿½ prefaceï¿½ï¿½ï¿½É·ï¿½ï¿½ï¿½ï¿½Ì½ï¿½ï¿½ï¿½ï¿½ï¿½
         // const unsigned char* sel = nullptr; unsigned int slen = 0; SSL_get0_alpn_selected(ssl, &sel, &slen);
 
         auto send_all = [&](const std::string& s){ size_t off=0; while(off<s.size()){ int w=SSL_write(ssl, s.data()+off, (int)(s.size()-off)); if (w<=0) return false; off+=(size_t)w;} return true; };

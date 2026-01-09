@@ -1,12 +1,14 @@
 #include "ssl_context.h"
 #include <atomic>
 #include <memory>
+#include <mutex>
 
 // C++11 std::atomic<std::shared_ptr<T>> 支持检查
 // GCC 5+, Clang 3.5+, MSVC 2015+ 支持通过全局函数操作
+// GCC 4.8 不支持，使用 mutex fallback
 #if defined(__GNUC__) && !defined(__clang__)
     #if __GNUC__ < 5
-        #warning "GCC 5+ recommended for std::atomic<std::shared_ptr<T>> support"
+        #define USE_MUTEX_FOR_SHARED_PTR_ATOMIC 1
     #endif
 #endif
 
@@ -26,13 +28,30 @@ struct TlsRuntimeSnapshot {
 // 全局配置快照指针（通过 shared_ptr 自动管理内存生命周期）
 std::shared_ptr<TlsRuntimeSnapshot> g_tls_snapshot(new TlsRuntimeSnapshot());
 
+#ifdef USE_MUTEX_FOR_SHARED_PTR_ATOMIC
+// GCC 4.8 fallback: use mutex to protect shared_ptr access
+std::mutex g_tls_snapshot_mutex;
+#endif
+
 } // namespace
 
 static std::shared_ptr<TlsRuntimeSnapshot> load_snapshot() {
+#ifdef USE_MUTEX_FOR_SHARED_PTR_ATOMIC
+    std::lock_guard<std::mutex> lock(g_tls_snapshot_mutex);
+    return g_tls_snapshot;
+#else
     return std::atomic_load_explicit(&g_tls_snapshot, std::memory_order_acquire);
+#endif
 }
 
 void tls_set_server_config(const ssl_config& conf) {
+#ifdef USE_MUTEX_FOR_SHARED_PTR_ATOMIC
+    std::lock_guard<std::mutex> lock(g_tls_snapshot_mutex);
+    std::shared_ptr<TlsRuntimeSnapshot> next(new TlsRuntimeSnapshot(*g_tls_snapshot));
+    next->server_conf = conf;
+    next->has_server = true;
+    g_tls_snapshot = next;
+#else
     std::shared_ptr<TlsRuntimeSnapshot> expected = load_snapshot();
     while (true) {
         std::shared_ptr<TlsRuntimeSnapshot> next(new TlsRuntimeSnapshot(*expected));
@@ -48,6 +67,7 @@ void tls_set_server_config(const ssl_config& conf) {
         }
         // compare_exchange 更新了 expected -> 重新基于最新快照构造
     }
+#endif
 }
 
 bool tls_get_server_config(ssl_config& out) {
@@ -60,6 +80,13 @@ bool tls_get_server_config(ssl_config& out) {
 }
 
 void tls_set_client_config(const ssl_config& conf) {
+#ifdef USE_MUTEX_FOR_SHARED_PTR_ATOMIC
+    std::lock_guard<std::mutex> lock(g_tls_snapshot_mutex);
+    std::shared_ptr<TlsRuntimeSnapshot> next(new TlsRuntimeSnapshot(*g_tls_snapshot));
+    next->client_conf = conf;
+    next->has_client = true;
+    g_tls_snapshot = next;
+#else
     std::shared_ptr<TlsRuntimeSnapshot> expected = load_snapshot();
     while (true) {
         std::shared_ptr<TlsRuntimeSnapshot> next(new TlsRuntimeSnapshot(*expected));
@@ -74,6 +101,7 @@ void tls_set_client_config(const ssl_config& conf) {
             return;
         }
     }
+#endif
 }
 
 bool tls_get_client_config(ssl_config& out) {
@@ -90,5 +118,10 @@ void tls_reset_runtime() {
     // 运行时调用可能导致正在读取旧快照的线程看到空配置
     // 如果需要真正的线程安全重置，需要使用 RCU 或 hazard pointer 等技术
     std::shared_ptr<TlsRuntimeSnapshot> blank(new TlsRuntimeSnapshot());
+#ifdef USE_MUTEX_FOR_SHARED_PTR_ATOMIC
+    std::lock_guard<std::mutex> lock(g_tls_snapshot_mutex);
+    g_tls_snapshot = blank;
+#else
     std::atomic_store_explicit(&g_tls_snapshot, blank, std::memory_order_release);
+#endif
 }

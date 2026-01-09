@@ -6,6 +6,11 @@
 #include <openssl/err.h>
 #include <cstring>
 
+// OpenSSL 1.0.2 compatibility: TLS_*_method() functions were added in OpenSSL 1.1.0
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#define TLS_server_method() SSLv23_server_method()
+#define TLS_client_method() SSLv23_client_method()
+#endif
 
 // forward decl for ALPN callback context cast
 class ssl_context;

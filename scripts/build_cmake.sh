@@ -47,7 +47,19 @@ esac
 echo "[MyFrame] Configure (type=${BUILD_TYPE}) ..."
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
-cmake "$PROJECT_ROOT" -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+
+# Prefer OpenSSL 1.1+ if available at /usr/local/openssl
+OPENSSL_OPTS=""
+if [[ -d "/usr/local/openssl" ]]; then
+    echo "[MyFrame] Using OpenSSL from /usr/local/openssl"
+    # Use explicit paths for better CMake 2.8 compatibility
+    OPENSSL_OPTS="-DOPENSSL_ROOT_DIR=/usr/local/openssl \
+                  -DOPENSSL_INCLUDE_DIR=/usr/local/openssl/include \
+                  -DOPENSSL_SSL_LIBRARY=/usr/local/openssl/lib/libssl.so \
+                  -DOPENSSL_CRYPTO_LIBRARY=/usr/local/openssl/lib/libcrypto.so"
+fi
+
+cmake "$PROJECT_ROOT" -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" ${OPENSSL_OPTS}
 cd "$PROJECT_ROOT"
 
 # 构建

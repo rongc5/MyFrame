@@ -10,6 +10,10 @@
 #ifdef ENABLE_SSL
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+// OpenSSL 1.0.2 compatibility
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#define TLS_client_method() SSLv23_client_method()
+#endif
 #endif
 #include <regex>
 
@@ -48,7 +52,7 @@ protected:
         SSL_set_tlsext_host_name(_ssl, _host.c_str());
         SSL_set_fd(_ssl, base_net_obj::_fd);
         this->set_codec(std::unique_ptr<ICodec>(new ClientSslCodec(_ssl)));
-        // ½»¸ø codec ½øÐÐ·Ç×èÈû SSL_connect£¬ÐèÒª¿ÉÐ´ÊÂ¼þÇý¶¯
+        // ï¿½ï¿½ï¿½ï¿½ codec ï¿½ï¿½ï¿½Ð·ï¿½ï¿½ï¿½ï¿½ï¿½ SSL_connectï¿½ï¿½ï¿½ï¿½Òªï¿½ï¿½Ð´ï¿½Â¼ï¿½ï¿½ï¿½ï¿½ï¿½
         this->update_event(this->get_event() | EPOLLOUT);
     }
 private:
@@ -90,7 +94,7 @@ static std::shared_ptr<base_net_obj> build_ws_like(const std::string& url, const
     proc->get_req_para()._s_path = u.path;
     proc->get_req_para()._s_host = u.host;
     proc->get_req_para()._origin = u.scheme + "://" + u.host;
-    // Ä¬ÈÏÊ¹ÓÃÒµÎñ»Øµ÷£¬·ñÔòÊ¹ÓÃÕ¼Î»Êý¾Ý´¦ÀíÆ÷
+    // Ä¬ï¿½ï¿½Ê¹ï¿½ï¿½Òµï¿½ï¿½Øµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê¹ï¿½ï¿½Õ¼Î»ï¿½ï¿½ï¿½Ý´ï¿½ï¿½ï¿½ï¿½ï¿½
     proc->set_process(ctx.handler ? (web_socket_data_process*)new app_ws_data_process(proc, ctx.handler)
                                   : (web_socket_data_process*)new DummyWsClientData(proc));
     conn->set_process(proc);
