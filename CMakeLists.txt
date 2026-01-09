@@ -1,8 +1,13 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 2.8.12)
 project(MyFrame)
 
-set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# C++11 support for CMake 2.8
+if (CMAKE_VERSION VERSION_LESS "3.1")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+else()
+    set(CMAKE_CXX_STANDARD 11)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
 
 # Debug logging option (controls PDEBUG)
 option(MYFRAME_DEBUG_LOG "Enable verbose PDEBUG logging" OFF)
@@ -15,10 +20,16 @@ add_definitions(-DENABLE_SSL)
 
 # Find OpenSSL
 find_package(OpenSSL REQUIRED)
+if (OPENSSL_FOUND)
+    include_directories(${OPENSSL_INCLUDE_DIR})
+endif()
 
 # Find Threads
 find_package(Threads REQUIRED)
 find_package(ZLIB)
+if (ZLIB_FOUND)
+    include_directories(${ZLIB_INCLUDE_DIRS})
+endif()
 
 ## Include directories
 include_directories(include)
@@ -72,15 +83,14 @@ endif()
 add_library(myframe STATIC ${CORE_SOURCES})
 add_dependencies(myframe build_encode)
 
-# Link libraries 
-target_link_libraries(myframe 
+# Link libraries (CMake 2.8 compatible)
+target_link_libraries(myframe
     ${CMAKE_CURRENT_SOURCE_DIR}/utils/encode/lib/libencode.a
-    Threads::Threads 
-    OpenSSL::SSL 
-    OpenSSL::Crypto
+    ${CMAKE_THREAD_LIBS_INIT}
+    ${OPENSSL_LIBRARIES}
 )
 if (ZLIB_FOUND)
-    target_link_libraries(myframe ZLIB::ZLIB)
+    target_link_libraries(myframe ${ZLIB_LIBRARIES})
     add_definitions(-DHAVE_ZLIB)
 endif()
 if (HAVE_SIGN_LIB)
