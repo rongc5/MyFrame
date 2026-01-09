@@ -43,18 +43,23 @@ case "${ACTION}" in
     ;;
 esac
 
-# 配置：显式使用 -S/-B，并设置构建类型
+# 配置：兼容 CMake 2.8+（不使用 -S/-B 参数）
 echo "[MyFrame] Configure (type=${BUILD_TYPE}) ..."
-cmake -S "$PROJECT_ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+mkdir -p "$BUILD_DIR"
+cd "$BUILD_DIR"
+cmake "$PROJECT_ROOT" -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+cd "$PROJECT_ROOT"
 
 # 构建
+cd "$BUILD_DIR"
 if [[ "$BUILD_ALL" == true ]]; then
   echo "[MyFrame] Building ALL targets ..."
-  cmake --build "$BUILD_DIR" -j"$(nproc)"
+  make -j"$(nproc)"
 else
   echo "[MyFrame] Building target: myframe (core) ..."
-  cmake --build "$BUILD_DIR" --target myframe -j"$(nproc)"
+  make myframe -j"$(nproc)"
 fi
+cd "$PROJECT_ROOT"
 
 echo "[MyFrame] Done. Artifacts:"
 echo "  - Library: $BUILD_DIR/lib/libmyframe.a (由CMake拷贝)"
