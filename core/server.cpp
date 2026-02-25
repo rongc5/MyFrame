@@ -5,6 +5,7 @@
 #include "thread_plugin.h"
 #include "factory_base.h"
 #include "multi_protocol_factory.h"
+#include "unified_protocol_factory.h"
 #include <signal.h>
 
 server::server(int thread_num)
@@ -13,6 +14,12 @@ server::server(int thread_num)
 server::~server() {
     stop();
     join();
+    for (auto* w : _workers) {
+        delete w;
+    }
+    _workers.clear();
+    delete _listen;
+    _listen = nullptr;
 }
 
 void server::bind(const std::string& ip, unsigned short port) {
@@ -35,10 +42,14 @@ void server::start() {
         if (auto lsn = dynamic_cast<ListenFactory*>(factory_for_thread)) {
             factory_for_thread = lsn->inner_factory();
         }
-        // 为每个worker克隆一个MultiProtocolFactory，避免跨线程共享容器指针
+        // 为每个worker克隆工厂实例，避免跨线程共享容器指针
         if (auto mpf = dynamic_cast<MultiProtocolFactory*>(factory_for_thread)) {
             std::shared_ptr<MultiProtocolFactory> per_thread(new MultiProtocolFactory(mpf->handler(), mpf->mode()));
             _worker_factories.push_back(per_thread);
+            factory_for_thread = per_thread.get();
+        } else if (auto upf = dynamic_cast<myframe::UnifiedProtocolFactory*>(factory_for_thread)) {
+            std::shared_ptr<myframe::UnifiedProtocolFactory> per_thread = upf->clone_for_thread();
+            _unified_worker_factories.push_back(per_thread);
             factory_for_thread = per_thread.get();
         }
         base_net_thread* w = new base_net_thread(factory_for_thread);

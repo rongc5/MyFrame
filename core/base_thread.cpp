@@ -14,6 +14,13 @@ base_thread::base_thread():_thread_id(0), _run_flag(true)
 
 base_thread::~base_thread()
 {
+    std::lock_guard<std::mutex> lck(_mutex);
+    for (auto it = _thread_vec.begin(); it != _thread_vec.end(); ++it) {
+        if (*it == this) {
+            _thread_vec.erase(it);
+            break;
+        }
+    }
 }
 
 bool base_thread::start()
@@ -27,7 +34,10 @@ bool base_thread::start()
     {
         return false;
     }
-    _thread_vec.push_back(this);
+    {
+        std::lock_guard<std::mutex> lck(_mutex);
+        _thread_vec.push_back(this);
+    }
     return true;
 }
 
@@ -69,17 +79,25 @@ void * base_thread::base_thread_proc(void *arg)
 
 void base_thread::stop_all_thread()
 {
-    std::vector<base_thread*>::iterator it;
-    for (it = _thread_vec.begin(); it != _thread_vec.end(); it++){
-        (*it)->stop();
+    std::vector<base_thread*> snapshot;
+    {
+        std::lock_guard<std::mutex> lck(_mutex);
+        snapshot = _thread_vec;
+    }
+    for (auto* t : snapshot) {
+        t->stop();
     }
 }
 
 void base_thread::join_all_thread()
 {
-    std::vector<base_thread*>::iterator it;
-    for (it = _thread_vec.begin(); it != _thread_vec.end(); it++){
-        (*it)->join_thread();
+    std::vector<base_thread*> snapshot;
+    {
+        std::lock_guard<std::mutex> lck(_mutex);
+        snapshot = _thread_vec;
+    }
+    for (auto* t : snapshot) {
+        t->join_thread();
     }
 }
 

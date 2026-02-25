@@ -87,7 +87,7 @@ std::shared_ptr<base_net_obj> BinaryContextImpl::raw_connection() {
     if (_conn) {
         auto* container = _conn->get_net_container();
         if (container) {
-            return ::base_net_thread::get_base_net_thread_obj(container->get_thread_index());
+            return container->get_owner_thread();
         }
     }
     return nullptr;

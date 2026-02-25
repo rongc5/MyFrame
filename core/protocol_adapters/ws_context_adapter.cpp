@@ -91,14 +91,14 @@ size_t WsContextImpl::pending_frames() const {
     return _pending_frames.size();
 }
 
-void WsContextImpl::broadcast(const std::string& message) {
-    // TODO: Implement broadcast functionality
-    PDEBUG("[WsContext] broadcast not implemented yet");
+void WsContextImpl::broadcast(const std::string& /* message */) {
+    // Not yet implemented - requires a ws_push_hub for connection tracking
+    PDEBUG("[WsContext] WARNING: broadcast() called but not supported; ignoring");
 }
 
-void WsContextImpl::broadcast_except_self(const std::string& message) {
-    // TODO: Implement broadcast_except_self functionality
-    PDEBUG("[WsContext] broadcast_except_self not implemented yet");
+void WsContextImpl::broadcast_except_self(const std::string& /* message */) {
+    // Not yet implemented - requires a ws_push_hub for connection tracking
+    PDEBUG("[WsContext] WARNING: broadcast_except_self() called but not supported; ignoring");
 }
 
 void WsContextImpl::set_user_data(const std::string& key, void* data) {
@@ -118,7 +118,7 @@ std::shared_ptr<base_net_obj> WsContextImpl::raw_connection() {
     if (_conn) {
         auto* container = _conn->get_net_container();
         if (container) {
-            return ::base_net_thread::get_base_net_thread_obj(container->get_thread_index());
+            return container->get_owner_thread();
         }
     }
     return nullptr;
@@ -209,7 +209,8 @@ void WsContextDataProcess::on_connect() {
     if (_handler) {
         detail::HandlerContextScope scope(this);
         ConnectionInfo info;
-        // TODO: Fill connection info from base_net_obj
+        // NOTE: ConnectionInfo fields (remote_ip, remote_port) not yet populated
+        // from base_net_obj. Callers should not rely on these values.
         _handler->on_connect(info);
     }
 }

@@ -149,7 +149,7 @@ base_net_thread* HttpContextImpl::get_thread() const {
     if (_conn) {
         auto* container = _conn->get_net_container();
         if (container) {
-            return ::base_net_thread::get_base_net_thread_obj(container->get_thread_index());
+            return container->get_owner_thread();
         }
     }
     return nullptr;

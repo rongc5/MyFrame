@@ -111,10 +111,9 @@ void common_obj_container::handle_timeout(std::shared_ptr<timer_msg> & t_msg)
     {
         case OBJ_ID_THREAD:
             {
-                base_net_thread * net_thread = base_net_thread::get_base_net_thread_obj(_id_str._thread_index);
-                if (net_thread)
+                if (_owner_thread)
                 {
-                    net_thread->handle_timeout(t_msg);
+                    _owner_thread->handle_timeout(t_msg);
                 }
             }
             break;
@@ -172,10 +171,9 @@ void common_obj_container::handle_msg(uint32_t obj_id, std::shared_ptr<normal_ms
     {
         case OBJ_ID_THREAD:
             {
-                base_net_thread * net_thread = base_net_thread::get_base_net_thread_obj(_id_str._thread_index);
-                if (net_thread)
+                if (_owner_thread)
                 {
-                    net_thread->handle_msg(p_msg);
+                    _owner_thread->handle_msg(p_msg);
                 }
             }
             break;

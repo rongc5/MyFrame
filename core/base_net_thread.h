@@ -17,6 +17,7 @@ class listen_process;
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <mutex>
 
 class IFactory; // fwd
 
@@ -41,8 +42,6 @@ class base_net_thread:public base_thread
 
         virtual void handle_msg(std::shared_ptr<normal_msg> & p_msg);
 
-        static base_net_thread * get_base_net_thread_obj(uint32_t thread_index);
-
         void add_timer(std::shared_ptr<timer_msg> & t_msg);
 
         virtual void handle_timeout(std::shared_ptr<timer_msg> & t_msg);
@@ -64,7 +63,11 @@ class base_net_thread:public base_thread
 
         common_obj_container * _base_container;
 
+        // 仅供 put_obj_msg 内部使用，外部应通过 common_obj_container::get_owner_thread() 获取线程
+        static base_net_thread * get_base_net_thread_obj(uint32_t thread_index);
+
         static std::unordered_map<uint32_t, base_net_thread *> _base_net_thread_map;
+        static std::mutex _thread_map_mutex;
 
         std::vector<std::shared_ptr<IThreadPlugin> > _plugins;
     public:

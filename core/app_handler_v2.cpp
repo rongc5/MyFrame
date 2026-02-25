@@ -67,8 +67,8 @@ uint32_t IApplicationHandler::schedule_timeout(uint32_t delay_ms, uint32_t timer
         return nullptr;
     }
 
-    const ObjId& id = net->get_id();
-    return base_net_thread::get_base_net_thread_obj(id._thread_index);
+    auto* container = net->get_net_container();
+    return container ? container->get_owner_thread() : nullptr;
 }
 
 ObjId IApplicationHandler::current_connection_id() const

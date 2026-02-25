@@ -229,6 +229,14 @@ std::vector<std::string> UnifiedProtocolFactory::get_protocol_names() const {
     return names;
 }
 
+std::shared_ptr<UnifiedProtocolFactory> UnifiedProtocolFactory::clone_for_thread() const {
+    auto cloned = std::make_shared<UnifiedProtocolFactory>();
+    cloned->_protocols = _protocols;           // 协议条目共享（函数指针/handler 指针不变）
+    cloned->_detector_enabled = _detector_enabled;
+    // _container, _worker_indices, _rr_hint 由 net_thread_init / register_worker 重新设置
+    return cloned;
+}
+
 // ============================================================================
 // IFactory 接口实现
 // ============================================================================

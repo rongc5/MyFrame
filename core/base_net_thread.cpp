@@ -17,6 +17,10 @@ base_net_thread::base_net_thread(IFactory* factory, int channel_num)
 }
 
 base_net_thread::~base_net_thread(){
+    {
+        std::lock_guard<std::mutex> lock(_thread_map_mutex);
+        _base_net_thread_map.erase(get_thread_index());
+    }
     clear_user_data();
     if (_base_container){
         delete _base_container;
@@ -44,6 +48,7 @@ void base_net_thread::run_process()
 void base_net_thread::net_thread_init()
 {
     _base_container = new common_obj_container(get_thread_index());
+    _base_container->set_owner_thread(this);
     for (size_t i = 0; i < _plugins.size(); ++i) {
         if (_plugins[i]) _plugins[i]->on_init(this);
     }
@@ -68,7 +73,10 @@ void base_net_thread::net_thread_init()
     }
 
 
-    _base_net_thread_map[get_thread_index()] = this;
+    {
+        std::lock_guard<std::mutex> lock(_thread_map_mutex);
+        _base_net_thread_map[get_thread_index()] = this;
+    }
 }
 
 
@@ -106,6 +114,7 @@ bool base_net_thread::handle_thread_msg(std::shared_ptr<normal_msg> &)
 
 base_net_thread * base_net_thread::get_base_net_thread_obj(uint32_t thread_index)
 {
+    std::lock_guard<std::mutex> lock(_thread_map_mutex);
     std::unordered_map<uint32_t, base_net_thread *>::const_iterator it = _base_net_thread_map.find(thread_index);
     if (it != _base_net_thread_map.end()){
         return it->second;
@@ -121,12 +130,12 @@ void base_net_thread::add_timer(std::shared_ptr<timer_msg> & t_msg)
 
 void base_net_thread::put_obj_msg(ObjId & id, std::shared_ptr<normal_msg> & p_msg)
 {
-    base_net_thread * net_thread = get_base_net_thread_obj(id._thread_index);
-    if (!net_thread) {
+    std::lock_guard<std::mutex> lock(_thread_map_mutex);
+    auto it = _base_net_thread_map.find(id._thread_index);
+    if (it == _base_net_thread_map.end() || !it->second) {
         return;
     }
-
-    net_thread->put_msg(id._id, p_msg);
+    it->second->put_msg(id._id, p_msg);
 }
 
 void base_net_thread::handle_timeout(std::shared_ptr<timer_msg> & t_msg)
@@ -171,6 +180,7 @@ void base_net_thread::store_user_data(const std::string& key, std::shared_ptr<vo
 }
 
 std::unordered_map<uint32_t, base_net_thread *> base_net_thread::_base_net_thread_map;
+std::mutex base_net_thread::_thread_map_mutex;
 
 void base_net_thread::add_worker_thread(uint32_t thread_index)
 {

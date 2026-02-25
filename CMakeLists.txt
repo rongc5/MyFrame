@@ -62,26 +62,39 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/client_conn_rout
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/http2_client.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/connection_manager.cpp")
 
-## Ensure utils/encode is built (optional signer is handled below)
+## Ensure utils/encode is built
 add_custom_target(build_encode ALL
-    COMMAND bash -lc "./build.sh all" 
+    COMMAND bash -lc "./build.sh all"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/utils/encode
 )
 
-## Optional utils/str2sign (header+static lib if present)
+## Auto-build utils/str2sign if source exists
 set(STR2SIGN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign)
 set(SIGN_HEADER ${STR2SIGN_DIR}/include/ul_sign.h)
 set(SIGN_LIB    ${STR2SIGN_DIR}/lib/libsign.a)
-if (EXISTS "${SIGN_HEADER}" AND EXISTS "${SIGN_LIB}")
+
+# Check if str2sign source exists and build it
+if (EXISTS "${STR2SIGN_DIR}/build.sh")
+    add_custom_target(build_str2sign ALL
+        COMMAND bash -lc "./build.sh all"
+        WORKING_DIRECTORY ${STR2SIGN_DIR}
+    )
     set(HAVE_SIGN_LIB TRUE)
+    message(STATUS "Will build str2sign utility library")
+elseif (EXISTS "${SIGN_HEADER}" AND EXISTS "${SIGN_LIB}")
+    set(HAVE_SIGN_LIB TRUE)
+    message(STATUS "Using pre-built str2sign library")
 else()
-    message(WARNING "utils/str2sign not fully available (need include/ul_sign.h and lib/libsign.a); skipping sign library link")
+    message(WARNING "utils/str2sign not available; skipping sign library link")
     set(HAVE_SIGN_LIB FALSE)
 endif()
 
 # Create library
 add_library(myframe STATIC ${CORE_SOURCES})
 add_dependencies(myframe build_encode)
+if (TARGET build_str2sign)
+    add_dependencies(myframe build_str2sign)
+endif()
 
 # Link libraries (CMake 2.8 compatible)
 target_link_libraries(myframe

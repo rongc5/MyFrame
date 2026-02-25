@@ -154,8 +154,11 @@ private:
 #else
             localtime_r(&tt, &tm);
 #endif
+            // GCC 4.8 compatible: use strftime instead of std::put_time
+            char time_buf[64];
+            strftime(time_buf, sizeof(time_buf), "%Y-%m-%dT%H:%M:%S", &tm);
             std::stringstream json;
-            json << "{\"iso_time\":\"" << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S")
+            json << "{\"iso_time\":\"" << time_buf
                  << "\",\"epoch\":" << static_cast<long long>(tt) << "}";
             body = json.str();
         } else if (url == "/api/async") {
