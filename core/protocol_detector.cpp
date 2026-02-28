@@ -70,6 +70,32 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
         return 0;
     }
 
+    base_connect<base_data_process>* holder =
+        dynamic_cast<base_connect<base_data_process>*>(get_base_net().get());
+    if (!holder) {
+        PDEBUG("[ProtocolDetector] holder cast failed");
+        notify_peer_close();
+        return len;
+    }
+
+    // Try detection on incoming data directly before buffering.
+    // This avoids rejecting large payloads (e.g. HTTP POST with body > 4KB)
+    // that can be identified from the first few bytes.
+    if (_buffer.empty()) {
+        for (const auto& proto : _protocols) {
+            if (proto.detect(buf, len)) {
+                bool ok = handoff_to_protocol(proto, holder, buf, len);
+                if (!ok) {
+                    notify_peer_close();
+                    return len;
+                }
+                _detected = true;
+                return len;
+            }
+        }
+    }
+
+    // Buffer the data for multi-packet detection
     size_t remaining = (MAX_DETECT_BUFFER_SIZE > _buffer.size())
                            ? (MAX_DETECT_BUFFER_SIZE - _buffer.size())
                            : 0;
@@ -81,24 +107,11 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
     }
 
     _buffer.append(buf, len);
-    size_t buffered_now = _buffer.size();
-    if (buffered_now >= (MAX_DETECT_BUFFER_SIZE * 3) / 4) {
-        PDEBUG("[ProtocolDetector] Buffer nearing cap (%zu/%zu)",
-               buffered_now, static_cast<size_t>(MAX_DETECT_BUFFER_SIZE));
-    }
-
-    base_connect<base_data_process>* holder =
-        dynamic_cast<base_connect<base_data_process>*>(get_base_net().get());
-    if (!holder) {
-        PDEBUG("[ProtocolDetector] holder cast failed");
-        notify_peer_close();
-        return len;
-    }
 
     for (const auto& proto : _protocols) {
         if (proto.detect(_buffer.data(), _buffer.size())) {
             std::string buffered;
-            buffered.swap(_buffer); // frees the old capacity
+            buffered.swap(_buffer);
             bool ok = handoff_to_protocol(proto, holder,
                                           buffered.data(), buffered.size());
             if (!ok) {

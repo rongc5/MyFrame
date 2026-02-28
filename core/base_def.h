@@ -65,10 +65,10 @@
 #define LOG_DATE_FORMAT "%Y-%m-%d %H:%M:%S"
 
 
-const size_t SEND_BUF_SIZE = 20 * 1024;
+const size_t SEND_BUF_SIZE = 10 * 1024 * 1024;   // 10MB (was 20KB)
 const uint64_t CONNECT_TIME_OUT = 180 * 1000;
 
-const int MAX_RECV_SIZE = 1024*20;
+const int MAX_RECV_SIZE = 10 * 1024 * 1024;      // 10MB (was 20KB)
 const int MAX_SEND_NUM = 5;
 
 const uint32_t MAX_HTTP_HEAD_LEN = 100*1024;
