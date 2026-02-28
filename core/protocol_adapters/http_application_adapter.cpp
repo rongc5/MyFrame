@@ -65,8 +65,9 @@ void HttpApplicationDataProcess::msg_recv_finish() {
     req.version = req_head._version;
     req.headers = req_head._headers;
 
-    // 获取请求体（暂时使用空字符串，后续可扩展）
-    req.body = "";
+    // 获取请求体（move 后 swap 释放内存）
+    req.body = std::move(_recv_body);
+    std::string().swap(_recv_body);
 
     PDEBUG("[HttpApplicationDataProcess] Request: %s %s",
            req.method.c_str(), req.url.c_str());
@@ -159,6 +160,13 @@ std::string* HttpApplicationDataProcess::get_send_head() {
     return send_head;
 }
 
+size_t HttpApplicationDataProcess::process_recv_body(const char* buf, size_t len, int& result) {
+    PDEBUG("[HttpApplicationDataProcess] process_recv_body len=%zu", len);
+    _recv_body.append(buf, len);
+    result = 0;
+    return len;
+}
+
 std::string* HttpApplicationDataProcess::get_send_body(int& result) {
     PDEBUG("[HttpApplicationDataProcess] get_send_body called, body_sent=%d", _body_sent);
 
@@ -176,9 +184,10 @@ std::string* HttpApplicationDataProcess::get_send_body(int& result) {
 
     result = 0;  // 正常返回，有body
 
-    // 从字符串池分配并复制body内容
+    // 从字符串池分配并移动body内容，释放内存
     std::string* send_body = myframe::string_acquire();
-    *send_body = _response_body;
+    *send_body = std::move(_response_body);
+    std::string().swap(_response_body);
 
     return send_body;
 }

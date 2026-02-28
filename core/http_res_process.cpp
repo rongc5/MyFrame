@@ -46,21 +46,36 @@ size_t http_res_process::process_recv_body(const char *buf, size_t len, int &res
     {
         if (_boundary_para._boundary_str.length() == 0)
         {
-            ret = _data_process->process_recv_body(buf, len, result);
-            _recv_body_length += ret;
-
-
-            uint64_t content_length = 0;
             std::string *tmp_str = _req_head_para.get_header("Content-Length");
-            if (tmp_str) 
+            if (!tmp_str)
             {
-                content_length = strtoull(tmp_str->c_str(), 0, 10);
-            }
-
-
-            if (_recv_body_length == content_length)
-            {
+                // No Content-Length header: finish immediately to avoid hanging.
+                // Do not consume current bytes here; they may belong to next request.
                 result = 1;
+                ret = 0;
+            }
+            else
+            {
+                uint64_t content_length = strtoull(tmp_str->c_str(), 0, 10);
+                if (_recv_body_length >= content_length)
+                {
+                    // Content-Length: 0 or body already complete.
+                    // Leave current bytes for next request in keep-alive/pipeline.
+                    result = 1;
+                    ret = 0;
+                }
+                else
+                {
+                    size_t remain = static_cast<size_t>(content_length - _recv_body_length);
+                    size_t take = len < remain ? len : remain;
+                    ret = _data_process->process_recv_body(buf, take, result);
+                    _recv_body_length += ret;
+                }
+
+                if (_recv_body_length >= content_length)
+                {
+                    result = 1;
+                }
             }				
         }
         else //parse boundary
@@ -170,7 +185,7 @@ size_t http_res_process::get_boundary(const char *buf, size_t len, int &result)
     size_t p_len = 0;
     result = 0;
     _recv_body_length += len;
-    //Ê×ÏÈÒªÕÒµÚÒ»¸öboundary
+    //ï¿½ï¿½ï¿½ï¿½Òªï¿½Òµï¿½Ò»ï¿½ï¿½boundary
     if (_recv_boundary_status == BOUNDARY_RECV_HEAD)
     {				
         _recv_boundary_head.append(buf, len);
@@ -202,11 +217,11 @@ size_t http_res_process::get_boundary(const char *buf, size_t len, int &result)
                     result = 1;
                 p_len = left_str.length() - p_len;
             }
-            else //Ê²Ã´Ò²²»¸É
+            else //Ê²Ã´Ò²ï¿½ï¿½ï¿½ï¿½
             {
             }
         }
-        else //»¹Òª¼ÌÐøÊÕÍ·
+        else //ï¿½ï¿½Òªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í·
         {
             if (_recv_boundary_head.length() >= MAX_HTTP_HEAD_LEN)
                 THROW_COMMON_EXCEPT("http boundary head too long (" << _recv_boundary_head.length() << ")");
@@ -225,7 +240,7 @@ size_t http_res_process::get_boundary(const char *buf, size_t len, int &result)
             tmp_len = len - (_recv_body_length - (content_length - (_boundary_para._boundary_str.length() + BOUNDARY_EXTRA_LEN)));
             _recv_boundary_status = BOUNDARY_RECV_TAIL;
         }
-        else //»¹ÒªÊÕbody
+        else //ï¿½ï¿½Òªï¿½ï¿½body
         {
         }
 
@@ -233,15 +248,14 @@ size_t http_res_process::get_boundary(const char *buf, size_t len, int &result)
         p_len = tmp_len - p_len;
 
         if (_recv_body_length == content_length)
-            result = 1; //½áÊøÁË
+            result = 1; //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     }
     else //recv tail
     {	
-        //Ê²Ã´Ò²²»¸É£¬Ö»µÈÊÕÍê
+        //Ê²Ã´Ò²ï¿½ï¿½ï¿½É£ï¿½Ö»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         if (_recv_body_length == content_length)
             result = 1;				
     }
     _recv_body_length = _recv_body_length - p_len;
     return ret - p_len;
 }
-
