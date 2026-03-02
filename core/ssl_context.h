@@ -2,6 +2,8 @@
 
 #include "base_def.h"
 #include <string>
+#include <mutex>
+#include <atomic>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <cstring>
@@ -41,30 +43,32 @@ void tls_reset_runtime();
 
 class ssl_context {
 public:
-    ssl_context() : _ctx(0), _inited(false) {
+    ssl_context() : _ctx(nullptr), _inited(false) {
         SSL_library_init();
         SSL_load_error_strings();
         OpenSSL_add_all_algorithms();
     }
     ~ssl_context() { if (_ctx) SSL_CTX_free(_ctx); }
 
-    bool is_initialized() const { return _inited; }
+    bool is_initialized() const { return _inited.load(std::memory_order_acquire); }
 
     // Cleanup global SSL context and allow re-init.
     // Returns true if context was cleaned or not initialized.
     bool cleanup_global() {
+        std::lock_guard<std::mutex> lock(_init_mutex);
         if (_ctx) {
             SSL_CTX_free(_ctx);
             _ctx = nullptr;
         }
-        _inited = false;
+        _inited.store(false, std::memory_order_release);
         // reset runtime configs so next init can reload certs/keys
         tls_reset_runtime();
         return true;
     }
 
     bool init_server(const ssl_config& conf) {
-        if (_inited) return true;
+        std::lock_guard<std::mutex> lock(_init_mutex);
+        if (_inited.load(std::memory_order_relaxed)) return true;
         const SSL_METHOD* method = TLS_server_method();
         _ctx = SSL_CTX_new(method);
         if (!_ctx) { ERR_print_errors_fp(stderr); return false; }
@@ -173,19 +177,127 @@ public:
         } else {
             SSL_CTX_set_verify(_ctx, SSL_VERIFY_NONE, nullptr);
         }
-        _inited = true; return true;
+        _inited.store(true, std::memory_order_release); return true;
+    }
+
+    // Thread-safe client initialization. Uses mutex to prevent concurrent
+    // init_client() calls from racing on _ctx/_inited. Only the first
+    // successful call takes effect; subsequent calls return true immediately.
+    bool init_client(const ssl_config& conf) {
+        std::lock_guard<std::mutex> lock(_init_mutex);
+        if (_inited.load(std::memory_order_relaxed)) return true;
+        const SSL_METHOD* method = TLS_client_method();
+        SSL_CTX* ctx = SSL_CTX_new(method);
+        if (!ctx) { ERR_print_errors_fp(stderr); return false; }
+        // Cipher list
+        if (!conf._cipher_list.empty()) {
+            if (SSL_CTX_set_cipher_list(ctx, conf._cipher_list.c_str()) != 1) {
+                fprintf(stderr, "[tls] WARNING: failed to set cipher list\n");
+                ERR_print_errors_fp(stderr);
+                SSL_CTX_free(ctx); return false;
+            }
+        }
+        // Peer verification
+        if (conf._verify_peer) {
+            SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
+            if (!conf._ca_file.empty()) {
+                if (SSL_CTX_load_verify_locations(ctx, conf._ca_file.c_str(), nullptr) != 1) {
+                    fprintf(stderr, "[tls] ERROR: failed to load CA file: %s\n", conf._ca_file.c_str());
+                    ERR_print_errors_fp(stderr);
+                    SSL_CTX_free(ctx); return false;
+                }
+            } else if (SSL_CTX_set_default_verify_paths(ctx) != 1) {
+                PDEBUG("[tls] WARNING: failed to load default verify paths");
+            }
+        } else {
+            SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
+        }
+        // Optional mTLS client cert/key
+        if (!conf._cert_file.empty()) {
+            if (SSL_CTX_use_certificate_file(ctx, conf._cert_file.c_str(), SSL_FILETYPE_PEM) != 1) {
+                fprintf(stderr, "[tls] ERROR: failed to load client cert: %s\n", conf._cert_file.c_str());
+                ERR_print_errors_fp(stderr);
+                SSL_CTX_free(ctx); return false;
+            }
+        }
+        if (!conf._key_file.empty()) {
+            if (SSL_CTX_use_PrivateKey_file(ctx, conf._key_file.c_str(), SSL_FILETYPE_PEM) != 1) {
+                fprintf(stderr, "[tls] ERROR: failed to load client key: %s\n", conf._key_file.c_str());
+                ERR_print_errors_fp(stderr);
+                SSL_CTX_free(ctx); return false;
+            }
+        }
+        // Verify cert/key pair match (same as server-side init_server)
+        if (!conf._cert_file.empty() && !conf._key_file.empty()) {
+            if (SSL_CTX_check_private_key(ctx) != 1) {
+                fprintf(stderr, "[tls] ERROR: client private key does not match certificate\n");
+                ERR_print_errors_fp(stderr);
+                SSL_CTX_free(ctx); return false;
+            }
+        }
+        // Session cache (client-side)
+        if (conf._enable_session_cache) {
+            SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_CLIENT);
+            SSL_CTX_sess_set_cache_size(ctx, conf._session_cache_size);
+        } else {
+            SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
+        }
+#ifdef SSL_OP_NO_TICKET
+        if (conf._enable_tickets) {
+            SSL_CTX_clear_options(ctx, SSL_OP_NO_TICKET);
+        } else {
+            SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
+        }
+#endif
+        // Protocol version: TLS 1.2+ by default
+#if defined(TLS1_VERSION)
+        if (!conf._protocols.empty()) {
+            auto has = [&](const char* t) { return conf._protocols.find(t) != std::string::npos; };
+            long minv = 0, maxv = 0;
+#if defined(TLS1_3_VERSION)
+            if (has("TLSv1.3")) maxv = TLS1_3_VERSION;
+#endif
+#if defined(TLS1_2_VERSION)
+            if (maxv == 0 && has("TLSv1.2")) maxv = TLS1_2_VERSION;
+            if (has("TLSv1.2")) minv = (minv == 0 ? TLS1_2_VERSION : minv);
+#endif
+#if defined(SSL_CTX_set_min_proto_version)
+            if (minv) SSL_CTX_set_min_proto_version(ctx, (int)minv);
+            if (maxv) SSL_CTX_set_max_proto_version(ctx, (int)maxv);
+#endif
+        } else {
+#if defined(SSL_CTX_set_min_proto_version) && defined(TLS1_2_VERSION)
+            SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+#else
+            SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+#endif
+        }
+#endif
+        // All configuration succeeded — commit to member state.
+        // _ctx must be visible before _inited; mutex release handles this,
+        // and atomic store with release ensures readers see _ctx via acquire.
+        _ctx = ctx;
+        _inited.store(true, std::memory_order_release);
+        return true;
     }
 
     SSL* create_ssl() { if (!_ctx) return 0; return SSL_new(_ctx); }
+    SSL_CTX* get_ctx() { return _ctx; }
 
 private:
-    SSL_CTX* _ctx; bool _inited;
+    SSL_CTX* _ctx;
+    std::atomic<bool> _inited;
+    std::mutex _init_mutex;
 public:
     bool _allow_h2{true};
     bool _allow_h11{true};
 };
 
 struct ssl_context_singleton {
+    static ssl_context* get_instance_ex() { static ssl_context g; return &g; }
+};
+
+struct ssl_client_context_singleton {
     static ssl_context* get_instance_ex() { static ssl_context g; return &g; }
 };
 

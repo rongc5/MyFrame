@@ -217,10 +217,16 @@ void common_obj_container::obj_process()
         }
         catch(CMyCommonException &e)
         {
+            PDEBUG("CMyCommonException obj_id=%d: %s", u.second ? u.second->get_id()._id : -1, e.what());
+            fprintf(stderr, "[obj_process] CMyCommonException obj_id=%d: %s\n",
+                    u.second ? u.second->get_id()._id : -1, e.what());
             exception_vec.push_back(u.second);
         }
         catch(std::exception &e)
         {
+            PDEBUG("std::exception obj_id=%d: %s", u.second ? u.second->get_id()._id : -1, e.what());
+            fprintf(stderr, "[obj_process] std::exception obj_id=%d: %s\n",
+                    u.second ? u.second->get_id()._id : -1, e.what());
             exception_vec.push_back(u.second);
         }
     }

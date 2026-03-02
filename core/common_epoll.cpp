@@ -105,10 +105,14 @@ int common_epoll::epoll_wait(std::map<ObjId, std::shared_ptr<base_net_obj> > &ex
                 }
                 catch(CMyCommonException &e)
                 {
+                    fprintf(stderr, "[epoll_wait] CMyCommonException obj_id=%d fd=%d: %s\n",
+                            p->get_id()._id, p->get_sfd(), e.what());
                     expect_list.insert(std::make_pair(p->get_id(), p_obj));
                 }
                 catch(std::exception &e)
                 {
+                    fprintf(stderr, "[epoll_wait] std::exception obj_id=%d fd=%d: %s\n",
+                            p->get_id()._id, p->get_sfd(), e.what());
                     expect_list.insert(std::make_pair(p->get_id(), p_obj));
                 }
             }

@@ -204,6 +204,17 @@ int main(int argc, char** argv) {
         std::cout << "[tls_multi_fetch] Using CA bundle: " << ca_file << std::endl;
     }
     configure_tls(ca_file);
+    // Pre-initialize shared client SSL_CTX singleton
+    {
+        ssl_config conf;
+        bool has = tls_get_client_config(conf);
+        if (has) {
+            if (!ssl_client_context_singleton::get_instance_ex()->init_client(conf)) {
+                std::cerr << "[tls_multi_fetch] FATAL: failed to initialize client SSL_CTX" << std::endl;
+                return 1;
+            }
+        }
+    }
 
     std::map<std::string, std::string> headers = {
         {"Accept", "*/*"},
