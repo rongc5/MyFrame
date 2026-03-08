@@ -9,6 +9,11 @@
 
 set -euo pipefail
 
+# Auto-enable devtoolset-9 on CentOS/RHEL if available
+if [[ -f /opt/rh/devtoolset-9/enable ]] && ! g++ -std=c++11 -x c++ -E /dev/null &>/dev/null; then
+    set +u; source /opt/rh/devtoolset-9/enable; set -u
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_ROOT/build"

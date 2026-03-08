@@ -73,6 +73,14 @@ protected:
             ERR_print_errors_fp(stderr);
             THROW_COMMON_EXCEPT("[tls] FATAL: SSL_new() returned null");
         }
+        // Store hostname in ex_data for session cache callback
+        SSL_set_ex_data(_ssl, SslSessionCache::host_index(), strdup(_host.c_str()));
+        // Try to reuse cached TLS session (avoids full handshake)
+        SSL_SESSION* cached_sess = SslSessionCache::instance().get(_host);
+        if (cached_sess) {
+            SSL_set_session(_ssl, cached_sess);
+            SSL_SESSION_free(cached_sess);
+        }
         SSL_set_tlsext_host_name(_ssl, _host.c_str());
         if (!_host.empty()) {
             X509_VERIFY_PARAM* param = SSL_get0_param(_ssl);

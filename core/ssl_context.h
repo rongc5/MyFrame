@@ -4,9 +4,11 @@
 #include <string>
 #include <mutex>
 #include <atomic>
+#include <unordered_map>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <cstring>
+#include <cstdlib>
 
 // OpenSSL 1.0.2 compatibility: TLS_*_method() functions were added in OpenSSL 1.1.0
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -41,12 +43,74 @@ bool tls_get_client_config(ssl_config& out);
 // Reset runtime TLS state (server/client configs). See tls_runtime.cpp
 void tls_reset_runtime();
 
+// Client-side SSL session cache: reuse TLS sessions per hostname to avoid full handshakes.
+// Thread-safe via mutex. Used by tls_out_connect to set/get cached sessions.
+class SslSessionCache {
+public:
+    static SslSessionCache& instance() {
+        static SslSessionCache s;
+        return s;
+    }
+
+    void save(const std::string& host, SSL_SESSION* sess) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto it = cache_.find(host);
+        if (it != cache_.end()) {
+            SSL_SESSION_free(it->second);
+        }
+        cache_[host] = sess;
+    }
+
+    SSL_SESSION* get(const std::string& host) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto it = cache_.find(host);
+        if (it != cache_.end()) {
+            SSL_SESSION_up_ref(it->second);
+            return it->second;
+        }
+        return nullptr;
+    }
+
+    static int host_index() {
+        static int idx = SSL_get_ex_new_index(0, nullptr, nullptr, nullptr, host_ex_free_);
+        return idx;
+    }
+
+    ~SslSessionCache() {
+        for (auto& kv : cache_) SSL_SESSION_free(kv.second);
+    }
+
+private:
+    SslSessionCache() = default;
+    SslSessionCache(const SslSessionCache&) = delete;
+    SslSessionCache& operator=(const SslSessionCache&) = delete;
+    std::mutex mtx_;
+    std::unordered_map<std::string, SSL_SESSION*> cache_;
+
+    static void host_ex_free_(void*, void* ptr, CRYPTO_EX_DATA*, int, long, void*) {
+        free(ptr);
+    }
+};
+
+static inline int myframe_ssl_new_session_cb(SSL* ssl, SSL_SESSION* sess) {
+    const char* host = (const char*)SSL_get_ex_data(ssl, SslSessionCache::host_index());
+    if (host && *host) {
+        SslSessionCache::instance().save(host, sess);
+        return 1;
+    }
+    return 0;
+}
+
 class ssl_context {
 public:
     ssl_context() : _ctx(nullptr), _inited(false) {
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+        OPENSSL_init_ssl(0, NULL);
+#else
         SSL_library_init();
         SSL_load_error_strings();
         OpenSSL_add_all_algorithms();
+#endif
     }
     ~ssl_context() { if (_ctx) SSL_CTX_free(_ctx); }
 
@@ -273,6 +337,9 @@ public:
 #endif
         }
 #endif
+        // Register session reuse callback for client connections
+        SSL_CTX_sess_set_new_cb(ctx, myframe_ssl_new_session_cb);
+
         // All configuration succeeded — commit to member state.
         // _ctx must be visible before _inited; mutex release handles this,
         // and atomic store with release ensures readers see _ctx via acquire.

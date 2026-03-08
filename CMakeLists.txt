@@ -64,7 +64,7 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/connection_manag
 
 ## Ensure utils/encode is built
 add_custom_target(build_encode ALL
-    COMMAND bash -lc "./build.sh all"
+    COMMAND bash build.sh all
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/utils/encode
 )
 
@@ -76,7 +76,7 @@ set(SIGN_LIB    ${STR2SIGN_DIR}/lib/libsign.a)
 # Check if str2sign source exists and build it
 if (EXISTS "${STR2SIGN_DIR}/build.sh")
     add_custom_target(build_str2sign ALL
-        COMMAND bash -lc "./build.sh all"
+        COMMAND bash build.sh all
         WORKING_DIRECTORY ${STR2SIGN_DIR}
     )
     set(HAVE_SIGN_LIB TRUE)
