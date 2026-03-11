@@ -9,8 +9,8 @@
 
 set -euo pipefail
 
-# Auto-enable devtoolset-9 on CentOS/RHEL if available
-if [[ -f /opt/rh/devtoolset-9/enable ]] && ! g++ -std=c++11 -x c++ -E /dev/null &>/dev/null; then
+# Auto-enable devtoolset-9 on CentOS/RHEL if GCC is too old for C++17
+if [[ -f /opt/rh/devtoolset-9/enable ]] && ! g++ -std=c++17 -x c++ -E /dev/null &>/dev/null; then
     set +u; source /opt/rh/devtoolset-9/enable; set -u
 fi
 

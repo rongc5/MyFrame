@@ -42,12 +42,15 @@ bool ProtocolDetector::handoff_to_protocol(const UnifiedProtocolFactory::Protoco
     }
 
     auto* raw = next.release();
+    // CRITICAL: set_process() 会 delete 旧的 process（即 this），
+    // 之后绝对不能访问任何成员变量！
     holder->set_process(raw);
+    // 'this' 已被释放 —— 只能操作局部变量和 raw 指针
     if (len > 0) {
         size_t consumed = raw->process_recv_buf(data, len);
         (void)consumed;
     }
-    _detected = true;
+    // 不要写 _detected = true; （use-after-free！）
     return true;
 }
 
@@ -87,9 +90,8 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
                 bool ok = handoff_to_protocol(proto, holder, buf, len);
                 if (!ok) {
                     notify_peer_close();
-                    return len;
                 }
-                _detected = true;
+                // handoff 成功后 'this' 已被 delete，不能访问成员
                 return len;
             }
         }
@@ -116,9 +118,8 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
                                           buffered.data(), buffered.size());
             if (!ok) {
                 notify_peer_close();
-                return len;
             }
-            _detected = true;
+            // handoff 成功后 'this' 已被 delete，不能访问成员
             return len;
         }
     }

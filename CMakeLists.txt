@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 2.8.12)
 project(MyFrame)
 
-# C++11 support for CMake 2.8
+# C++17 support (与 StockBridge 保持一致，确保 ABI 兼容)
 if (CMAKE_VERSION VERSION_LESS "3.1")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
 else()
-    set(CMAKE_CXX_STANDARD 11)
+    set(CMAKE_CXX_STANDARD 17)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
 endif()
 

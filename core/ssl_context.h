@@ -10,10 +10,15 @@
 #include <cstring>
 #include <cstdlib>
 
-// OpenSSL 1.0.2 compatibility: TLS_*_method() functions were added in OpenSSL 1.1.0
+// OpenSSL 1.0.2 compatibility
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 #define TLS_server_method() SSLv23_server_method()
 #define TLS_client_method() SSLv23_client_method()
+// SSL_SESSION_up_ref was added in OpenSSL 1.1.0; 1.0.x uses CRYPTO_add
+static inline int SSL_SESSION_up_ref(SSL_SESSION* s) {
+    CRYPTO_add(&s->references, 1, CRYPTO_LOCK_SSL_SESSION);
+    return 1;
+}
 #endif
 
 // forward decl for ALPN callback context cast
@@ -52,15 +57,24 @@ public:
         return s;
     }
 
+    // save: 缓存 session，先 up_ref 再替换旧值
+    // new_session_cb 传入的 session 生命周期由 OpenSSL 管理，
+    // 必须 up_ref 才能安全持有。
     void save(const std::string& host, SSL_SESSION* sess) {
+        if (!sess) return;
+        SSL_SESSION_up_ref(sess);  // 先增引用，确保我们持有的拷贝安全
         std::lock_guard<std::mutex> lock(mtx_);
         auto it = cache_.find(host);
         if (it != cache_.end()) {
-            SSL_SESSION_free(it->second);
+            SSL_SESSION* old = it->second;
+            it->second = sess;
+            SSL_SESSION_free(old);  // 释放旧的（即使同指针也安全：先 up_ref 后 free = 净零）
+        } else {
+            cache_[host] = sess;
         }
-        cache_[host] = sess;
     }
 
+    // get: 返回 session 的引用（调用方负责 SSL_SESSION_free）
     SSL_SESSION* get(const std::string& host) {
         std::lock_guard<std::mutex> lock(mtx_);
         auto it = cache_.find(host);
@@ -96,7 +110,8 @@ static inline int myframe_ssl_new_session_cb(SSL* ssl, SSL_SESSION* sess) {
     const char* host = (const char*)SSL_get_ex_data(ssl, SslSessionCache::host_index());
     if (host && *host) {
         SslSessionCache::instance().save(host, sess);
-        return 1;
+        // save() 内部已 up_ref，返回 0 让 OpenSSL 释放自己的引用
+        return 0;
     }
     return 0;
 }
