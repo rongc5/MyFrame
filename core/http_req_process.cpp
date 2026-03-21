@@ -45,14 +45,20 @@ void http_req_process::peer_close()
 
 void http_req_process::parse_first_line(const std::string & line)
 {
+    // HTTP response: "HTTP/1.1 200 OK" or "HTTP/1.1 404 Not Found"
+    // Status text may contain spaces, so we only split the first 2 spaces
     std::vector<std::string> tmp_vec;
     SplitString(line.c_str(), " ", &tmp_vec, SPLIT_MODE_ALL);
-    if (tmp_vec.size() != 3) {
+    if (tmp_vec.size() < 3) {
         THROW_COMMON_EXCEPT("http first line");
     }
     _res_head_para._response_code = strtoull(tmp_vec[1].c_str(), 0, 10);
     _res_head_para._version = tmp_vec[0];
+    // Join remaining parts as status text (e.g. "Not Found")
     _res_head_para._response_str = tmp_vec[2];
+    for (size_t i = 3; i < tmp_vec.size(); ++i) {
+        _res_head_para._response_str += " " + tmp_vec[i];
+    }
 }
 
 void http_req_process::parse_header(std::string & recv_head)
@@ -91,7 +97,7 @@ size_t http_req_process::process_recv_body(const char *buf, size_t len, int &res
     size_t ret  = 0;
     uint64_t content_length = 0;
     std::string *tmp_str = _res_head_para.get_header("Content-Length");
-    if (tmp_str) 
+    if (tmp_str)
     {
         content_length = strtoull(tmp_str->c_str(), 0, 10);
     }
@@ -141,7 +147,7 @@ size_t http_req_process::get_chuncked(const char *buf, size_t len, int &result)
                 _cur_chunked_rec_len = nRet;
                 if(_cur_chunked_len == 0)
                 {         
-                    result = 1; //½áÊøÁË
+                    result = 1; //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
                     break;
                 }
 
@@ -165,7 +171,7 @@ size_t http_req_process::get_chuncked(const char *buf, size_t len, int &result)
                 break;
             }
         }
-        else //ÒÑ¾­»ñÈ¡³¤¶Èµ«ÊÇÃ»ÓÐ»ñÈ¡Êý¾Ý
+        else //ï¿½Ñ¾ï¿½ï¿½ï¿½È¡ï¿½ï¿½ï¿½Èµï¿½ï¿½ï¿½Ã»ï¿½Ð»ï¿½È¡ï¿½ï¿½ï¿½ï¿½
         {          
             if (_cur_chunked_len+2+_cur_chunked_rec_len > (int)_chunked_body.length())
             {
@@ -186,8 +192,8 @@ size_t http_req_process::get_chuncked(const char *buf, size_t len, int &result)
 }
 
 void http_req_process::recv_finish()
-{        	
-    _data_process->msg_recv_finish();            
+{
+    _data_process->msg_recv_finish();
     reset();
 }
 

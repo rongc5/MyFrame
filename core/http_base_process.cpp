@@ -41,7 +41,7 @@ void http_base_process::set_process(http_base_data_process * data_process)
 }
 
 size_t http_base_process::process_recv_buf(const char *buf, size_t len)
-{	
+{
     if (_http_status > RECV_BODY)
     {
         THROW_COMMON_EXCEPT("http recv status not correct " << _http_status);
@@ -55,27 +55,27 @@ size_t http_base_process::process_recv_buf(const char *buf, size_t len)
     {
         recv_head.append(buf, len);
         check_head_finish(recv_head, left_str);
-        staus_change = true;				
+        staus_change = true;
     }
 
     //PDEBUG("%s\n", buf);
 
     if (_http_status == RECV_BODY) //ݲ
-    {	
+    {
         int result = 0;
         if (staus_change)
         {
             ret = len - left_str.length();
             ret += process_recv_body((char*)left_str.c_str(), left_str.length(), result);
         }
-        else	
+        else
             ret = process_recv_body(buf, len, result);
 
         if (result == 1)
         {
             recv_finish();
         }
-    }			
+    }
     return ret;
 }
 
