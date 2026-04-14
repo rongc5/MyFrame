@@ -264,6 +264,7 @@ void BinaryContextAdapter::peer_close() {
         detail::HandlerContextScope scope(this);
         _handler->on_disconnect();
     }
+    base_data_process::peer_close();
 }
 
 void BinaryContextAdapter::reset() {

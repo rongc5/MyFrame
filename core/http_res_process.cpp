@@ -163,8 +163,19 @@ void http_res_process::recv_finish()
 }
 
 void http_res_process::send_finish()
-{        	
+{
+    // Check Connection header before reset() clears it
+    bool should_close = false;
+    std::string* conn_hdr = _res_head_para.get_header("Connection");
+    if (conn_hdr && strcasecmp(conn_hdr->c_str(), "close") == 0) {
+        should_close = true;
+    }
+
     reset();
+
+    if (should_close) {
+        request_close_now();
+    }
 }
 
 

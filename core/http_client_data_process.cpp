@@ -20,6 +20,17 @@ http_client_data_process::http_client_data_process(http_req_process* p,
 {
 }
 
+void http_client_data_process::resetForNextRequest() {
+    _head_sent = false;
+    _body_sent = false;
+    _resp_body.clear();
+    _status = 0;
+    {
+        std::lock_guard<std::mutex> lk(_m);
+        _done = false;
+    }
+}
+
 std::string* http_client_data_process::get_send_head() {
     if (_head_sent) return nullptr;
     std::stringstream ss;
@@ -31,7 +42,7 @@ std::string* http_client_data_process::get_send_head() {
         return false;
     };
     if (!has_ci("Host")) ss << "Host: " << _host << "\r\n";
-    if (!has_ci("Connection")) ss << "Connection: close\r\n";
+    if (!has_ci("Connection")) ss << "Connection: keep-alive\r\n";
     if (!has_ci("User-Agent")) ss << "User-Agent: myframe-http-client\r\n";
     const char* no_ae = ::getenv("MYFRAME_NO_DEFAULT_AE");
     if (!has_ci("Accept-Encoding") && !(no_ae && (strcmp(no_ae, "1")==0 || strcasecmp(no_ae, "true")==0))) {

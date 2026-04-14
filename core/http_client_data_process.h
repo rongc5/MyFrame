@@ -29,7 +29,11 @@ public:
     // Synchronous wait helper for business code that wants a blocking call
     bool wait_done(int timeout_ms);
 
-private:
+    // Reset send/recv state for keep-alive: allows sending another request
+    // on the same connection. Subclass should update _path before calling this.
+    void resetForNextRequest();
+
+protected:
     std::string _method, _host, _path;
     std::map<std::string,std::string> _headers;
     std::string _body;

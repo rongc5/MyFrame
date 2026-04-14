@@ -193,8 +193,19 @@ size_t http_req_process::get_chuncked(const char *buf, size_t len, int &result)
 
 void http_req_process::recv_finish()
 {
+    // Check if server sent Connection: close before reset() clears headers
+    bool should_close = false;
+    std::string* conn_hdr = _res_head_para.get_header("Connection");
+    if (conn_hdr && strcasecmp(conn_hdr->c_str(), "close") == 0) {
+        should_close = true;
+    }
+
     _data_process->msg_recv_finish();
     reset();
+
+    if (should_close) {
+        request_close_now();
+    }
 }
 
 void http_req_process::send_finish()
