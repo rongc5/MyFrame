@@ -5,6 +5,9 @@
 
 #include "base_net_obj.h"
 #include "common_util.h"
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
 
 channel_data_process::channel_data_process(std::shared_ptr<base_net_obj> p, int channelid):base_data_process(p),
     _channelid(channelid),
@@ -53,15 +56,31 @@ size_t channel_data_process::process_recv_buf(const char *buf, size_t len)
 
 void channel_data_process::put_msg(uint32_t obj_id, std::shared_ptr<normal_msg> & p_msg)
 {
+    ssize_t send_ret = 0;
+    int send_errno = 0;
+    size_t queued_len = 0;
     std::lock_guard<std::mutex> lck (_mutex);
     normal_obj_msg nbj_msg;
     nbj_msg.p_msg = p_msg;
     nbj_msg._id = obj_id;
     int idle = 1 - _current;
     _queue[idle].push_back(nbj_msg);
+    queued_len = _queue[0].size() + _queue[1].size();
 
     //write(_channelid, CHANNEL_MSG_TAG, sizeof(CHANNEL_MSG_TAG));
-    send(_channelid, CHANNEL_MSG_TAG, sizeof(CHANNEL_MSG_TAG), MSG_DONTWAIT);
+    send_ret = send(_channelid, CHANNEL_MSG_TAG, sizeof(CHANNEL_MSG_TAG), MSG_DONTWAIT);
+    if (send_ret != (ssize_t)sizeof(CHANNEL_MSG_TAG)) {
+        send_errno = errno;
+        PDEBUG("channel tag send abnormal: fd:%d ret:%zd errno:%d queued:%zu obj_id:%u",
+                _channelid, send_ret, send_errno, queued_len, obj_id);
+        // PDEBUG is compiled out in release builds; keep a stderr breadcrumb so
+        // EAGAIN (consumer stalled) / EPIPE / EBADF (channel obj torn down) can be
+        // observed in production logs.
+        fprintf(stderr,
+                "[channel] tag send abnormal: fd=%d ret=%zd errno=%d (%s) queued=%zu obj_id=%u\n",
+                _channelid, send_ret, send_errno, strerror(send_errno),
+                queued_len, obj_id);
+    }
 
     return ;
 }
@@ -72,7 +91,11 @@ void channel_data_process::add_event_timer(uint64_t time_out)
     time_out = time_out < 20 ? 20:time_out;
 
     std::shared_ptr<timer_msg> t_msg(new timer_msg);
-    t_msg->_obj_id = OBJ_ID_DOMAIN;
+    if (auto sp = _p_connect.lock()) {
+        t_msg->_obj_id = sp->get_id()._id;
+    } else {
+        t_msg->_obj_id = OBJ_ID_DOMAIN;
+    }
     t_msg->_timer_type = NONE_CHANNEL_EVENT_TIMER_TYPE;
     t_msg->_time_length = time_out;
 

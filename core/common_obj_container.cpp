@@ -190,11 +190,6 @@ void common_obj_container::handle_msg(uint32_t obj_id, std::shared_ptr<normal_ms
 void common_obj_container::obj_process()
 {   
     uint32_t tmp_num = 0;
-    uint64_t now = GetMilliSecond();
-    uint32_t idle_skip_ms = 0; if (const char* e = ::getenv("MYFRAME_IDLE_SKIP_MS")) { int v = atoi(e); if (v > 0) idle_skip_ms = (uint32_t)v; }
-    if (!idle_skip_ms) { const char* preset = ::getenv("MYFRAME_PERF_PRESET"); if (preset && (strcmp(preset, "0") != 0 && strcasecmp(preset, "false") != 0)) idle_skip_ms = 50; }
-    if (idle_skip_ms > 5000) idle_skip_ms = 5000;
-    uint32_t idle_scan_max = 0; if (const char* s = ::getenv("MYFRAME_IDLE_SCAN_MAX")) { int v = atoi(s); if (v > 0) idle_scan_max = (uint32_t)v; }
 
     std::vector<std::shared_ptr<base_net_obj> > exception_vec;
     std::vector<std::shared_ptr<base_net_obj> > real_net_vec;
@@ -203,12 +198,7 @@ void common_obj_container::obj_process()
     {
         try
         {
-            // Only tick objects that declare interest (e.g., TLS handshake or pending write)
-            bool active = u.second->wants_tick() || (idle_skip_ms && (now - u.second->last_active_ms() < idle_skip_ms));
-            if (!active && idle_scan_max) { active = true; --idle_scan_max; }
-            if (active) {
-                u.second->real_net_process();
-            }
+            u.second->real_net_process();
             if (!u.second->get_real_net()) {
                 real_net_vec.push_back(u.second);
             }
