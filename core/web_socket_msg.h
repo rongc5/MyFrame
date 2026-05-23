@@ -79,7 +79,8 @@ class web_socket_frame_header
 
 		void process(char* &buf,   uint32_t &len);
 
-		static std::string gen_ping_header(const int8_t op_code/*0x09 or  0x10*/, const std::string &ping_data);//ping or pung
+		static std::string gen_ping_header(const int8_t op_code/*0x09 or 0x0A*/, const std::string &ping_data);//ping or pong
+		static std::string gen_control_frame(const int8_t op_code, const std::string &payload, const std::string &mask_key);
 
         std::string gen_frame_header(const uint64_t data_len, const std::string &mask_key, const int8_t content_type);
 
@@ -96,9 +97,18 @@ class web_socket_frame_header
 		int8_t _mask_flag;
 		int8_t _more_flag;
         std::string _mask_key;
-		uint64_t _process_body_len;		
+		uint64_t _process_body_len;
 		uint32_t _mask_offset;
 		int8_t _op_code;
+		// Preserved across clear() so callers (e.g. msg_recv_finish handlers)
+		// can still inspect the just-completed message's opcode.
+		// For fragmented messages this reports the first-fragment opcode
+		// (TEXT/BINARY) rather than CONTINUATION.
+		int8_t _completed_op_code{0};
+		int8_t _completed_fin{0};
+		// Carries the opcode of an in-progress fragmented data message across
+		// frames; 0 means no pending message. Not reset by clear().
+		int8_t _message_op_code{0};
 	private:
 		void get_payload_length();
 };

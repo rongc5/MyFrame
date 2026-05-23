@@ -30,6 +30,10 @@ void web_socket_data_process::on_handshake_ok()
 void web_socket_data_process::on_ping(const char op_code, const std::string &ping_data)
 {
     PDEBUG("%p", this);
+    if (op_code == 0x09 && _process)
+    {
+        _process->send_ping(0x0a, ping_data);
+    }
 }
 
 void web_socket_data_process::peer_close()

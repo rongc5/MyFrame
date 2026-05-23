@@ -27,6 +27,10 @@ class web_socket_data_process:public base_data_process
         virtual uint64_t get_timeout_len();
 
         virtual uint64_t get_next_send_len(int8_t &content_type);
+        // Whether there's at least one queued outbound message. Used by the
+        // send pipeline to distinguish "no message" from "message with empty
+        // payload" (since the latter has get_next_send_len == 0).
+        bool has_pending_send() const { return !_send_list.empty(); }
         virtual std::string *get_send_buf();
         virtual void msg_recv_finish() = 0;
 

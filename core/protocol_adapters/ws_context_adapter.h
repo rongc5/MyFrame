@@ -103,6 +103,7 @@ public:
 
     virtual ~WsContextDataProcess();
 
+    void on_handshake_ok() override;
     void msg_recv_finish() override;
     void on_connect();
     void on_close() override;

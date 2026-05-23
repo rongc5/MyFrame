@@ -52,13 +52,12 @@ public:
             cout << "[Client] ✅ All messages echoed back successfully!" << endl;
             cout << "[Client] Closing connection..." << endl;
 
-            // 发送关闭帧
-            ws_msg_type close_msg;
-            close_msg._p_msg = myframe::string_acquire();
-            close_msg._p_msg->assign("Goodbye");
-            close_msg._con_type = 0x8; // CLOSE
-            put_send_msg(close_msg);
-            _process->notice_send();
+            // 发送合法的关闭帧：2-byte BE status code (1000) + reason
+            std::string close_payload;
+            close_payload.push_back(static_cast<char>((1000 >> 8) & 0xFF));
+            close_payload.push_back(static_cast<char>(1000 & 0xFF));
+            close_payload.append("Goodbye");
+            _process->send_close(close_payload);
         }
     }
 

@@ -6,6 +6,7 @@
 #include "base_timer.h"
 #include "common_obj_container.h"
 #include "web_socket_data_process.h"
+#include <strings.h>
 
 
 #define WEB_SOCKET_HANDSHAKE_OK_TIMER_LENGTH  30*1000
@@ -122,15 +123,47 @@ std::string web_socket_res_process::gen_send_http_head()
 }
 
 void  web_socket_res_process::parse_header()
-{    		
+{
+    bool method_ok = _recv_header.length() >= 4 &&
+                     strncasecmp(_recv_header.c_str(), "GET ", 4) == 0;
+
+    // Upgrade is a single header value; must equal "websocket" (case-insensitive).
+    std::string upgrade_val;
+    GetCaseStringByLabel(_recv_header, "Upgrade:", "\r\n", upgrade_val);
+    StringTrim(upgrade_val);
+    bool upgrade_ok = (upgrade_val.length() == 9) &&
+                      (strncasecmp(upgrade_val.c_str(), "websocket", 9) == 0);
+
+    // Connection is a comma-separated list of tokens; must contain "upgrade".
+    std::string connection_val;
+    GetCaseStringByLabel(_recv_header, "Connection:", "\r\n", connection_val);
+    StringTrim(connection_val);
+    bool connection_ok = false;
+    size_t pos = 0;
+    while (pos < connection_val.length())
+    {
+        size_t comma = connection_val.find(',', pos);
+        size_t end = (comma == std::string::npos) ? connection_val.length() : comma;
+        std::string token = connection_val.substr(pos, end - pos);
+        StringTrim(token);
+        if (token.length() == 7 && strncasecmp(token.c_str(), "upgrade", 7) == 0)
+        {
+            connection_ok = true;
+            break;
+        }
+        if (comma == std::string::npos) break;
+        pos = comma + 1;
+    }
+
     GetCaseStringByLabel(_recv_header, "Sec-WebSocket-Key:", "\r\n", _s_websocket_key);
     StringTrim(_s_websocket_key);
     GetCaseStringByLabel(_recv_header, "Sec-WebSocket-Protocol:", "\r\n", _s_ws_protocol);
     StringTrim(_s_ws_protocol);
     std::string tmp;
     GetCaseStringByLabel(_recv_header, "Sec-WebSocket-Version:", "\r\n", tmp);
+    StringTrim(tmp);
     _wb_version = strtoull(tmp.c_str(), 0, 10);
-    if (_wb_version != 13)
+    if (!method_ok || !upgrade_ok || !connection_ok || _s_websocket_key.empty() || _wb_version != 13)
     {
         _if_upgrade = true;
     }
@@ -143,7 +176,7 @@ bool web_socket_res_process::check_head_finish()
     if (ret && sp)
     {			    
         _wb_status = WB_HEAD_FINISH;
-        //ÉèÖÃ¿ÉÒÔ·¢ËÍÊý¾Ý
+        //ï¿½ï¿½ï¿½Ã¿ï¿½ï¿½Ô·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         sp->notice_send();
     }
     return ret;

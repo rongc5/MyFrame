@@ -86,10 +86,11 @@ void WsApplicationDataProcess::msg_recv_finish() {
     // 构造 WsFrame
     WsFrame recv_frame;
     recv_frame.payload.swap(_recent_msg);
-    recv_frame.fin = (frame_header._more_flag == 1);
+    recv_frame.fin = (frame_header._completed_fin != 0);
 
     // 转换 opcode
-    switch (frame_header._op_code) {
+    int8_t op = frame_header._completed_op_code;
+    switch (op) {
         case 0x0: recv_frame.opcode = WsFrame::CONTINUATION; break;
         case 0x1: recv_frame.opcode = WsFrame::TEXT; break;
         case 0x2: recv_frame.opcode = WsFrame::BINARY; break;
@@ -100,7 +101,7 @@ void WsApplicationDataProcess::msg_recv_finish() {
     }
 
     PDEBUG("[WsApplicationDataProcess] Received frame: opcode=%d, payload_size=%zu, fin=%d",
-           frame_header._op_code, recv_frame.payload.size(), recv_frame.fin);
+           op, recv_frame.payload.size(), recv_frame.fin);
 
     try {
         // 准备响应帧
@@ -110,23 +111,26 @@ void WsApplicationDataProcess::msg_recv_finish() {
         detail::HandlerContextScope scope(this);
         _handler->on_ws(recv_frame, send_frame);
 
-        // 发送响应
-        if (!send_frame.payload.empty()) {
+        // Control frames (CLOSE/PING/PONG) route through the control queue so
+        // empty payloads are still sent and they bypass the data-frame send
+        // pipeline (which gates on len > 0 and would silently drop them).
+        if (send_frame.opcode == WsFrame::CLOSE) {
+            _process->send_close(send_frame.payload);
+        } else if (send_frame.opcode == WsFrame::PING) {
+            _process->send_ping(0x9, send_frame.payload);
+        } else if (send_frame.opcode == WsFrame::PONG) {
+            _process->send_ping(0xA, send_frame.payload);
+        } else if (!send_frame.payload.empty()) {
             PDEBUG("[WsApplicationDataProcess] Sending response: opcode=%d, payload_size=%zu",
                    (int)send_frame.opcode, send_frame.payload.size());
 
-            // 创建 ws_msg_type
             ws_msg_type msg;
             msg._p_msg = myframe::string_acquire();
             *msg._p_msg = send_frame.payload;
 
-            // 转换 opcode
             switch (send_frame.opcode) {
                 case WsFrame::TEXT:         msg._con_type = 0x1; break;
                 case WsFrame::BINARY:       msg._con_type = 0x2; break;
-                case WsFrame::CLOSE:        msg._con_type = 0x8; break;
-                case WsFrame::PING:         msg._con_type = 0x9; break;
-                case WsFrame::PONG:         msg._con_type = 0xA; break;
                 case WsFrame::CONTINUATION: msg._con_type = 0x0; break;
                 default:                    msg._con_type = 0x1; break;
             }
@@ -138,13 +142,14 @@ void WsApplicationDataProcess::msg_recv_finish() {
     } catch (const std::exception& e) {
         PDEBUG("[WsApplicationDataProcess] Exception: %s", e.what());
 
-        // 发生异常，发送错误关闭帧
-        ws_msg_type close_msg;
-        close_msg._p_msg = myframe::string_acquire();
-        *close_msg._p_msg = "Internal Server Error";
-        close_msg._con_type = 0x8; // CLOSE
-        put_send_msg(close_msg);
-        _process->notice_send();
+        // Send a well-formed close: 1011 (Internal Error) + reason text.
+        const char* reason = "Internal Server Error";
+        std::string payload;
+        payload.reserve(2 + 21);
+        payload.push_back(static_cast<char>((1011 >> 8) & 0xFF));
+        payload.push_back(static_cast<char>(1011 & 0xFF));
+        payload.append(reason);
+        _process->send_close(payload);
     }
 }
 

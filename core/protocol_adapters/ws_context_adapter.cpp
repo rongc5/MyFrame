@@ -70,17 +70,20 @@ void WsContextImpl::send_pong() {
 
 void WsContextImpl::close(uint16_t code, const std::string& reason) {
     _is_closing = true;
-    if (_process) {
-        auto* data_process = _process->_p_data_process;
-        if (data_process) {
-            ws_msg_type msg;
-            msg._p_msg = string_acquire();
-            *msg._p_msg = reason;
-            msg._con_type = 0x8; // CLOSE
-            data_process->put_send_msg(msg);
-            _process->notice_send();
-        }
+    if (!_process) return;
+
+    // Build the close payload: 2-byte network-order status code + optional
+    // reason. Pass code == 0 to send an empty close payload (no status code).
+    // Route through send_close (control-frame queue) so we never go through the
+    // data send path, which silently drops empty payloads via the len > 0 gate.
+    std::string payload;
+    if (code != 0) {
+        payload.reserve(2 + reason.size());
+        payload.push_back(static_cast<char>((code >> 8) & 0xFF));
+        payload.push_back(static_cast<char>(code & 0xFF));
+        payload.append(reason);
     }
+    _process->send_close(payload);
 }
 
 bool WsContextImpl::is_closing() const {
@@ -168,6 +171,12 @@ WsContextDataProcess::~WsContextDataProcess() {
     PDEBUG("[WsContextDataProcess] Destroyed");
 }
 
+void WsContextDataProcess::on_handshake_ok() {
+    PDEBUG("[WsContextDataProcess] WebSocket handshake completed");
+    _recent_msg.clear();
+    on_connect();
+}
+
 void WsContextDataProcess::msg_recv_finish() {
     PDEBUG("[WsContextDataProcess] msg_recv_finish called");
 
@@ -179,10 +188,11 @@ void WsContextDataProcess::msg_recv_finish() {
     // 构造 WsFrame
     WsFrame frame;
     frame.payload = _recent_msg;
-    frame.fin = (frame_header._more_flag == 1);
+    frame.fin = (frame_header._completed_fin != 0);
 
-    // 转换 opcode
-    switch (frame_header._op_code) {
+    // 转换 opcode (use _completed_op_code; _op_code is reset by clear() before us)
+    int8_t op = frame_header._completed_op_code;
+    switch (op) {
         case 0x0: frame.opcode = WsFrame::CONTINUATION; break;
         case 0x1: frame.opcode = WsFrame::TEXT; break;
         case 0x2: frame.opcode = WsFrame::BINARY; break;
@@ -193,14 +203,20 @@ void WsContextDataProcess::msg_recv_finish() {
     }
 
     PDEBUG("[WsContextDataProcess] Received frame: opcode=%d, payload_size=%zu, fin=%d",
-           frame_header._op_code, frame.payload.size(), frame.fin);
+           op, frame.payload.size(), frame.fin);
 
     // 更新 context
     _context->set_frame(frame);
 
     // 调用用户处理器
-    detail::HandlerContextScope scope(this);
-    _handler->on_ws_frame(*_context);
+    {
+        detail::HandlerContextScope scope(this);
+        _handler->on_ws_frame(*_context);
+    }
+
+    // Clear the receive buffer so the next frame doesn't accumulate.
+    // Without this, msg_recv_finish appends each frame to the same string.
+    _recent_msg.clear();
 }
 
 void WsContextDataProcess::on_connect() {

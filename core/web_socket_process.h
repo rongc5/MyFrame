@@ -36,6 +36,7 @@ class web_socket_process: public base_data_process
         virtual void destroy();
 
 		virtual void send_ping(const char op_code, const std::string &ping_data);
+		virtual void send_close(const std::string &close_data = std::string());
 
 		/************************************************************/
         std::string get_web_accept_key(const std::string &ws_key);
@@ -61,6 +62,7 @@ class web_socket_process: public base_data_process
 		virtual std::string *SEND_WB_HANDSHAKE_OK_PROCESS();
 
 		size_t RECV_WB_HANDSHAKE_OK_PROCESS(const char *buf, const size_t len);
+		std::string make_control_frame(const char op_code, const std::string &payload);
 
 		virtual size_t RECV_WB_HEAD_FINISH_PROCESS(const char *buf, const size_t len) = 0;
 		virtual size_t RECV_WB_INIT_STAUTS_PROCESS(const char *buf, const size_t len) = 0;

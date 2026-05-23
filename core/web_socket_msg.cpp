@@ -74,13 +74,30 @@ void web_socket_frame_header::process(char* &buf,   uint32_t &len)
         {
             _op_code = _s_header[0]  & 0xF;
             _more_flag = (_s_header[0] >> 7) & 0x01;
-            if (_op_code == 0x08) //客户端关闭
+            uint8_t rsv = (_s_header[0] >> 4) & 0x07;
+            if (rsv != 0)
             {
-                THROW_COMMON_EXCEPT("websocket client close the connection");
-            }					
-
+                THROW_COMMON_EXCEPT("websocket RSV bits are not supported");
+            }
+            // Reject opcodes reserved by RFC 6455 §5.2 (must fail the connection).
+            if (_op_code != 0x0 && _op_code != 0x1 && _op_code != 0x2 &&
+                _op_code != 0x8 && _op_code != 0x9 && _op_code != 0xA)
+            {
+                THROW_COMMON_EXCEPT("websocket reserved opcode " << (int)_op_code);
+            }
             _mask_flag = (_s_header[1] >> 7) & 0x01;
             uint8_t tmp_len = (_s_header[1] & 0x7F);
+            if (_op_code >= 0x08 && (_more_flag == 0 || tmp_len > 125))
+            {
+                THROW_COMMON_EXCEPT("invalid websocket control frame");
+            }
+            // RFC 6455 §5.5.1: a Close frame body is either empty or contains
+            // at least a 2-byte status code. A 1-byte payload is illegal and
+            // MUST fail the connection.
+            if (_op_code == 0x08 && tmp_len == 1)
+            {
+                THROW_COMMON_EXCEPT("invalid close frame: payload length 1");
+            }
             if (tmp_len < 126)
             {					
             }
@@ -137,19 +154,50 @@ void web_socket_frame_header::process(char* &buf,   uint32_t &len)
     len = ret_len;
 }
 
-std::string web_socket_frame_header::gen_ping_header(const int8_t op_code/*0x09 or  0x10*/, const std::string &ping_data)//ping or pung
+std::string web_socket_frame_header::gen_ping_header(const int8_t op_code/*0x09 or 0x0A*/, const std::string &ping_data)//ping or pong
 {
+    return gen_control_frame(op_code, ping_data, std::string());
+}
+
+std::string web_socket_frame_header::gen_control_frame(const int8_t op_code, const std::string &payload, const std::string &mask_key)
+{
+    if (payload.length() > 125)
+    {
+        THROW_COMMON_EXCEPT("websocket control frame payload too long " << payload.length());
+    }
+
+    const bool masked = !mask_key.empty();
+    if (masked && mask_key.length() != 4)
+    {
+        THROW_COMMON_EXCEPT("websocket mask key length is not 4");
+    }
+
+    std::string frame;
     char aa = 0;
     aa = aa | (0x01 << 7);
-    aa = aa | op_code;
-    std::string frame_header;
-    frame_header.append(1, aa);
-    char bb = 0;
-    bb = bb | (char)ping_data.length();
-    frame_header.append(1, bb);
-    if (ping_data.length() > 0)
-        frame_header.append(ping_data);
-    return frame_header;
+    aa = aa | (op_code & 0x0f);
+    frame.append(1, aa);
+
+    char bb = static_cast<char>(payload.length());
+    if (masked)
+    {
+        bb = bb | static_cast<char>(0x80);
+    }
+    frame.append(1, bb);
+
+    if (masked)
+    {
+        frame.append(mask_key.c_str(), 4);
+        for (size_t i = 0; i < payload.length(); ++i)
+        {
+            frame.append(1, payload[i] ^ mask_key[i % 4]);
+        }
+    }
+    else
+    {
+        frame.append(payload);
+    }
+    return frame;
 }
 
 std::string web_socket_frame_header::gen_frame_header(const uint64_t data_len, const std::string &mask_key, const int8_t content_type)
@@ -162,6 +210,11 @@ std::string web_socket_frame_header::gen_frame_header(const uint64_t data_len, c
     else
     {
         _mask_flag = 0;
+    }
+
+    if (content_type >= 0x08 && data_len > 125)
+    {
+        THROW_COMMON_EXCEPT("websocket control frame payload too long " << data_len);
     }
 
     _op_code = content_type;
@@ -222,19 +275,36 @@ uint32_t web_socket_frame_header::update(const uint32_t len)
 
 bool web_socket_frame_header::if_finish()
 {
-    bool ret = false;
-    if (_op_code == 0x09 || _op_code == 0x0a)
-    {
-        ret = true;
-    }
-    else
-    {
-        ret =  (_payload_len != 0) && (_process_body_len == _payload_len) ;
-    }
+    // A frame is complete once all declared body bytes have been consumed.
+    // Empty payloads (legitimate for close/ping/pong and empty data frames,
+    // including the final empty CONTINUATION of a fragmented message) are
+    // complete immediately because process_body_len and payload_len are both 0.
+    bool ret = (_process_body_len == _payload_len);
     if (ret)
+    {
+        if (_op_code < 0x08)
+        {
+            // Track the message-level opcode across data fragments so that
+            // the final CONTINUATION frame can report TEXT/BINARY upstream.
+            if (_op_code != 0x0)
+            {
+                _message_op_code = _op_code;
+            }
+            _completed_op_code = (_message_op_code != 0) ? _message_op_code : _op_code;
+            if (_more_flag != 0)
+            {
+                _message_op_code = 0; // message complete; reset for next
+            }
+        }
+        else
+        {
+            _completed_op_code = _op_code;
+        }
+        _completed_fin = _more_flag;
         clear();
-    return ret && (_more_flag == 0);
-}	
+    }
+    return ret && (_completed_fin != 0);
+}
 
 std::string web_socket_frame_header::mask_code(const char *p_buf, const size_t len)
 {		
