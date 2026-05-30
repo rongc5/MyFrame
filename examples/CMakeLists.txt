@@ -203,3 +203,7 @@ endif()
 # if(TARGET build_encode)
 #     add_dependencies(multi_thread_server_fixed build_encode)
 # endif()
+
+# EastMoney xdxr URL repro for stockbridge daemon httpGet diagnosis
+add_executable(em_xdxr_test em_xdxr_test.cpp)
+target_link_libraries(em_xdxr_test ${COMMON_LIBS})
