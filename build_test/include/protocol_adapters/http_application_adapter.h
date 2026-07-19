@@ -50,11 +50,13 @@ public:
 
     // http_base_data_process 接口实现
     virtual void msg_recv_finish() override;
+    virtual size_t process_recv_body(const char* buf, size_t len, int& result) override;
     virtual std::string* get_send_head() override;
     virtual std::string* get_send_body(int& result) override;
 
 private:
     IApplicationHandler* _handler;
+    std::string _recv_body;      // 保存请求体内容
     std::string _response_body;  // 保存响应体内容
     bool _body_sent;
 };

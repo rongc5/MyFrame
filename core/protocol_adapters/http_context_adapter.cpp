@@ -87,7 +87,7 @@ void HttpContextImpl::enable_streaming() {
 }
 
 size_t HttpContextImpl::stream_write(const void* data, size_t len) {
-    if (!_streaming_enabled || !_conn) return 0;
+    if (!_streaming_enabled || _conn.expired()) return 0;
 
     // ����ʽģʽ�£�ֱ��д������
     if (data && len > 0) {
@@ -108,7 +108,7 @@ void HttpContextImpl::upgrade_to_websocket() {
 }
 
 void HttpContextImpl::close() {
-    if (_conn) {
+    if (!_conn.expired()) {
         // ע��base_net_obj û�� close() ����
         // ʹ�� request_close_now() ͨ�� base_data_process
         // TODO: ʵ����ȷ�Ĺر��߼�
@@ -142,12 +142,12 @@ ConnectionInfo& HttpContextImpl::connection_info() {
 }
 
 std::shared_ptr<base_net_obj> HttpContextImpl::raw_connection() {
-    return _conn;
+    return _conn.lock();
 }
 
 base_net_thread* HttpContextImpl::get_thread() const {
-    if (_conn) {
-        auto* container = _conn->get_net_container();
+    if (auto c = _conn.lock()) {
+        auto* container = c->get_net_container();
         if (container) {
             return container->get_owner_thread();
         }
@@ -342,18 +342,20 @@ void HttpContextDataProcess::handle_msg(std::shared_ptr<::normal_msg>& msg) {
 }
 
 void HttpContextImpl::add_timer(uint64_t timeout_ms, std::shared_ptr<::timer_msg> t_msg) {
-    if (_conn && t_msg) {
+    auto c = _conn.lock();
+    if (c && t_msg) {
         if (timeout_ms > 0) {
             uint64_t clamped = std::min<uint64_t>(timeout_ms, std::numeric_limits<uint32_t>::max());
             t_msg->_time_length = static_cast<uint32_t>(clamped);
         }
-        _conn->add_timer(t_msg);
+        c->add_timer(t_msg);
     }
 }
 
 void HttpContextImpl::send_msg(std::shared_ptr<::normal_msg> msg) {
-    if (_conn && msg) {
-        ObjId target = _conn->get_id();
+    auto c = _conn.lock();
+    if (c && msg) {
+        ObjId target = c->get_id();
         base_net_thread::put_obj_msg(target, msg);
     }
 }

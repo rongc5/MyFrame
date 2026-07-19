@@ -50,7 +50,8 @@ private:
     uint32_t _timer_id;
 
     static const size_t MAX_DETECT_BUFFER_SIZE = 4096;
-    static const uint64_t DETECT_TIMEOUT_MS = 5000;
+    // Default detection timeout (keep at 5s for baseline tests)
+    static const uint64_t DETECT_TIMEOUT_MS = 5000; // 5s
 };
 
 } // namespace myframe

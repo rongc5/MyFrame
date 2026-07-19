@@ -61,7 +61,8 @@ public:
 
 private:
     web_socket_process* _process;
-    std::shared_ptr<base_net_obj> _conn;
+    // FIX(mem-leak): weak to break conn->process->_context->_conn->conn ref-cycle
+    std::weak_ptr<base_net_obj> _conn;
     WsFrame _frame;
     std::map<std::string, void*> _user_data;
     bool _is_closing;

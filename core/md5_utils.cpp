@@ -1,6 +1,7 @@
 #include "md5_utils.h"
 
 #include <openssl/evp.h>
+#include <openssl/opensslv.h>
 
 #include <array>
 #include <fstream>
@@ -8,6 +9,17 @@
 #include <memory>
 #include <sstream>
 #include <vector>
+
+// OpenSSL 1.1.0 之前 (CentOS 7 系统自带的 1.0.x) 用的是旧名:
+//   EVP_MD_CTX_new  ↔ EVP_MD_CTX_create
+//   EVP_MD_CTX_free ↔ EVP_MD_CTX_destroy
+// 这里给 1.0.x 兼容性 shim, 让同一份代码 dev (OpenSSL 3.0) 和 prod (CentOS 7
+// 系统 OpenSSL 1.0.x) 都能编。注: prod build_cmake.sh 链 /usr/local/openssl,
+// 那条路径如果指向 1.0 就用这条 fallback; 1.1+ 直接走原生 API。
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+static inline EVP_MD_CTX* EVP_MD_CTX_new() { return EVP_MD_CTX_create(); }
+static inline void EVP_MD_CTX_free(EVP_MD_CTX* ctx) { EVP_MD_CTX_destroy(ctx); }
+#endif
 
 namespace myframe {
 

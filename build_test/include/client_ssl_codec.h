@@ -37,7 +37,16 @@ public:
         switch (ssl_error) {
             case SSL_ERROR_WANT_READ:  _last_hs = SSL_HANDSHAKE_WANT_READ;  return SSL_HANDSHAKE_WANT_READ;
             case SSL_ERROR_WANT_WRITE: _last_hs = SSL_HANDSHAKE_WANT_WRITE; return SSL_HANDSHAKE_WANT_WRITE;
-            default: _last_hs = SSL_HANDSHAKE_ERROR; return SSL_HANDSHAKE_ERROR;
+            default: {
+                // Log SSL error details for debugging
+                unsigned long err = ERR_peek_error();
+                char err_buf[256] = {};
+                if (err) ERR_error_string_n(err, err_buf, sizeof(err_buf));
+                fprintf(stderr, "[SSL] Handshake failed: ssl_error=%d ssl_ret=%d err=%lu desc=%s\n",
+                        ssl_error, ret, err, err_buf);
+                _last_hs = SSL_HANDSHAKE_ERROR;
+                return SSL_HANDSHAKE_ERROR;
+            }
         }
     }
 

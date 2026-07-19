@@ -37,5 +37,5 @@ private:
 
     // Reasonable upper-bounds for detection phase
     static constexpr size_t kMaxDetectBytes = 4096;        // 4KB maximum sniff bytes
-    static constexpr uint64_t kDetectTimeoutMs = 5000;     // 5s default timeout
+    static constexpr uint64_t kDetectTimeoutMs = 5000;       // 5s default timeout
 };

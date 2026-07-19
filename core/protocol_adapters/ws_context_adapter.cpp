@@ -114,12 +114,12 @@ void* WsContextImpl::get_user_data(const std::string& key) const {
 }
 
 std::shared_ptr<base_net_obj> WsContextImpl::raw_connection() {
-    return _conn;
+    return _conn.lock();
 }
 
 ::base_net_thread* WsContextImpl::get_thread() const {
-    if (_conn) {
-        auto* container = _conn->get_net_container();
+    if (auto c = _conn.lock()) {
+        auto* container = c->get_net_container();
         if (container) {
             return container->get_owner_thread();
         }
@@ -241,18 +241,20 @@ void WsContextDataProcess::on_close() {
 }
 
 void WsContextImpl::add_timer(uint64_t timeout_ms, std::shared_ptr<::timer_msg> t_msg) {
-    if (_conn && t_msg) {
+    auto c = _conn.lock();
+    if (c && t_msg) {
         if (timeout_ms > 0) {
             uint64_t clamped = std::min<uint64_t>(timeout_ms, std::numeric_limits<uint32_t>::max());
             t_msg->_time_length = static_cast<uint32_t>(clamped);
         }
-        _conn->add_timer(t_msg);
+        c->add_timer(t_msg);
     }
 }
 
 void WsContextImpl::send_msg(std::shared_ptr<::normal_msg> msg) {
-    if (_conn && msg) {
-        ObjId target = _conn->get_id();
+    auto c = _conn.lock();
+    if (c && msg) {
+        ObjId target = c->get_id();
         base_net_thread::put_obj_msg(target, msg);
     }
 }

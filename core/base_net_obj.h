@@ -13,6 +13,12 @@ class base_net_obj: public std::enable_shared_from_this<base_net_obj>
 
         virtual ~base_net_obj();
 
+        // 进程级单调递增 generation, ctor 时一次性分配, 终身不变。
+        // 用途: epoll event payload = (generation<<32) | obj_id, 让 epoll_wait
+        // 拿到 event 后能 (a) 查 container 看对象是否还活着 (b) 比对 generation
+        // 防止 obj_id 被复用给新对象时把旧事件投递到新对象上。
+        uint32_t generation() const { return _generation; }
+
         virtual void event_process(int events) = 0;
 
         bool get_real_net();
@@ -75,6 +81,7 @@ class base_net_obj: public std::enable_shared_from_this<base_net_obj>
         uint64_t _last_active_ms{0};
         std::string _protocol_tag;
         bool _protocol_locked{false};
+        uint32_t _generation{0};
 };
 
 

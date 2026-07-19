@@ -164,14 +164,16 @@ int main(int argc, char** argv) {
               << " body_len=" << body.size() << "\n";
 
     // Expectation summary so test-runner / CI can grep for it
+    const bool expected_hostname_ok = !ip_authority && success && status == 200;
+    const bool expected_ip_rejected = ip_authority && success && (status == 403 || status == 404);
     if (ip_authority) {
         std::cerr << "[em_xdxr_test] verdict: " << (status == 200
             ? "UNEXPECTED 200 (server accepted IP authority — VHost may be lenient)"
-            : (status == 403 || status == 404
+            : (expected_ip_rejected
                 ? "EXPECTED non-2xx (server rejected IP authority, this is the anti-pattern proof)"
                 : "INCONCLUSIVE (status not 200/403/404)")) << "\n";
     } else {
-        std::cerr << "[em_xdxr_test] verdict: " << (status == 200
+        std::cerr << "[em_xdxr_test] verdict: " << (expected_hostname_ok
             ? "EXPECTED 200 (hostname authority works as intended)"
             : "REGRESSION (hostname authority should succeed — investigate framework)") << "\n";
     }
@@ -183,8 +185,7 @@ int main(int argc, char** argv) {
 
     th.stop();
     th.join_thread();
-    // Exit code: 0 only if the hostname-mode case succeeded. IP-mode is a
-    // diagnostic, so we don't fail CI on it; that's why we don't gate on
-    // ip_authority here.
-    return (success && status == 200) ? 0 : 4;
+    // Exit code: hostname mode passes on 200; IP-authority mode passes when the
+    // server rejects it as expected. Anything else needs investigation.
+    return (expected_hostname_ok || expected_ip_rejected) ? 0 : 4;
 }

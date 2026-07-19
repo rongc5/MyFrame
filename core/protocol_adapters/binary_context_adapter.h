@@ -58,7 +58,8 @@ public:
     bool get_pending_message(uint32_t& proto_id, std::string& data);
 
 private:
-    std::shared_ptr<base_net_obj> _conn;
+    // FIX(mem-leak): weak to break conn->process->_context->_conn->conn ref-cycle
+    std::weak_ptr<base_net_obj> _conn;
     State _state;
     uint32_t _proto_id;
     std::string _payload;

@@ -95,13 +95,17 @@ class out_connect:public base_connect<PROCESS>
 
         virtual void event_process(int event)
         {
-            if ((event & EPOLLERR) == EPOLLERR || (event & EPOLLHUP) == EPOLLHUP)
+            if ((event & EPOLLERR) == EPOLLERR)
             {
                 THROW_COMMON_EXCEPT("epoll error "<< strError(errno).c_str());
             }
 
             if (_status == CONNECTING)
             {
+                // HUP during connect is a real error
+                if ((event & EPOLLHUP) == EPOLLHUP) {
+                    THROW_COMMON_EXCEPT("connect hangup " << strError(errno).c_str());
+                }
                 // Robust completion check via SO_ERROR regardless of specific events
                 int err = 0; socklen_t elen = sizeof(err);
                 if (getsockopt(base_net_obj::_fd, SOL_SOCKET, SO_ERROR, &err, &elen) < 0) {
@@ -115,8 +119,12 @@ class out_connect:public base_connect<PROCESS>
                     THROW_COMMON_EXCEPT(std::string("connect failed after epoll: ") + strError(err));
                 }
             }
-            else 
+            else
             {
+                // Process reads/writes BEFORE checking HUP.
+                // On fast connections (localhost), the peer may send a complete
+                // response and close before we process it, causing EPOLLIN+EPOLLHUP
+                // to arrive together. Reading first ensures we get the response data.
                 if ((event & EPOLLIN) == EPOLLIN) //读
                 {
                     base_connect<PROCESS>::real_recv();
@@ -125,7 +133,13 @@ class out_connect:public base_connect<PROCESS>
                 if ((event & EPOLLOUT) == EPOLLOUT ) //写
                 {
                     base_connect<PROCESS>::real_send();
-                }	
+                }
+
+                if ((event & EPOLLHUP) == EPOLLHUP)
+                {
+                    this->_process->notify_peer_close();
+                    THROW_COMMON_EXCEPT("peer closed connection");
+                }
             }
         }
 

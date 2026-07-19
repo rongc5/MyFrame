@@ -17,6 +17,7 @@ class listen_process;
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <atomic>
 #include <mutex>
 
 class IFactory; // fwd
@@ -65,6 +66,13 @@ class base_net_thread:public base_thread
 
         // 仅供 put_obj_msg 内部使用，外部应通过 common_obj_container::get_owner_thread() 获取线程
         static base_net_thread * get_base_net_thread_obj(uint32_t thread_index);
+
+        // 热路径无锁解析 thread_index -> 线程指针。
+        // thread_index 是单调递增的小整数 (base_thread 启动期分配), 故用定长原子指针表做
+        // 无锁读; 超出表范围 (动态创建超多线程的边角场景) 回退到加锁 map。
+        static base_net_thread * resolve_thread(uint32_t thread_index);
+        static constexpr uint32_t FAST_SLOT_COUNT = 256;
+        static std::atomic<base_net_thread *> _fast_slots[FAST_SLOT_COUNT];
 
         static std::unordered_map<uint32_t, base_net_thread *> _base_net_thread_map;
         static std::mutex _thread_map_mutex;

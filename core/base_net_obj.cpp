@@ -7,6 +7,13 @@
 #include "base_data_process.h"
 #include "common_util.h"
 
+#include <atomic>
+
+// 进程级单调 generation counter. 每个 base_net_obj ctor 取一个新值。
+// 跟 ObjId 不同: ObjId 由 container::gen_id_str() 分配并可在 erase 后**复用**
+// 给新对象, 但 generation 永远不复用。
+// pre-increment 从 1 开始 (0 保留作 "未初始化" 哨兵).
+static std::atomic<uint32_t> g_obj_generation_counter{0};
 
 base_net_obj::base_net_obj()
 {
@@ -20,11 +27,11 @@ base_net_obj::base_net_obj()
     _p_net_container = NULL;
     _real_net = false;
     _last_active_ms = GetMilliSecond();
+    _generation = ++g_obj_generation_counter;  // 1-based, 永不为 0
 }
 
 base_net_obj::~base_net_obj()
 {
-
     try {
         if (_p_net_container) {
             common_epoll * p_epoll = _p_net_container->get_epoll();
@@ -53,11 +60,15 @@ void base_net_obj::set_net_container(common_obj_container *p_net_container)
     std::shared_ptr<base_net_obj> p=std::dynamic_pointer_cast<base_net_obj>(shared_from_this());
 
     try {
-        // Only add to epoll when we have a valid socket fd
+        // 必须先 insert (它内部调 set_id 分配 obj_id), 后 add_to_epoll —
+        // 因为 add_to_epoll 把 (generation<<32) | obj_id 存到 epoll_event.data.u64,
+        // 给 epoll_wait 回查 container 用; 顺序倒了 obj_id 还是 0, 查不到。
+        // 副作用红利: 如果 add_to_epoll 失败, obj 还在 container 里, 析构时正常
+        // 走 ~base_net_obj 清理 — 不会留 "在 epoll 里但不在 container 里" 的孤儿。
+        _p_net_container->insert(p);
         if (_fd > 0) {
             p_epoll->add_to_epoll(p.get());
         }
-        _p_net_container->insert(p);
         add_timer();
     }
     catch (std::exception &e)

@@ -6,6 +6,7 @@
 #include "common_util.h"
 
 class base_net_obj;
+class common_obj_container;
 class common_epoll
 {
     public:
@@ -15,7 +16,12 @@ class common_epoll
             _epoll_events = NULL;
             _epoll_size = 0;
             _epoll_wait_time = DEFAULT_EPOLL_WAITE;
+            _owner_container = NULL;
         }
+
+        // 关联 owner container, 给 epoll_wait 用 id->shared_ptr 查活对象。
+        // 必须在 common_obj_container ctor 里 init() 之后立即调一次。
+        void attach_container(common_obj_container * c) { _owner_container = c; }
 
         ~common_epoll()
         {
@@ -85,6 +91,7 @@ class common_epoll
         struct epoll_event *_epoll_events;
         uint32_t _epoll_size;
         int _epoll_wait_time;
+        common_obj_container * _owner_container;  // 反向引用, 不持有所有权
 
         void cleanup()
         {

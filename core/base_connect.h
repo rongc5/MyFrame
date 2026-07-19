@@ -51,6 +51,12 @@ class base_connect:public base_net_obj
 #endif
             )
             {
+                // FIX(fd-leak): the RECV EOF path calls notify_peer_close() before
+                // teardown so the application layer releases its hold on the
+                // connection. The EPOLLRDHUP/ERR/HUP path here historically threw
+                // WITHOUT it, leaving the conn referenced by the app layer -> the
+                // object never destructs -> fd leaks in CLOSE_WAIT. Fire it here too.
+                if (_process) _process->notify_peer_close();
                 THROW_COMMON_EXCEPT("epoll error "<< strError(errno).c_str());
             }
 
@@ -92,6 +98,16 @@ class base_connect:public base_net_obj
             {
                 _process->destroy();
             }
+            // FIX(fd-leak): close the fd on teardown immediately. App/session-layer
+            // shared_ptr refs can outlive this teardown and delay ~base_net_obj,
+            // leaving the fd stuck in CLOSE_WAIT (fd exhaustion -> crash). Detach
+            // from epoll + close now; ~base_net_obj's close becomes a no-op.
+            if (_p_net_container) {
+                if (auto* ep = _p_net_container->get_epoll()) {
+                    try { ep->del_from_epoll(this); } catch (...) {}
+                }
+            }
+            if (_fd != 0) { ::close(_fd); _fd = 0; }
         }
 
         PROCESS * process()
@@ -236,7 +252,19 @@ class base_connect:public base_net_obj
             // If protocol doesn't want to receive, and there is no codec
             // that may still need read events (e.g., TLS handshake), skip.
             if (_process && !_process->want_recv() && !_codec) {
-                // Protocol not ready to receive (e.g., HTTP client still sending)
+                // Protocol not ready to receive (e.g., HTTP client still sending).
+                // FIX(fd-leak): under EPOLLET the readable edge fires once. If the
+                // peer closed (FIN), returning here without reading means we never
+                // see EOF and the fd leaks in CLOSE_WAIT. Peek for EOF and tear the
+                // connection down if the peer has closed.
+                {
+                    char _eof_probe;
+                    ssize_t _pr = ::recv(_fd, &_eof_probe, 1, MSG_DONTWAIT | MSG_PEEK);
+                    if (_pr == 0) {
+                        _process->notify_peer_close();
+                        THROW_COMMON_EXCEPT("peer closed while idle (no want_recv), fd=" << _fd);
+                    }
+                }
                 return;
             }
             size_t _recv_buf_len = _recv_buf.length();

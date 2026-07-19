@@ -6,10 +6,15 @@
 
 class base_timer;
 class common_domain;
+class base_net_thread;
 class common_obj_container
 {
     public:
         common_obj_container(uint32_t thread_index, uint32_t epoll_size=DAFAULT_EPOLL_SIZE);
+
+        // 设置/获取所属线程（避免通过全局 map 查找）
+        void set_owner_thread(base_net_thread* owner) { _owner_thread = owner; }
+        base_net_thread* get_owner_thread() const { return _owner_thread; }
 
         ~common_obj_container();
 
@@ -50,6 +55,7 @@ class common_obj_container
         base_timer * _timer;
         common_domain * _domain;
         ObjId _id_str;
+        base_net_thread* _owner_thread{nullptr};
 };
 
 #endif

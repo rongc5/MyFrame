@@ -59,7 +59,8 @@ public:
 
 private:
     http_base_process* _process;
-    std::shared_ptr<base_net_obj> _conn;
+    // FIX(mem-leak): weak to break ref-cycle conn->unique_ptr<HttpContextAdapter>->_context->_conn->conn
+    std::weak_ptr<base_net_obj> _conn;
     HttpRequest _request;
     HttpResponse _response;
     std::map<std::string, void*> _user_data;

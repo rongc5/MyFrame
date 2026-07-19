@@ -7,6 +7,7 @@
 #include "base_net_obj.h"
 #include "base_data_process.h"
 #include "base_net_thread.h"
+#include "common_obj_container.h"
 #include "common_def.h"
 #include <functional>
 #include <map>
@@ -367,8 +368,8 @@ inline ::base_net_thread* IProtocolHandler::get_current_thread() const {
         return nullptr;
     }
 
-    const ObjId& id = net->get_id();
-    return base_net_thread::get_base_net_thread_obj(id._thread_index);
+    auto* container = net->get_net_container();
+    return container ? container->get_owner_thread() : nullptr;
 }
 
 inline ObjId IProtocolHandler::current_connection_id() const {

@@ -11,6 +11,8 @@ common_obj_container::common_obj_container(uint32_t thread_index, uint32_t epoll
 {
     _p_epoll = new common_epoll();
     _p_epoll->init(epoll_size);
+    // 反向引用: 给 epoll_wait 用 obj_id->shared_ptr 查活对象, 不再解引用 raw pointer.
+    _p_epoll->attach_container(this);
 
     _timer = new base_timer(this);
 
@@ -27,10 +29,21 @@ common_obj_container::~common_obj_container()
         k.second->destroy();
     }
 
+    // 强制 drop container 持有的 shared_ptr<base_net_obj> refs, 让真正的
+    // ~base_net_obj() 在这里跑 — 它内部会调 common_epoll::del_from_epoll(_p_epoll),
+    // 必须在 _p_epoll 还有效时完成。real-net 对象同时存在于 _obj_map 和
+    // _obj_net_map, 两个 map 都必须在 delete _p_epoll 前清掉。
+    //
+    // 修复前的 UAF: clear() 没调 → 函数体结束后 C++ 才析构 map 成员, 那时
+    // _p_epoll 已 delete → del_from_epoll 读 freed memory → 堆 metadata 被踩花。
+    // valgrind 2026-05-27 锁定; 触发路径: DictUpdateThread::httpGet 每 60s 一次。
+    _obj_net_map.clear();
+    _obj_map.clear();
+
     if (_p_epoll != NULL)
         delete _p_epoll;
 
-    if (_timer) 
+    if (_timer)
         delete _timer;
 
     if (_domain)

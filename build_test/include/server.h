@@ -11,6 +11,7 @@ class IFactory;
 class ListenFactory;
 class MultiProtocolFactory;
 class IThreadPlugin;
+namespace myframe { class UnifiedProtocolFactory; }
 
 class server {
 public:
@@ -50,6 +51,7 @@ private:
     std::shared_ptr<IFactory> _factory;
     std::shared_ptr<IFactory> _acceptor;
     std::vector<std::shared_ptr<MultiProtocolFactory>> _worker_factories;
+    std::vector<std::shared_ptr<myframe::UnifiedProtocolFactory>> _unified_worker_factories;
     std::vector<base_net_thread*> _workers;
     base_net_thread* _listen;
     

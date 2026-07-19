@@ -20,6 +20,11 @@ class base_data_process
 
         virtual size_t process_recv_buf(const char *buf, size_t len);
 
+        // 每个事件循环 tick 调用一次 (obj_process 遍历时), 与是否有可读数据无关。
+        // 默认空操作; channel_data_process 用它做"无条件排空队列", 保证即使唤醒字节
+        // 丢失也能在一个 epoll 超时内处理掉积压消息 (参考 rxlogger 的 obj_process 模型)。
+        virtual void on_tick() {}
+
         virtual void handle_msg(std::shared_ptr<normal_msg> & p_msg);
 
         void add_timer(std::shared_ptr<timer_msg> & t_msg);

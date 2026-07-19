@@ -121,6 +121,10 @@ public:
     // 获取注册的协议名称列表
     std::vector<std::string> get_protocol_names() const;
 
+    // 创建一份浅拷贝（共享协议注册信息，_container 由 net_thread_init 重新绑定）
+    // 用于 server per-worker 克隆，避免多线程共享 _container
+    std::shared_ptr<UnifiedProtocolFactory> clone_for_thread() const;
+
     // ========================================================================
     // 协议条目（公开给 ProtocolDetector 使用）
     // ========================================================================
