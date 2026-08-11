@@ -16,6 +16,7 @@ lib/
 *.exe
 *.app
 test/test_*
+!test/test_http_header.cpp
 test/simple_*
 test/https_*
 test/quick_*
