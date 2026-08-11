@@ -111,8 +111,16 @@ void http_res_process::parse_header(std::string & recv_head)
             std::vector<std::string> tmp_vec;
             SplitString(strList[i].c_str(), ":", &tmp_vec, SPLIT_MODE_ONE);
             if (2 == tmp_vec.size()) {
-                _req_head_para._headers.insert(make_pair(tmp_vec[0], tmp_vec[1]));
-                PDEBUG("%s: %s", tmp_vec[0].c_str(), tmp_vec[1].c_str());
+                // 去掉冒号后值的前后 OWS（RFC7230：Name: OWS value OWS），否则 "Authorization: Bearer x"
+                // 会带前导空格 " Bearer x"，消费方 rfind("Bearer ",0) 匹配失败。
+                std::string k = tmp_vec[0], v = tmp_vec[1];
+                size_t a = v.find_first_not_of(" \t");
+                size_t b = v.find_last_not_of(" \t");
+                v = (a == std::string::npos) ? std::string() : v.substr(a, b - a + 1);
+                size_t kb = k.find_last_not_of(" \t");
+                if (kb != std::string::npos) k = k.substr(0, kb + 1);
+                _req_head_para._headers.insert(make_pair(k, v));
+                PDEBUG("%s: %s", k.c_str(), v.c_str());
             }
         }
     }
