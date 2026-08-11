@@ -22,8 +22,17 @@ template <class T> T* get_ext(const std::string& key) const;   // 不存在/类�
   typedef typename std::remove_cv<typename std::remove_reference<T>::type>::type StoredType;
   ```
   避免 `Principal` / `const Principal` / `Principal&` 被当成不同类型。
-- `set_user_data/get_user_data(void*)` 保留但 `[[deprecated("use set_ext<T>() instead")]]`；
-  新 Router/Middleware/示例禁止再用，下个破坏性版本删除。
+- `set_user_data/get_user_data(void*)` 保留但标注弃用；新 Router/Middleware/示例禁止再用，下个破坏性版本删除。
+  - **C++11 兼容**：`[[deprecated]]` 是 C++14，公开头用兼容宏：
+    ```cpp
+    #if __cplusplus >= 201402L
+    #  define MYFRAME_DEPRECATED(msg) [[deprecated(msg)]]
+    #elif defined(__GNUC__) || defined(__clang__)
+    #  define MYFRAME_DEPRECATED(msg) __attribute__((deprecated(msg)))
+    #else
+    #  define MYFRAME_DEPRECATED(msg)
+    #endif
+    ```
 
 ## 2. 异步生命周期（提交1）—— 两阶段 API
 
@@ -124,7 +133,7 @@ ctx.response().set_json(*j);             // set_json 增加 Document 重载；�
 仓库无现成通用阻塞任务池：`base_net_thread::_worker_pool` 是**网络线程集合**，不是业务任务池。
 新增 **`TaskExecutor`** 抽象（由 HTTP factory/context 共享，**非裸全局单例**）：
 - 进程级**固定线程数**；
-- **有界任务队列** + 队列满**拒绝策略**（拒绝即视为异步失败，见 6.2 → 500，不得每请求建线程）；
+- **有界任务队列** + 队列满**拒绝策略**（拒绝即视为异步失败 → **503 Service Unavailable**，见 6.2；不得每请求建线程）；
 - 停机：停止接收新任务，等待或取消在飞任务；
 - `work` 因拒绝**未执行**时，也必须让该 HTTP 请求被 finalize（不能永远 pending）；
 - **禁止每请求创建线程**。
@@ -137,8 +146,13 @@ void async_response(std::function<R()> work,
                     std::function<void(HttpContext&, AsyncResult<R>)> done);
 // AsyncResult<R>: 成功(值) | 异常(exception_ptr) | 被拒绝
 ```
-- 框架统一捕获 `std::exception_ptr`；`done` 在网络线程按结果生成响应，未处理异常 → 标准 500。
+- 框架统一捕获 `std::exception_ptr`；`done` 在网络线程按结果生成响应。
+- **错误码映射（区分来源）**：
+  - **执行器队列拒绝**（work 未执行）→ **503 Service Unavailable**；
+  - **work 自身抛异常**（业务错误）→ **500 Internal Server Error**（done 可覆盖）。
 - **保证**：成功 / 异常 / 队列拒绝，request 都**只 finalize 一次**。
+- **`AsyncResult<void>`**：`R=void` 无值，需**单独特化**（只携带成功/异常/拒绝，不带值）
+  或在接口层**明确禁止 `R=void`**（`static_assert`）。二选一，v1 建议提供 void 特化。
 
 ### 6.3 模板接口的类型擦除落点
 `HttpContext` 是抽象接口，**模板不能是虚函数**。统一"模板包装器 → 非模板虚函数"：
