@@ -56,3 +56,8 @@ make
 ## Documentation
 
 Key references live in `docs/` (design, async response guide, timer quick reference, TLS setup, and feature lists).
+
+### HTTP 改进（进行中）
+
+- [docs/http-improvement-roadmap.md](docs/http-improvement-roadmap.md) — Router/Middleware/Context 改进路线与分阶段提交
+- [docs/http-router-rfc.md](docs/http-router-rfc.md) — Router / Middleware / Context / 异步生命周期设计
