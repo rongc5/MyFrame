@@ -134,6 +134,7 @@ add_custom_command(TARGET myframe POST_BUILD
 )
 
 # Test targets - optional
+enable_testing()   # 启用 CTest，使 test/ 内的 add_test() 生效（ctest --output-on-failure）
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt")
     add_subdirectory(test)
 endif()
