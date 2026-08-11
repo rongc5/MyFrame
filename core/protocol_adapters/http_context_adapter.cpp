@@ -16,7 +16,7 @@ namespace myframe {
 // ============================================================================
 
 HttpContextImpl::HttpContextImpl(http_base_process* process, std::shared_ptr<base_net_obj> conn)
-    : _process(process), _conn(conn), _streaming_enabled(false) {
+    : _process(process), _conn(conn), _streaming_enabled(false), _request_generation(0) {
     // ��ʼ��������Ϣ
     if (conn) {
         // ע��base_net_obj ��ǰ���ṩ IP/�˿ڷ��ʽӿ�
@@ -31,6 +31,30 @@ HttpContextImpl::HttpContextImpl(http_base_process* process, std::shared_ptr<bas
 HttpContextImpl::~HttpContextImpl() {
     // �����û�����
     _user_data.clear();
+}
+
+void HttpContextImpl::set_ext_erased(const std::string& key, std::type_index ti, std::shared_ptr<void> val) {
+    std::unordered_map<std::string, std::pair<std::type_index, std::shared_ptr<void> > >::iterator it = _ext.find(key);
+    if (it != _ext.end()) { it->second.first = ti; it->second.second = std::move(val); }
+    else { _ext.emplace(key, std::make_pair(ti, std::move(val))); }
+}
+
+std::shared_ptr<void> HttpContextImpl::get_ext_erased(const std::string& key, std::type_index ti) const {
+    std::unordered_map<std::string, std::pair<std::type_index, std::shared_ptr<void> > >::const_iterator it = _ext.find(key);
+    if (it == _ext.end() || it->second.first != ti) return std::shared_ptr<void>();
+    return it->second.second;
+}
+
+uint64_t HttpContextImpl::request_generation() const { return _request_generation; }
+
+// 新请求开始时重置：清 response/extensions/user_data/streaming，++generation。
+// 杜绝 Keep-Alive 下上一请求的租户身份/响应残留泄漏进下一请求。
+void HttpContextImpl::reset_for_request() {
+    _response = HttpResponse();
+    _ext.clear();
+    _user_data.clear();
+    _streaming_enabled = false;
+    ++_request_generation;
 }
 
 const HttpRequest& HttpContextImpl::request() const {
@@ -225,6 +249,9 @@ std::string* HttpContextDataProcess::get_send_body(int& result) {
 
 void HttpContextDataProcess::msg_recv_finish() {
     if (!_handler || !_context) return;
+
+    // 每个请求开始先重置上下文（Keep-Alive 复用连接时防跨请求泄漏）
+    _context->reset_for_request();
 
     try {
         // ���������Ϣ��ֱ�ӷ���˽�г�Ա����Ϊ�� friend��

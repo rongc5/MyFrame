@@ -17,6 +17,7 @@ lib/
 *.app
 test/test_*
 !test/test_http_header.cpp
+!test/test_http_context.cpp
 test/simple_*
 test/https_*
 test/quick_*

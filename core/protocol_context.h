@@ -15,6 +15,20 @@
 #include <vector>
 #include <cstdint>
 #include <memory>
+#include <typeindex>
+#include <utility>
+#include <type_traits>
+
+// C++11 兼容的弃用标注（[[deprecated]] 是 C++14）
+#ifndef MYFRAME_DEPRECATED
+#  if __cplusplus >= 201402L
+#    define MYFRAME_DEPRECATED(msg) [[deprecated(msg)]]
+#  elif defined(__GNUC__) || defined(__clang__)
+#    define MYFRAME_DEPRECATED(msg) __attribute__((deprecated(msg)))
+#  else
+#    define MYFRAME_DEPRECATED(msg)
+#  endif
+#endif
 
 namespace myframe {
 
@@ -70,10 +84,30 @@ public:
     // ========== �û����ݴ洢 ==========
 
     // �洢�û��Զ�������
+    MYFRAME_DEPRECATED("use set_ext<T>() instead")
     virtual void set_user_data(const std::string& key, void* data) = 0;
 
-    // ��ȡ�û��Զ�������
+    MYFRAME_DEPRECATED("use get_ext<T>() instead")
     virtual void* get_user_data(const std::string& key) const = 0;
+
+    // ===== 类型安全请求扩展（拥有对象；每请求 reset_for_request 清空）=====
+    template <class T, class... A>
+    T& set_ext(const std::string& key, A&&... args) {
+        typedef typename std::remove_cv<typename std::remove_reference<T>::type>::type S;
+        std::shared_ptr<S> p = std::make_shared<S>(std::forward<A>(args)...);
+        set_ext_erased(key, std::type_index(typeid(S)), std::static_pointer_cast<void>(p));
+        return *p;
+    }
+    template <class T>
+    T* get_ext(const std::string& key) const {
+        typedef typename std::remove_cv<typename std::remove_reference<T>::type>::type S;
+        std::shared_ptr<void> v = get_ext_erased(key, std::type_index(typeid(S)));
+        return v ? static_cast<S*>(v.get()) : nullptr;
+    }
+    virtual void set_ext_erased(const std::string& key, std::type_index ti, std::shared_ptr<void> val) = 0;
+    virtual std::shared_ptr<void> get_ext_erased(const std::string& key, std::type_index ti) const = 0;
+    // 当前请求代号（Keep-Alive 每请求 ++；异步回投据此判断是否已换请求）
+    virtual uint64_t request_generation() const = 0;
 
     // ========== �ײ���� ==========
 

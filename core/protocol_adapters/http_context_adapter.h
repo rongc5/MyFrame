@@ -8,6 +8,9 @@
 #include "../http_base_data_process.h"
 #include <memory>
 #include <map>
+#include <unordered_map>
+#include <typeindex>
+#include <utility>
 #include <thread>
 #include <queue>
 
@@ -42,6 +45,11 @@ public:
 
     void set_user_data(const std::string& key, void* data) override;
     void* get_user_data(const std::string& key) const override;
+    void set_ext_erased(const std::string& key, std::type_index ti, std::shared_ptr<void> val) override;
+    std::shared_ptr<void> get_ext_erased(const std::string& key, std::type_index ti) const override;
+    uint64_t request_generation() const override;
+    // 内部：新请求开始时重置（清 response/extensions/user_data/streaming，++generation）
+    void reset_for_request();
 
     ConnectionInfo& connection_info() override;
     std::shared_ptr<base_net_obj> raw_connection() override;
@@ -64,6 +72,8 @@ private:
     HttpRequest _request;
     HttpResponse _response;
     std::map<std::string, void*> _user_data;
+    std::unordered_map<std::string, std::pair<std::type_index, std::shared_ptr<void> > > _ext;
+    uint64_t _request_generation;
     ConnectionInfo _conn_info;
     bool _streaming_enabled;
 };
