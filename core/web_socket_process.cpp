@@ -76,6 +76,13 @@ void web_socket_process::handle_timeout(std::shared_ptr<timer_msg> & t_msg)
         return ;
     }
 
+    // 2026-08-02: 连接销毁期间残留定时器仍会派发到这里, _p_data_process 可能已释放
+    // (对端在 WS 握手完成后立即关闭时触发, SIGSEGV backtrace: base_connect::destroy
+    //  -> handle_timeout). 与 handle_msg 同样判空防护。
+    if (!_p_data_process) {
+        return ;
+    }
+
     _p_data_process->handle_timeout(t_msg);
 }
 
