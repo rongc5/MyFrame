@@ -17,7 +17,10 @@ template <class T, class... A> T& set_ext(const std::string& key, A&&... args);
 template <class T> T* get_ext(const std::string& key) const;   // 不存在/类型不符返回 nullptr
 ```
 - 底层：`unordered_map<string, {type_index, shared_ptr<void>}>`；`get_ext<T>` 校验 type_index。
-- **类型归一**：内部统一 `using StoredType = std::remove_cv_t<std::remove_reference_t<T>>;`，
+- **类型归一**：内部统一（**保持公开头 C++11 兼容**，不用 `remove_cv_t`）：
+  ```cpp
+  typedef typename std::remove_cv<typename std::remove_reference<T>::type>::type StoredType;
+  ```
   避免 `Principal` / `const Principal` / `Principal&` 被当成不同类型。
 - `set_user_data/get_user_data(void*)` 保留但 `[[deprecated("use set_ext<T>() instead")]]`；
   新 Router/Middleware/示例禁止再用，下个破坏性版本删除。
@@ -115,10 +118,53 @@ ctx.response().set_json(*j);             // set_json 增加 Document 重载；�
 4. **`set_user_data(void*)`**：保留 + `[[deprecated]]`，下个破坏性版本删。
 5. **Header 修复单独提交（提交0）**，不并入 Context 提交；便于 review/回滚/bisect。
 
+## 6. 提交1 接口契约（实现前必须定清）
+
+### 6.1 执行器契约（TaskExecutor）
+仓库无现成通用阻塞任务池：`base_net_thread::_worker_pool` 是**网络线程集合**，不是业务任务池。
+新增 **`TaskExecutor`** 抽象（由 HTTP factory/context 共享，**非裸全局单例**）：
+- 进程级**固定线程数**；
+- **有界任务队列** + 队列满**拒绝策略**（拒绝即视为异步失败，见 6.2 → 500，不得每请求建线程）；
+- 停机：停止接收新任务，等待或取消在飞任务；
+- `work` 因拒绝**未执行**时，也必须让该 HTTP 请求被 finalize（不能永远 pending）；
+- **禁止每请求创建线程**。
+
+### 6.2 work 异常语义（request 只 finalize 一次）
+`work()` 抛异常/队列拒绝**不得让请求永远 pending**。两阶段接口把"结果或异常"都投回网络线程：
+```cpp
+template <class R>
+void async_response(std::function<R()> work,
+                    std::function<void(HttpContext&, AsyncResult<R>)> done);
+// AsyncResult<R>: 成功(值) | 异常(exception_ptr) | 被拒绝
+```
+- 框架统一捕获 `std::exception_ptr`；`done` 在网络线程按结果生成响应，未处理异常 → 标准 500。
+- **保证**：成功 / 异常 / 队列拒绝，request 都**只 finalize 一次**。
+
+### 6.3 模板接口的类型擦除落点
+`HttpContext` 是抽象接口，**模板不能是虚函数**。统一"模板包装器 → 非模板虚函数"：
+```cpp
+// async：
+template <class R> void async_response(work, done);      // public 模板包装（头文件）
+virtual void async_response_erased(std::function<void()> work_thunk,
+                                   std::function<void(HttpContext&)> done_thunk) = 0; // Impl 实现
+// extensions：
+template <class T,class...A> T& set_ext(key,A&&...);      // 包装
+template <class T> T* get_ext(key) const;                // 包装
+virtual void  set_ext_erased(key, std::type_index, std::shared_ptr<void>) = 0;
+virtual std::shared_ptr<void> get_ext_erased(key, std::type_index) const = 0;
+```
+模板包装器负责类型归一 + 打包/校验，虚函数只存取已擦除的 entry。
+
+### 6.4 C++ 标准
+仓库现状冲突：CMakeLists=C++17、docs/AGENTS.md=C++11、test/run_integration_test.sh=C++11。
+- **本轮公开头文件尽量 C++11 兼容**（如 6.1-6.3 与 StoredType 写法）；
+- C++ 标准统一**单独处理**，不混进 Context 安全提交。
+
 ## 提交次序（最终）
 
 - **提交0** `fix(http): normalize header OWS and support case-insensitive lookup`
-- **提交1** `fix(http): make request context and async lifetime safe`（reset + typed ext + 两阶段 async + generation）
+- **提交0.1** `build(cmake): make examples reproducible from a clean checkout` + `test(http): header OWS/case regression`
+- **提交1** `fix(http): make request context and async lifetime safe`（reset + typed ext + 两阶段 async + generation；接口契约见 §6）
 - **提交2** `feat(http): add router and path parameters`
 - **提交3** `feat(http): add middleware and JSON helpers`
 - **提交4** `refactor(energyhub): migrate customer and ops handlers`
