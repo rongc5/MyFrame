@@ -4,7 +4,6 @@
 #include "http_router.h"
 #include "protocol_adapters/http_context_adapter.h"   // 用真实 HttpContextImpl 调用 handler 验证身份
 #include <atomic>
-#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -159,6 +158,17 @@ int main() {
         try { r.get("/b", mk(2)); } catch (const std::exception&) { threw = true; }
         CHECK(threw);
         CHECK(r.frozen());
+    }
+    // 8b) freeze 后，已保存的 Route 代理不得再挂载 middleware（防冻结绕过）
+    {
+        Router r;
+        Router::Route route = r.get("/x", mk(1));   // 保存代理
+        r.freeze();
+        bool t1 = false, t2 = false, t3 = false;
+        try { route.use(Middleware(BeforeMiddleware(), AfterMiddleware())); } catch (const std::exception&) { t1 = true; }
+        try { route.use_before([](HttpContext&) { return true; }); } catch (const std::exception&) { t2 = true; }
+        try { route.use_after([](HttpContext&, CompletionReason) {}); } catch (const std::exception&) { t3 = true; }
+        CHECK(t1 && t2 && t3);
     }
 
     // ---- 9) 并发只读匹配：freeze 后多线程 match 结果正确、无崩溃 ----

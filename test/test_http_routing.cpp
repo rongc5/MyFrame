@@ -5,6 +5,8 @@
 #include "server.h"
 #include "unified_protocol_factory.h"
 #include "http_routing_handler.h"
+#include "http_json.h"
+#include "protocol_adapters/http_context_adapter.h"   // 单元级：直接调 on_http_request
 
 #include <chrono>
 #include <cstdio>
@@ -74,6 +76,75 @@ static int req(unsigned short port, const std::string& method, const std::string
 }
 
 int main(int argc, char** argv) {
+    using myframe::HttpContext;
+    using myframe::HttpContextImpl;
+    using myframe::Router;
+    using myframe::MiddlewareChain;
+    using myframe::Middleware;
+    using myframe::BeforeMiddleware;
+    using myframe::AfterMiddleware;
+    using myframe::CompletionReason;
+    using myframe::RoutingHandler;
+    using myframe::RoutingOptions;
+
+    // ===== 单元级：路由级 middleware 真正进入 MiddlewareChain（短路语义 + after-once）=====
+    // 证明 route 级 before 短路时：reason=ShortCircuited、handler 不跑、route+global after 逆序各一次。
+    {
+        Router r;
+        std::string log;
+        r.get("/g", [&log](HttpContext& c) { log += "H"; c.response().set_text("ok"); })
+            .use(Middleware(
+                [&log](HttpContext& c) -> bool {
+                    log += "a";
+                    if (c.request().get_header("X-Auth") != "y") { c.response().status = 401; return false; }
+                    return true;
+                },
+                [&log](HttpContext&, CompletionReason) { log += "A"; }));   // 路由级 after
+        r.freeze();
+
+        MiddlewareChain chain;
+        CompletionReason greason = CompletionReason::Success;
+        chain.use(Middleware(BeforeMiddleware(),
+            [&log, &greason](HttpContext&, CompletionReason rr) { log += "G"; greason = rr; }));  // 全局 after
+        RoutingHandler h(r, chain);
+
+        // 无 X-Auth → 路由 before 短路 401；handler 不跑；after 逆序 route(A) 先于 global(G)；reason=ShortCircuited
+        {
+            HttpContextImpl ctx(0, 0);
+            ctx.mutable_request().method = "GET"; ctx.mutable_request().url = "/g";
+            log.clear(); h.on_http_request(ctx);
+            CHECK(ctx.response().status == 401);
+            CHECK(log == "aAG");
+            CHECK(greason == CompletionReason::ShortCircuited);
+        }
+        // 有 X-Auth → 通过：before a → handler H → after A,G；reason=Success
+        {
+            HttpContextImpl ctx(0, 0);
+            ctx.mutable_request().method = "GET"; ctx.mutable_request().url = "/g";
+            ctx.mutable_request().headers["X-Auth"] = "y";
+            log.clear(); h.on_http_request(ctx);
+            CHECK(ctx.response().status == 200);
+            CHECK(log == "aHAG");
+            CHECK(greason == CompletionReason::Success);
+        }
+    }
+    // ===== 单元级：render_error 可配置（业务覆盖 404 文案，不改框架默认）=====
+    {
+        Router r; r.get("/x", [](HttpContext& c) { c.response().set_text("x"); }); r.freeze();
+        MiddlewareChain chain;
+        RoutingOptions opt;
+        opt.render_error = [](HttpContext& c, int st, const std::string& code) {
+            if (code == "not_found") myframe::json_error(c.response(), 404, "not found");
+            else myframe::json_error(c.response(), st, code);
+        };
+        RoutingHandler h(r, chain, opt);
+        HttpContextImpl ctx(0, 0);
+        ctx.mutable_request().method = "GET"; ctx.mutable_request().url = "/nope";
+        h.on_http_request(ctx);
+        CHECK(ctx.response().status == 404);
+        CHECK(ctx.response().body == "{\"error\":\"not found\"}");   // 业务覆盖生效
+    }
+
     unsigned short port = (argc > 1) ? (unsigned short)std::atoi(argv[1]) : 18077;
 
     myframe::Router router;
@@ -155,7 +226,7 @@ int main(int argc, char** argv) {
     {
         std::string h4, b4, h0, b0;
         CHECK(req(port, "GET", "/nope", &b4, &h4) == 404);
-        CHECK(b4 == "{\"error\":\"not found\"}");                 // 404 文案沿用 "not found"
+        CHECK(b4 == "{\"error\":\"not_found\"}");                 // 框架默认中性错误码（业务可经 render_error 覆盖）
         CHECK(h4.find("X-After: 1") != std::string::npos);
         CHECK(req(port, "GET", "/devices/%zz", &b0, &h0) == 400); // 非法百分号编码
         CHECK(h0.find("X-After: 1") != std::string::npos);

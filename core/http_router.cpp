@@ -7,6 +7,14 @@ namespace myframe {
 
 Router::Router() : _frozen(false) {}
 
+// 冻结后禁止再挂载路由级 middleware（防止已保存的 Route 代理绕过 freeze 改动内部 vector）。
+Router::Route& Router::Route::use(Middleware mw) {
+    if (owner_ && owner_->_frozen)
+        throw std::runtime_error("Router::Route::use() after freeze()");
+    if (entry_) entry_->mws.push_back(std::move(mw));
+    return *this;
+}
+
 // ---- 分段辅助 ----
 
 // 去掉全部尾部 '/'（根 "/" 归一为空段序列）。
@@ -72,7 +80,7 @@ bool Router::percent_decode(const std::string& in, std::string& out) {
 
 // ---- 注册 ----
 
-Router& Router::add(const std::string& method, const std::string& path, RouteHandler h) {
+Router::Route Router::add(const std::string& method, const std::string& path, RouteHandler h) {
     if (_frozen) throw std::runtime_error("Router::add after freeze(): " + method + " " + path);
 
     std::vector<std::string> segs = split_template(path);
@@ -111,8 +119,9 @@ Router& Router::add(const std::string& method, const std::string& path, RouteHan
     }
     if (node->methods.find(method) != node->methods.end())
         throw std::runtime_error("Router: duplicate route " + method + " " + path);
-    node->methods[method] = std::move(h);
-    return *this;
+    Entry& e = node->methods[method];
+    e.handler = std::move(h);
+    return Route(this, &e);
 }
 
 void Router::freeze() { _frozen = true; }
@@ -162,16 +171,17 @@ MatchResult Router::match(const std::string& method, const std::string& raw_path
     const Node* term = match_node(&_root, segs, 0, params);
     if (!term) { res.status = MatchStatus::NotFound; return res; }
 
-    std::map<std::string, RouteHandler>::const_iterator m = term->methods.find(method);
+    std::map<std::string, Entry>::const_iterator m = term->methods.find(method);
     if (m != term->methods.end()) {
         res.status = MatchStatus::Found;
-        res.handler = m->second;
+        res.handler = m->second.handler;
+        res.route_mws = &m->second.mws;          // 指向 Router 内部；freeze 后只读稳定
         res.params.swap(params);
         return res;
     }
     // 路径匹配但方法不符 → 405 + Allow（map 键天然去重且字典序稳定）
     res.status = MatchStatus::MethodNotAllowed;
-    for (std::map<std::string, RouteHandler>::const_iterator k = term->methods.begin();
+    for (std::map<std::string, Entry>::const_iterator k = term->methods.begin();
          k != term->methods.end(); ++k)
         res.allow.push_back(k->first);
     return res;

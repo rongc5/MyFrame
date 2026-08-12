@@ -70,6 +70,15 @@ enum class CompletionReason { Success, Error, ShortCircuited, Disconnected };
 typedef std::function<bool(HttpContext&)> BeforeMiddleware;
 typedef std::function<void(HttpContext&, CompletionReason)> AfterMiddleware;
 
+// 一个中间件 = 可选 before + 可选 after（同一逻辑单元的前后半）。
+// 放这里以便 Router（路由级 middleware）与 MiddlewareChain（全局）共用同一类型。
+struct Middleware {
+    BeforeMiddleware before;   // 空 = 无前置（总是"进入"）
+    AfterMiddleware  after;    // 空 = 无后置
+    Middleware() {}
+    Middleware(BeforeMiddleware b, AfterMiddleware a) : before(std::move(b)), after(std::move(a)) {}
+};
+
 class HttpContext {
 public:
     virtual ~HttpContext() = default;

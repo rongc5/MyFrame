@@ -95,8 +95,13 @@ handler 签名：`std::function<void(HttpContext&)>`。
 - 冲突检测：重复 `method+path`、同位 `{param}` 名不同（`{id}` vs `{name}`）→ `add` 抛 `std::runtime_error`。
 - `Allow` 取终结点 `methods` 的 map 键（**天然去重 + 字典序稳定**）。
 - `freeze()` 后 `add` 抛异常；`match` 全程只读、**并发安全无锁**（已并发单测）。
-- **Context 绑定推迟**：`route_param()`/把 Router 接入 `on_http_request` 分发放到 energyhub 集成提交，
-  本提交保持 Router 与运行时解耦、可独立单测（`test/test_http_router.cpp`）。
+- **路由级 middleware**：`router.get(path, h).use(mw)` / `.use_before()` / `.use_after()`——`add` 返回
+  `Router::Route` 代理，路由的 `Middleware` 列表存于 trie 的 `Entry`；`match` 的 `MatchResult.route_mws`
+  指向它（freeze 后只读稳定）。分发时把**全局 + 路由级**组成**同一条 `MiddlewareChain`**：短路/异常/
+  异步/after-once 统一语义（不再有绕过契约的业务包装）。
+- **错误渲染可配置**：`RoutingOptions.render_error(ctx, status, code)`——框架默认 `{"error":"<code>"}`
+  （`not_found`/`method_not_allowed`/`bad_request` 中性错误码）；业务可覆盖文案（如 energyhub 把
+  `not_found` 渲染成旧的 `"not found"`），**不改框架默认、不影响其他用户**。
 
 **语义边界（提交2 评审拍板）：**
 - **方法字面匹配（纯 Router）**：`Router::match` 只按注册的字面方法匹配；HEAD/OPTIONS **不在 Router 内合成**，
