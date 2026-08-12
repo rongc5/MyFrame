@@ -99,10 +99,13 @@ handler 签名：`std::function<void(HttpContext&)>`。
   本提交保持 Router 与运行时解耦、可独立单测（`test/test_http_router.cpp`）。
 
 **语义边界（提交2 评审拍板）：**
-- **方法字面匹配**：Router 只按注册的字面方法匹配。**HEAD/OPTIONS 不自动合成**：
-  - `HEAD` 仅注册 `GET` → 目前 **405**；自动 `HEAD→GET`（跑 GET handler、抑制 body）属**分发层**行为（需 Context/response 参与），**放到 Commit 4** 接线时实现；
-  - `OPTIONS` 无显式路由 → 目前 **405（带 Allow）**；自动 `OPTIONS→200/204 + Allow` 同属分发层策略，Commit 4 决定是否开启。
-  - **`Allow` 头当前只含字面注册的方法**；分发层启用 HEAD/OPTIONS 合成时再据策略增补 `HEAD`/`OPTIONS`。
+- **方法字面匹配（纯 Router）**：`Router::match` 只按注册的字面方法匹配；HEAD/OPTIONS **不在 Router 内合成**，
+  `Allow` 只含字面方法。合成由**分发层**（Commit 4，`RoutingHandler`）实现，策略如下（已拍板）：
+  - **显式注册的 `HEAD`/`OPTIONS` 路由优先**（先按字面 match）；
+  - 无 `HEAD` 但有 `GET` → **复用 GET handler**，最终发送阶段**抑制 body**、保留本应返回的**状态与 headers**（含按 GET body 计算的 `Content-Length`）；
+  - 无显式 `OPTIONS` → 自动 **204 + `Allow`**；
+  - `Allow` 组装：存在 `GET` 则同时列 `GET, HEAD`；自动 `OPTIONS` 启用时再列 `OPTIONS`（去重、字典序）；
+  - **HEAD body 抑制放在分发/发送层**，不污染纯 Router。
 - **参数生命周期**：`params` 为值语义、随 `MatchResult` 返回并独立拥有；DFS 回溯时对**未命中路径**的捕获做 `erase`；
   同一路径内**参数名唯一**（注册期强制），避免回溯 `erase` 误删同名捕获。
 - **百分号解码边界**：`%` 后不足 2 位或非十六进制 → **400**；`%00` 解为内嵌 `\0`（`std::string` 承载，调用方需自行防注入）；
