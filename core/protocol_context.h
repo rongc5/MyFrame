@@ -41,6 +41,26 @@ namespace myframe {
 // HTTP Э��������
 // ============================================================================
 
+// 两阶段异步结果：成功(值)/异常(exception_ptr)/被拒绝(rejected)。
+template <class R>
+struct AsyncResult {
+    bool rejected = false;
+    std::exception_ptr error;   // 非空表示 work 抛异常
+    R value{};                  // ok() 时有效
+    bool ok() const { return !rejected && !error; }
+};
+template <>
+struct AsyncResult<void> {
+    bool rejected = false;
+    std::exception_ptr error;
+    bool ok() const { return !rejected && !error; }
+};
+// 把 work() 结果写入 holder（void 单独重载）
+template <class R, class W>
+inline void mf_assign_result(AsyncResult<R>& h, W& work) { h.value = work(); }
+template <class W>
+inline void mf_assign_result(AsyncResult<void>& h, W& work) { (void)h; work(); }
+
 class HttpContext {
 public:
     virtual ~HttpContext() = default;
@@ -56,7 +76,33 @@ public:
     // ========== �߼����� ==========
 
     // �첽��Ӧ - ����һ���߳���ִ�� fn��Ȼ������Ӧ
+    // [已弃用] 单阶段异步：回调在工作线程执行、易捕获裸 ctx 造成悬空/跨线程改 response。
+    MYFRAME_DEPRECATED("use two-phase async_response(work, done) instead")
     virtual void async_response(std::function<void()> fn) = 0;
+
+    // 两阶段异步（安全）：
+    //   work: 工作线程执行，只算结果，绝不接触 Context；
+    //   done: 回投到所属网络线程后执行，此时才能访问 Context。
+    template <class R>
+    void async_response(std::function<R()> work,
+                        std::function<void(HttpContext&, AsyncResult<R>)> done) {
+        std::shared_ptr<AsyncResult<R> > holder = std::make_shared<AsyncResult<R> >();
+        std::function<void()> work_thunk =
+            [holder, work]() {
+                try { mf_assign_result(*holder, const_cast<std::function<R()>&>(work)); }
+                catch (...) { holder->error = std::current_exception(); }
+            };
+        std::function<void(HttpContext&)> done_thunk =
+            [holder, done](HttpContext& ctx) { done(ctx, *holder); };
+        std::function<void(HttpContext&)> reject_thunk =
+            [holder, done](HttpContext& ctx) { holder->rejected = true; done(ctx, *holder); };
+        async_response_erased(std::move(work_thunk), std::move(done_thunk), std::move(reject_thunk));
+    }
+
+    // 类型擦除落点（模板不能是虚函数）。实现见 HttpContextImpl。
+    virtual void async_response_erased(std::function<void()> work_thunk,
+                                       std::function<void(HttpContext&)> done_thunk,
+                                       std::function<void(HttpContext&)> reject_thunk) = 0;
 
     // ����첽��Ӧ��ɲ�֪ͨ���ͣ����� set_async_response_pending(false) + notify_send_ready()��
     virtual void complete_async_response() = 0;

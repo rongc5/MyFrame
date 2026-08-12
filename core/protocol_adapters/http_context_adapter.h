@@ -34,6 +34,9 @@ public:
     HttpResponse& response() override;
 
     void async_response(std::function<void()> fn) override;
+    void async_response_erased(std::function<void()> work_thunk,
+                               std::function<void(HttpContext&)> done_thunk,
+                               std::function<void(HttpContext&)> reject_thunk) override;
     void complete_async_response() override;
     void enable_streaming() override;
     size_t stream_write(const void* data, size_t len) override;

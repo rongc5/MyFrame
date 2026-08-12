@@ -1,5 +1,6 @@
 // MyFrame Unified Protocol Architecture - HTTP Context Adapter Implementation
 #include "http_context_adapter.h"
+#include "../task_executor.h"
 #include "../base_net_obj.h"
 #include "../string_pool.h"
 #include "../common_obj_container.h"
@@ -89,6 +90,45 @@ void HttpContextImpl::async_response(std::function<void()> fn) {
         }).detach();
     }
 }
+
+void HttpContextImpl::async_response_erased(std::function<void()> work_thunk,
+                                            std::function<void(HttpContext&)> done_thunk,
+                                            std::function<void(HttpContext&)> reject_thunk) {
+    // 标记异步挂起，阻止立即发送
+    if (_process) {
+        auto* dp = _process->get_process();
+        auto* hdp = dp ? dynamic_cast<http_base_data_process*>(dp) : nullptr;
+        if (hdp) hdp->set_async_response_pending(true);
+    }
+    auto c = _conn.lock();
+    if (!c) { complete_async_response(); return; }   // 连接已不在，直接结束避免永远 pending
+    ObjId objid = c->get_id();
+    uint64_t gen = _request_generation;
+
+    bool submitted = default_task_executor().submit(
+        [work_thunk, done_thunk, objid, gen]() {
+            work_thunk();   // 工作线程：只算结果，绝不接触 Context
+            std::shared_ptr<::normal_msg> tmsg =
+                std::make_shared<HttpContextTaskMessage>(
+                    [done_thunk, gen](HttpContext& ctx) {
+                        if (ctx.request_generation() != gen) return;   // 已换请求 → 丢弃
+                        done_thunk(ctx);
+                        ctx.complete_async_response();
+                    });
+            ObjId t = objid;   // put_obj_msg 取 ObjId&，需非 const 左值
+            base_net_thread::put_obj_msg(t, tmsg);   // 按连接 ID 投回网络线程；连接没了自动丢弃
+        });
+
+    if (!submitted) {
+        // 队列拒绝 → 503（仍在网络线程，可直接改 response）
+        _response = HttpResponse();
+        _response.status = 503;
+        _response.reason = "Service Unavailable";
+        if (reject_thunk) reject_thunk(*this);   // 业务可覆盖
+        complete_async_response();
+    }
+}
+
 
 void HttpContextImpl::complete_async_response() {
     // ����첽��Ӧ��ɲ�֪ͨ���Է���

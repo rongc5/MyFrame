@@ -31,6 +31,10 @@ maybe_add_exe(test_http_context ${CMAKE_CURRENT_SOURCE_DIR}/test_http_context.cp
 if(TARGET test_http_context)
     add_test(NAME http_context COMMAND test_http_context)
 endif()
+maybe_add_exe(test_task_executor ${CMAKE_CURRENT_SOURCE_DIR}/test_task_executor.cpp)
+if(TARGET test_task_executor)
+    add_test(NAME task_executor COMMAND test_task_executor)
+endif()
 maybe_add_exe(test_business_handler ${CMAKE_CURRENT_SOURCE_DIR}/test_business_handler.cpp)
 # Regression test for channel_data_process watchdog routing + obj_process unconditional dispatch.
 maybe_add_exe(test_channel_watchdog ${CMAKE_CURRENT_SOURCE_DIR}/test_channel_watchdog.cpp)
