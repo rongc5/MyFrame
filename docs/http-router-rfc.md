@@ -37,21 +37,28 @@ template <class T> T* get_ext(const std::string& key) const;   // 不存在/类�
 ## 2. 异步生命周期（提交1）—— 两阶段 API
 
 **只"不捕获裸 this"不够**：业务仍可能 `[&ctx]` 捕获，导致工作线程跨线程改 response / 悬空。
-改为**两阶段**，从结构上禁止工作线程接触 Context：
+改为**两阶段**，从结构上禁止工作线程接触 Context，且**默认安全**（业务不需要处理错误路径）：
 ```cpp
-// work：工作线程执行，只算结果，绝不接触 Context
-// done：回投到所属网络线程后执行，此时才能访问 Context
+// work:       工作线程执行，只算结果，绝不接触 Context
+// on_success: work 成功后回投所属网络线程执行，收到结果值 R
 template <class R>
 void async_response(std::function<R()> work,
-                    std::function<void(HttpContext&, R)> done);
+                    std::function<void(HttpContext&, R)> on_success);
+// void 结果重载：async_response(std::function<void()>, std::function<void(HttpContext&)>)
 ```
+**框架自动兜底**（业务只写成功路径）：
+- `work` 抛异常 → **500**，不调用 `on_success`；
+- 队列拒绝 → **503**，不调用 `on_success`；
+- `on_success` 自身抛异常 → **500**。
+
 实现：
-- `work` 投入**框架线程池**（非每请求建线程）。
-- 完成后构造 `HttpContextTaskMessage`（携带 `done` + 结果）经 `send_msg` **投递回网络线程**执行。
-- **回投时三重校验**，任一不满足即丢弃结果（不写任何 Context）：
-  1. 连接 `weak_ptr<base_net_obj>` 仍存活；
+- `work` 投入**框架线程池 `TaskExecutor`**（非每请求建线程；结果/异常存入内部 holder，`work_thunk` 绝不抛出）。
+- 完成后构造 `HttpContextTaskMessage`（携带 `apply` + 内部 holder）经 `put_obj_msg(ObjId)` **投回所属网络线程**执行。
+- **回投落到网络线程的统一出口 `finalize_once(gen, apply)`**，任一不满足即丢弃（不写任何 Context、不发送）：
+  1. 连接 `weak_ptr<base_net_obj>` 仍存活（`put_obj_msg` 连接没了自动丢弃）；
   2. **`request_generation` 未变**（见下）；
-  3. 该请求尚未 finalized（响应未发出）。
+  3. **`RequestState != Finalized`**（见 §6.2 状态机）。
+- 满足则：置 `Finalized` → 执行 `apply`（holder 有异常则 rethrow，被 `finalize_once` 捕获成 500）→ **恰好触发一次发送**。
 
 ### request generation（关键）
 连接可能存活但 Keep-Alive 已开始处理**下一条请求**，旧异步结果不能写进新请求的 Context。
@@ -134,33 +141,40 @@ ctx.response().set_json(*j);             // set_json 增加 Document 重载；�
 新增 **`TaskExecutor`** 抽象（由 HTTP factory/context 共享，**非裸全局单例**）：
 - 进程级**固定线程数**；
 - **有界任务队列** + 队列满**拒绝策略**（拒绝即视为异步失败 → **503 Service Unavailable**，见 6.2；不得每请求建线程）；
-- 停机：停止接收新任务，等待或取消在飞任务；
+- 停机（`shutdown`）：**取消尚未开始的排队任务（cancel queued）+ 等待正在执行的任务结束（await in-flight）**；无法强制中断线程，故要求任务本身有界、不长期阻塞。停机后 `submit` 返回 false。
 - `work` 因拒绝**未执行**时，也必须让该 HTTP 请求被 finalize（不能永远 pending）；
 - **禁止每请求创建线程**。
+- 线程数 `MYFRAME_ASYNC_THREADS`（默认 4）、队列上限 `MYFRAME_ASYNC_QUEUE`（默认 1024）可由环境覆盖。
 
-### 6.2 work 异常语义（request 只 finalize 一次）
-`work()` 抛异常/队列拒绝**不得让请求永远 pending**。两阶段接口把"结果或异常"都投回网络线程：
+### 6.2 finalize-once 状态机（request 恰好完成一次）
+`work()` 抛异常/队列拒绝/连接断开/Keep-Alive 换请求**都不得让请求永远 pending，也不得完成两次**。
+内部载体 `MfAsyncHolder<R>` 携带"成功值(`shared_ptr<R>`，不要求 R 可默认构造) | 异常(`exception_ptr`)"，
+`work_thunk` 只填 holder、**绝不抛出**；回投的 `apply_thunk` 成功则调 `on_success`、失败则 rethrow。
+网络线程统一出口：
 ```cpp
-template <class R>
-void async_response(std::function<R()> work,
-                    std::function<void(HttpContext&, AsyncResult<R>)> done);
-// AsyncResult<R>: 成功(值) | 异常(exception_ptr) | 被拒绝
+enum class RequestState { Handling, AsyncPending, Finalized };
+void finalize_once(uint64_t gen, const std::function<void(HttpContext&)>& apply) {
+    if (gen != request_generation) return;        // 已换请求 -> 丢弃陈旧结果
+    if (state == Finalized) return;               // 幂等 -> 只完成一次
+    state = Finalized;
+    try { if (apply) apply(*this); }              // 成功回调 / rethrow work 异常
+    catch (...) { response = 500; }               // 默认安全：work 异常或 on_success 抛 -> 500
+    do_notify_complete();                          // 恰好触发一次发送
+}
 ```
-- 框架统一捕获 `std::exception_ptr`；`done` 在网络线程按结果生成响应。
 - **错误码映射（区分来源）**：
-  - **执行器队列拒绝**（work 未执行）→ **503 Service Unavailable**；
-  - **work 自身抛异常**（业务错误）→ **500 Internal Server Error**（done 可覆盖）。
-- **保证**：成功 / 异常 / 队列拒绝，request 都**只 finalize 一次**。
-- **`AsyncResult<void>`**：`R=void` 无值，需**单独特化**（只携带成功/异常/拒绝，不带值）
-  或在接口层**明确禁止 `R=void`**（`static_assert`）。二选一，v1 建议提供 void 特化。
+  - **执行器队列拒绝**（work 未执行）-> **503**（在网络线程直接经 `finalize_once` 完成）；
+  - **work 自身抛异常** / **on_success 抛异常** -> **500**。
+- **`complete_async_response()`** 亦经 `state` 幂等（旧单阶段 API / 流式复用），**重复调用只发送一次**。
+- **`MfAsyncHolder<void>`** 单独特化（无值，只携带异常）。
 
 ### 6.3 模板接口的类型擦除落点
 `HttpContext` 是抽象接口，**模板不能是虚函数**。统一"模板包装器 → 非模板虚函数"：
 ```cpp
 // async：
-template <class R> void async_response(work, done);      // public 模板包装（头文件）
+template <class R> void async_response(work, on_success);  // public 模板包装（头文件，含 void 重载）
 virtual void async_response_erased(std::function<void()> work_thunk,
-                                   std::function<void(HttpContext&)> done_thunk) = 0; // Impl 实现
+                                   std::function<void(HttpContext&)> apply_thunk) = 0; // Impl 实现
 // extensions：
 template <class T,class...A> T& set_ext(key,A&&...);      // 包装
 template <class T> T* get_ext(key) const;                // 包装
@@ -178,7 +192,10 @@ virtual std::shared_ptr<void> get_ext_erased(key, std::type_index) const = 0;
 
 - **提交0** `fix(http): normalize header OWS and support case-insensitive lookup`
 - **提交0.1** `build(cmake): make examples reproducible from a clean checkout` + `test(http): header OWS/case regression`
-- **提交1** `fix(http): make request context and async lifetime safe`（reset + typed ext + 两阶段 async + generation；接口契约见 §6）
+- **提交1a** `fix(http): make request context safe`（reset-per-request + typed extensions + generation）
+- **提交1b** `fix(http): safe two-phase async_response with TaskExecutor`（执行器 + 两阶段回投骨架）
+- **提交1c** `fix(http): enforce async finalize-once and reset full request state`（finalize-once 状态机 + 默认安全 500/503 + `_recv_body`/请求级复位；契约见 §6.2）
+- **提交1d** `test(http): cover async disconnect, exception and keep-alive lifecycle`（真实服务集成测试 + finalize_once/executor 单测）
 - **提交2** `feat(http): add router and path parameters`
 - **提交3** `feat(http): add middleware and JSON helpers`
 - **提交4** `refactor(energyhub): migrate customer and ops handlers`

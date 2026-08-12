@@ -23,7 +23,9 @@ public:
     // 提交任务；队列满或已停机返回 false（拒绝，不阻塞、不新建线程）
     bool submit(std::function<void()> task);
 
-    // 停止接收、唤醒并 join 所有工作线程（剩余队列任务被丢弃）
+    // 停机：取消尚未开始的排队任务、等待正在执行的任务结束、join 工作线程。
+    // 语义 = 取消排队(cancel queued) + 等待在执行(await in-flight)。
+    // 无法强制中断线程，故要求任务本身有界、不长期阻塞（否则 shutdown 会等它）。
     void shutdown();
 
     size_t queue_size() const;

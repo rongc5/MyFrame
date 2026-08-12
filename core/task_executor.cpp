@@ -30,8 +30,10 @@ void TaskExecutor::shutdown() {
         std::lock_guard<std::mutex> lk(_mu);
         if (_stop) return;
         _stop = true;
+        _q.clear();   // 取消尚未开始的排队任务（不排空执行），保证及时停机
     }
     _cv.notify_all();
+    // 等待正在执行的任务自然结束（无法强制中断线程；故要求任务本身有界、不长期阻塞）。
     for (std::thread& t : _workers) if (t.joinable()) t.join();
     _workers.clear();
 }
@@ -62,7 +64,12 @@ TaskExecutor& default_task_executor() {
         int n = e ? std::atoi(e) : 0;
         return (size_t)(n > 0 ? n : 4);
     }();
-    static TaskExecutor exec(threads, 1024);
+    static size_t queue = []() {
+        const char* e = std::getenv("MYFRAME_ASYNC_QUEUE");
+        int n = e ? std::atoi(e) : 0;
+        return (size_t)(n > 0 ? n : 1024);
+    }();
+    static TaskExecutor exec(threads, queue);
     return exec;
 }
 

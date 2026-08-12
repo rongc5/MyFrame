@@ -18,6 +18,7 @@
 #include <typeindex>
 #include <utility>
 #include <type_traits>
+#include <exception>
 
 // C++11 兼容的弃用标注（[[deprecated]] 是 C++14）
 #ifndef MYFRAME_DEPRECATED
@@ -41,25 +42,24 @@ namespace myframe {
 // HTTP Э��������
 // ============================================================================
 
-// 两阶段异步结果：成功(值)/异常(exception_ptr)/被拒绝(rejected)。
+// 两阶段异步内部载体：承载 work() 的成功值或异常。
+// 用 shared_ptr<R> 存放结果，不要求 R 可默认构造（成功前为空指针）。
 template <class R>
-struct AsyncResult {
-    bool rejected = false;
-    std::exception_ptr error;   // 非空表示 work 抛异常
-    R value{};                  // ok() 时有效
-    bool ok() const { return !rejected && !error; }
+struct MfAsyncHolder {
+    std::exception_ptr error;       // 非空表示 work 抛异常
+    std::shared_ptr<R> value;       // 非空表示成功
+    void run(std::function<R()>& work) {
+        try { value = std::make_shared<R>(work()); }
+        catch (...) { error = std::current_exception(); }
+    }
 };
 template <>
-struct AsyncResult<void> {
-    bool rejected = false;
+struct MfAsyncHolder<void> {
     std::exception_ptr error;
-    bool ok() const { return !rejected && !error; }
+    void run(std::function<void()>& work) {
+        try { work(); } catch (...) { error = std::current_exception(); }
+    }
 };
-// 把 work() 结果写入 holder（void 单独重载）
-template <class R, class W>
-inline void mf_assign_result(AsyncResult<R>& h, W& work) { h.value = work(); }
-template <class W>
-inline void mf_assign_result(AsyncResult<void>& h, W& work) { (void)h; work(); }
 
 class HttpContext {
 public:
@@ -80,29 +80,50 @@ public:
     MYFRAME_DEPRECATED("use two-phase async_response(work, done) instead")
     virtual void async_response(std::function<void()> fn) = 0;
 
-    // 两阶段异步（安全）：
-    //   work: 工作线程执行，只算结果，绝不接触 Context；
-    //   done: 回投到所属网络线程后执行，此时才能访问 Context。
+    // 两阶段异步（安全，默认安全语义）：
+    //   work:       工作线程执行，只算结果，绝不接触 Context；
+    //   on_success: work 成功后回投所属网络线程执行，收到结果值 R。
+    // 框架自动兜底（不需要业务处理错误路径）：
+    //   - work 抛异常  → 500，不调用 on_success；
+    //   - 队列拒绝     → 503，不调用 on_success；
+    //   - on_success 自身抛异常 → 500。
+    // 响应恰好 finalize 一次（含 Keep-Alive 换请求/连接断开的丢弃）。
+    // 注意：R != void 时需显式传 std::function<R()>（lambda 不会自动推导为 std::function）。
     template <class R>
     void async_response(std::function<R()> work,
-                        std::function<void(HttpContext&, AsyncResult<R>)> done) {
-        std::shared_ptr<AsyncResult<R> > holder = std::make_shared<AsyncResult<R> >();
+                        std::function<void(HttpContext&, R)> on_success) {
+        std::shared_ptr<MfAsyncHolder<R> > holder = std::make_shared<MfAsyncHolder<R> >();
         std::function<void()> work_thunk =
-            [holder, work]() {
-                try { mf_assign_result(*holder, const_cast<std::function<R()>&>(work)); }
-                catch (...) { holder->error = std::current_exception(); }
+            [holder, work]() mutable { holder->run(work); };
+        // apply 在网络线程执行：work 有异常则重新抛出（由 finalize_once 兜底成 500），
+        // 否则调用业务 on_success。
+        std::function<void(HttpContext&)> apply_thunk =
+            [holder, on_success](HttpContext& ctx) {
+                if (holder->error) std::rethrow_exception(holder->error);
+                on_success(ctx, *holder->value);
             };
-        std::function<void(HttpContext&)> done_thunk =
-            [holder, done](HttpContext& ctx) { done(ctx, *holder); };
-        std::function<void(HttpContext&)> reject_thunk =
-            [holder, done](HttpContext& ctx) { holder->rejected = true; done(ctx, *holder); };
-        async_response_erased(std::move(work_thunk), std::move(done_thunk), std::move(reject_thunk));
+        async_response_erased(std::move(work_thunk), std::move(apply_thunk));
+    }
+
+    // void 结果重载（无返回值）。
+    void async_response(std::function<void()> work,
+                        std::function<void(HttpContext&)> on_success) {
+        std::shared_ptr<MfAsyncHolder<void> > holder = std::make_shared<MfAsyncHolder<void> >();
+        std::function<void()> work_thunk =
+            [holder, work]() mutable { holder->run(work); };
+        std::function<void(HttpContext&)> apply_thunk =
+            [holder, on_success](HttpContext& ctx) {
+                if (holder->error) std::rethrow_exception(holder->error);
+                on_success(ctx);
+            };
+        async_response_erased(std::move(work_thunk), std::move(apply_thunk));
     }
 
     // 类型擦除落点（模板不能是虚函数）。实现见 HttpContextImpl。
+    //   work_thunk : 工作线程执行，绝不抛异常（异常已被 holder 吞入）；
+    //   apply_thunk: 网络线程执行，成功则应用结果、失败则抛异常（框架兜底 500）。
     virtual void async_response_erased(std::function<void()> work_thunk,
-                                       std::function<void(HttpContext&)> done_thunk,
-                                       std::function<void(HttpContext&)> reject_thunk) = 0;
+                                       std::function<void(HttpContext&)> apply_thunk) = 0;
 
     // ����첽��Ӧ��ɲ�֪ͨ���ͣ����� set_async_response_pending(false) + notify_send_ready()��
     virtual void complete_async_response() = 0;
