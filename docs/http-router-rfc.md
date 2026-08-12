@@ -98,24 +98,73 @@ handler 签名：`std::function<void(HttpContext&)>`。
 - **Context 绑定推迟**：`route_param()`/把 Router 接入 `on_http_request` 分发放到 energyhub 集成提交，
   本提交保持 Router 与运行时解耦、可独立单测（`test/test_http_router.cpp`）。
 
-## 4. Middleware（提交3）
+**语义边界（提交2 评审拍板）：**
+- **方法字面匹配**：Router 只按注册的字面方法匹配。**HEAD/OPTIONS 不自动合成**：
+  - `HEAD` 仅注册 `GET` → 目前 **405**；自动 `HEAD→GET`（跑 GET handler、抑制 body）属**分发层**行为（需 Context/response 参与），**放到 Commit 4** 接线时实现；
+  - `OPTIONS` 无显式路由 → 目前 **405（带 Allow）**；自动 `OPTIONS→200/204 + Allow` 同属分发层策略，Commit 4 决定是否开启。
+  - **`Allow` 头当前只含字面注册的方法**；分发层启用 HEAD/OPTIONS 合成时再据策略增补 `HEAD`/`OPTIONS`。
+- **参数生命周期**：`params` 为值语义、随 `MatchResult` 返回并独立拥有；DFS 回溯时对**未命中路径**的捕获做 `erase`；
+  同一路径内**参数名唯一**（注册期强制），避免回溯 `erase` 误删同名捕获。
+- **百分号解码边界**：`%` 后不足 2 位或非十六进制 → **400**；`%00` 解为内嵌 `\0`（`std::string` 承载，调用方需自行防注入）；
+  路径分量中的 `+` **保持字面**（不转空格，那是 query 语义）。`//` 产生空段 → 注册期报错、匹配期 404。
+- **handler 所有权**：trie 以 `unique_ptr` 持有节点、`std::function` 值持有 handler；`match` 返回 handler 的**拷贝**，
+  故其可安全脱离 Router 生命周期（handler 自身捕获的外部引用由调用方负责）。
+
+## 4. Middleware（提交3）—— after / finalize_once 契约（评审拍板，实现前冻结）
 
 ```cpp
-using BeforeMiddleware = std::function<bool(HttpContext&)>;  // false = 短路(响应已设好)
-using AfterMiddleware  = std::function<void(HttpContext&)>;
+using BeforeMiddleware = std::function<bool(HttpContext&)>;              // false = 短路(须已设响应)
+enum class CompletionReason { Success, Error, ShortCircuited, Disconnected };
+using AfterMiddleware  = std::function<void(HttpContext&, CompletionReason)>;
 router.use(requestId); router.use(cors); router.use(accessLog);
 route.use(authenticate).use(requireRole("customer"));
 ```
-- 执行链：全局 before → 路由 before → handler；任一 before 返回 false 即短路。
-- **after 语义（严格）**：
-  - **逆序**执行；
-  - 鉴权短路、handler 抛异常、handler 正常返回**三种情况都执行**；
-  - **异步请求**：after 必须在**真正完成响应时**执行（`complete_async_response` 后），**不能**在 handler 启动异步任务后立即执行；
-  - 每个 after **最多执行一次**。
+
+### 4.1 唯一完成出口（同步/异步共用）
+所有路径**汇合到 `finalize_once`**，绝不各自发送：
+```
+before(全局→路由，顺序) → handler
+        ├─ 同步返回 ──┐
+        ├─ 异步成功 ──┤
+        ├─ 异步异常 ──┤→ finalize_once(reason): 组装最终响应 → after(逆序) → 标记 Finalized → send
+        ├─ 队列拒绝 ──┤
+        └─ before 短路┘
+```
+- `AsyncPending` 期间**绝不提前跑 after**；只有真正 finalize 时才跑。
+- 已进入的 **middleware 进入栈保存在 request-scoped Context**（随 `reset_for_request` 清空、受 `request_generation` 隔离）；换请求后旧栈作废。
+
+### 4.2 after 的准确时机（关键）
+**不是"响应已发送后"**，而是：
+> **最终响应已确定、但网络字节尚未提交时**，逆序执行 after；after 跑完**才真正 send 并置 `Finalized`**。
+
+如此 after 可安全**追加响应头 / 记录最终状态码 / 统一 CORS**。（实现：在 `finalize_once` 内、`do_notify_complete()` 之前跑 after 链。）
+
+### 4.3 after 执行范围
+- 只运行 **before 实际进入过**的 middleware（含**返回 false 的那个**）；
+- 未进入的 middleware **不运行**；
+- 全局级 + 路由级构成**一条进入栈**，统一**严格逆序**；
+- 每个 after **最多执行一次**。
+
+### 4.4 短路约定
+`before == false` 表示：**该 middleware 已设置响应**，框架停止后续 before 与 handler，进入统一 finalize（reason=`ShortCircuited`）。
+- 若短路时**未设置有效响应** → 框架**兜底 500**（不猜测 401/403）。
+
+### 4.5 异常规则
+- **before / handler 抛异常**（尚未 finalize）→ 转 **500**（reason=`Error`），随后跑**已进入的 after**；
+- **某个 after 抛异常** → **记录并继续**跑剩余 after；**不再重写响应**、**不阻断 finalize**；
+- **已 finalize 之后的任何异常** → **不得二次发送**。
+
+### 4.6 连接断开 / 取消 —— after = 请求结束钩子
+after 定义为**请求结束钩子**（非"响应发送钩子"），以便计时/审计/资源释放在所有路径都不漏。
+- 语义目标：断开/异步取消也应执行一次 after，`reason=Disconnected`。
+- **v1 实现范围（Commit 3）**：`finalize_once` 已覆盖的 `Success/Error/ShortCircuited` **同步落地**；
+  `Disconnected` 需"断开→finalize"接线（连接消失时当前仅在网络线程丢弃回投消息，无 Context 侧触发）。
+  **决策点（见文末待确认）**：`Disconnected` 触发 after 的接线**是否纳入 Commit 3**，还是先只声明枚举、Commit 3 明确"断线不跑 after"、后续单独接线。**不留模糊行为**。
+
+### 4.7 其它
 - v1 **不引入 `next()` 续延式**，避免异步生命周期复杂化。
-- **统一错误处理**：handler/middleware 抛异常 → 框架 catch → 500 标准响应（之后仍跑 after）。
-- 框架**只**提供 chain / short-circuit / extensions / pre-post / 错误处理。
-- **业务层**（energyhub）实现 `authenticate`：解析 JWT → `ctx.set_ext<Principal>("principal", {...})`；`requireRole(r)` 读 `get_ext<Principal>`。
+- 框架**只**提供 chain / short-circuit / extensions / pre-post / 错误处理；不含任何业务鉴权。
+- **业务层**（energyhub，属 Commit 4）实现 `authenticate`：解析 JWT → `ctx.set_ext<Principal>("principal", {...})`；`requireRole(r)` 读 `get_ext<Principal>`。
 ```cpp
 struct Principal { int64_t tenant_id; int64_t user_id; std::string role; };  // 属 energyhub，不进 myframe
 ```
@@ -130,6 +179,14 @@ ctx.response().set_json(*j);             // set_json 增加 Document 重载；�
 - `parse_json` 校验：解析错误、UTF-8；失败**不静默返回空对象**。
 - **Content-Type 接受**：`application/json`、`application/json; charset=utf-8`、`application/*+json`。
 - `ctx.json_error(code,msg)`：标准错误体 `{"error":msg}` + 正确 Content-Type。
+
+**响应侧 JSON helper —— 最小实现约束（评审拍板）：**
+- **自动设置 `Content-Type: application/json`**（可被显式覆盖）；
+- body 由 **`HttpResponse` 值持有**（拷贝/移动进 `_send_body` 前的 `response().body`），
+  **绝不引用临时 buffer**（避免异步回投后悬空）；
+- **不把 RapidJSON / JWT 类型引入公共接口**：`set_json` 对外只接受 `std::string`（已序列化）或框架内部包装，
+  第三方 JSON 库仅存在于 .cpp / 业务层；
+- **序列化失败**（如传入非法 UTF-8 / 编码异常）→ 进入**统一 500 路径**（经 finalize_once），不产出半个响应。
 
 ### 请求体大小限制必须在接收阶段（不是 parse_json）
 否则超大 body 已完整进 `_recv_body`，挡不住内存攻击。提前拒绝的位置：
