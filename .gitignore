@@ -21,6 +21,8 @@ test/test_*
 !test/test_task_executor.cpp
 !test/test_http_async_integration.cpp
 !test/test_http_router.cpp
+!test/test_http_middleware.cpp
+!test/test_http_json.cpp
 build_test/
 test/simple_*
 test/https_*

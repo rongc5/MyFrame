@@ -35,6 +35,16 @@ maybe_add_exe(test_task_executor ${CMAKE_CURRENT_SOURCE_DIR}/test_task_executor.
 if(TARGET test_task_executor)
     add_test(NAME task_executor COMMAND test_task_executor)
 endif()
+# 中间件链回归（before 顺序/after 逆序/短路/异常/after-once）
+maybe_add_exe(test_http_middleware ${CMAKE_CURRENT_SOURCE_DIR}/test_http_middleware.cpp)
+if(TARGET test_http_middleware)
+    add_test(NAME http_middleware COMMAND test_http_middleware)
+endif()
+# 响应侧 JSON 便捷回归
+maybe_add_exe(test_http_json ${CMAKE_CURRENT_SOURCE_DIR}/test_http_json.cpp)
+if(TARGET test_http_json)
+    add_test(NAME http_json COMMAND test_http_json)
+endif()
 # 路由表回归（静态优先/{param}/decode/405 Allow/freeze/并发只读）
 maybe_add_exe(test_http_router ${CMAKE_CURRENT_SOURCE_DIR}/test_http_router.cpp)
 if(TARGET test_http_router)

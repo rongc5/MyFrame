@@ -18,7 +18,7 @@ namespace myframe {
 
 HttpContextImpl::HttpContextImpl(http_base_process* process, std::shared_ptr<base_net_obj> conn)
     : _process(process), _conn(conn), _request_generation(0),
-      _state(RequestState::Handling), _streaming_enabled(false) {
+      _state(RequestState::Handling), _after_ran(false), _streaming_enabled(false) {
     // ��ʼ��������Ϣ
     if (conn) {
         // ע��base_net_obj ��ǰ���ṩ IP/�˿ڷ��ʽӿ�
@@ -58,6 +58,8 @@ void HttpContextImpl::reset_for_request() {
     _user_data.clear();
     _streaming_enabled = false;
     _state = RequestState::Handling;
+    _after_stack.clear();       // 清中间件 after 栈（request-scoped，防跨请求）
+    _after_ran = false;
     ++_request_generation;
 }
 
@@ -102,7 +104,7 @@ void HttpContextImpl::async_response_erased(std::function<void()> work_thunk,
     uint64_t gen = _request_generation;
 
     auto c = _conn.lock();
-    if (!c) { finalize_once(gen, nullptr); return; }   // 连接已不在：finalize 避免永远 pending
+    if (!c) { finalize_once(gen, nullptr, CompletionReason::Disconnected); return; }   // 连接已不在：finalize 且 v1 不跑 after
 
     ObjId objid = c->get_id();
     bool submitted = default_task_executor().submit(
@@ -119,12 +121,12 @@ void HttpContextImpl::async_response_erased(std::function<void()> work_thunk,
         });
 
     if (!submitted) {
-        // 队列拒绝 → 503（此刻仍在网络线程，经统一出口完成）
+        // 队列拒绝 → 503（此刻仍在网络线程，经统一出口完成；reason=Error 让 after 跑）
         finalize_once(gen, [](HttpContext& ctx) {
             ctx.response() = HttpResponse();
             ctx.response().status = 503;
             ctx.response().reason = "Service Unavailable";
-        });
+        }, CompletionReason::Error);
     }
 }
 
@@ -152,10 +154,12 @@ void HttpContextImpl::complete_async_response() {
 }
 
 // 网络线程统一完成出口：代号校验 + finalize-once + apply 异常兼底 500。
-void HttpContextImpl::finalize_once(uint64_t gen, const std::function<void(HttpContext&)>& apply) {
+void HttpContextImpl::finalize_once(uint64_t gen, const std::function<void(HttpContext&)>& apply,
+                                    CompletionReason reason) {
     if (gen != _request_generation) return;          // 已换请求（Keep-Alive 下一请求）→ 丢弃陈旧结果
     if (_state == RequestState::Finalized) return;   // 已完成 → 幂等
     _state = RequestState::Finalized;
+    CompletionReason final_reason = reason;
     try {
         if (apply) apply(*this);                     // 成功回调 / rethrow work 异常
     } catch (...) {
@@ -163,8 +167,34 @@ void HttpContextImpl::finalize_once(uint64_t gen, const std::function<void(HttpC
         _response = HttpResponse();
         _response.status = 500;
         _response.reason = "Internal Server Error";
+        final_reason = CompletionReason::Error;
     }
+    run_after_chain(final_reason);                   // after 在“响应已定、字节未发”时逆序执行
     do_notify_complete();                            // 恰好触发一次发送
+}
+
+// 登记进入的 after（含短路那个）；request-scoped，reset 清空。
+void HttpContextImpl::push_after(AfterMiddleware after) {
+    if (after) _after_stack.push_back(std::move(after));
+}
+
+// 逆序执行 after，最多一次；单个 after 抛异常记录并继续、不改写响应、不阻断 finalize。
+// v1：reason==Disconnected 不执行（断线不跑 after）。
+void HttpContextImpl::run_after_chain(CompletionReason reason) {
+    if (_after_ran) return;
+    _after_ran = true;
+    if (reason == CompletionReason::Disconnected) return;   // v1：断线/取消不跑 after
+    for (std::vector<AfterMiddleware>::reverse_iterator it = _after_stack.rbegin();
+         it != _after_stack.rend(); ++it) {
+        try { if (*it) (*it)(*this, reason); }
+        catch (...) {
+            PDEBUG("[HttpContext] after middleware threw; continuing");   // 记录并继续
+        }
+    }
+}
+
+bool HttpContextImpl::async_pending() const {
+    return _state == RequestState::AsyncPending;
 }
 
 void HttpContextImpl::enable_streaming() {

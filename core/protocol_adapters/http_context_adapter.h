@@ -38,12 +38,19 @@ public:
                                std::function<void(HttpContext&)> apply_thunk) override;
     void complete_async_response() override;
 
+    // 中间件 after 生命周期
+    void push_after(AfterMiddleware after) override;
+    void run_after_chain(CompletionReason reason) override;
+    bool async_pending() const override;
+
     // 网络线程统一完成出口（finalize-once）：
     //   - gen != 当前代号 → 已换请求（Keep-Alive 下一请求），丢弃；
     //   - _state 已 Finalized → 幂等，直接返回；
-    //   - 否则置 Finalized，执行 apply（apply 抛异常则回落 500），再触发发送。
+    //   - 否则置 Finalized，执行 apply（apply 抛异常则回落 500 且 reason=Error），
+    //     再逆序跑 after（发送前），最后触发发送。
     // 必须在所属网络线程调用。
-    void finalize_once(uint64_t gen, const std::function<void(HttpContext&)>& apply);
+    void finalize_once(uint64_t gen, const std::function<void(HttpContext&)>& apply,
+                       CompletionReason reason = CompletionReason::Success);
     void enable_streaming() override;
     size_t stream_write(const void* data, size_t len) override;
     void upgrade_to_websocket() override;
@@ -89,6 +96,8 @@ private:
     std::unordered_map<std::string, std::pair<std::type_index, std::shared_ptr<void> > > _ext;
     uint64_t _request_generation;
     RequestState _state;
+    std::vector<AfterMiddleware> _after_stack;   // 已进入的 after（request-scoped）
+    bool _after_ran;                             // after 链是否已执行（最多一次）
     ConnectionInfo _conn_info;
     bool _streaming_enabled;
 };

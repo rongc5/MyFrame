@@ -11,6 +11,7 @@
 #include "server.h"
 #include "unified_protocol_factory.h"
 #include "protocol_context.h"
+#include "http_middleware.h"
 
 #include <atomic>
 #include <chrono>
@@ -34,12 +35,41 @@ static int g_fail = 0;
 // 断连测试用：/slow-cnt 的 work / on_success 各自计数（证明失效连接回调不执行）
 static std::atomic<int> g_slowcnt_work(0);
 static std::atomic<int> g_slowcnt_success(0);
+// 中间件 after 在异步路径的执行计数（证明异步也跑一次 after、且在发送前加头）
+static std::atomic<int> g_after_count(0);
 
 // ---------------- 被测服务处理器（Level 2，使用两阶段 async_response）----------------
 class AsyncItHandler : public myframe::IProtocolHandler {
 public:
+    AsyncItHandler() {
+        // after：请求结束钩子——异步完成时（finalize_once 内）逆序执行，在字节发送前加头
+        _chain.use(myframe::Middleware(myframe::BeforeMiddleware(),
+            [](myframe::HttpContext& c, myframe::CompletionReason) {
+                g_after_count.fetch_add(1);
+                c.response().set_header("X-After", "1");
+            }));
+    }
+
     void on_http_request(myframe::HttpContext& ctx) override {
         const std::string url = ctx.request().url;
+        if (url == "/mw-async") {
+            // 经中间件链执行一个异步 handler：after 应交由 finalize_once 执行
+            myframe::RouteHandler h = [](myframe::HttpContext& c) {
+                std::function<std::string()> work = []() { return std::string("mw"); };
+                std::function<void(myframe::HttpContext&, std::string)> ok =
+                    [](myframe::HttpContext& cc, std::string v) { cc.response().set_text(v); };
+                c.async_response(work, ok);
+            };
+            _chain.execute(ctx, h);
+            return;
+        }
+        if (url == "/mw-sync") {
+            // 同步 handler 经中间件链；Keep-Alive 下连续两次应各跑一次 after
+            ctx.keep_alive(true);
+            myframe::RouteHandler h = [](myframe::HttpContext& c) { c.response().set_text("s"); };
+            _chain.execute(ctx, h);
+            return;
+        }
         if (url == "/ok") {
             // 记录 handler（网络线程）线程 id；on_success 比对以证明回到了同一网络线程
             std::shared_ptr<std::thread::id> htid =
@@ -91,6 +121,9 @@ public:
     }
     bool handle_thread_msg(std::shared_ptr<::normal_msg>&) override { return true; }
     void handle_timeout(std::shared_ptr<timer_msg>&) override {}
+
+private:
+    myframe::MiddlewareChain _chain;
 };
 
 // ---------------- 极简阻塞 HTTP 客户端 ----------------
@@ -187,6 +220,20 @@ int main(int argc, char** argv) {
         std::string b; int st = req_once(port, "GET", "/ok", "", &b);
         CHECK(st == 200); CHECK(b == "hi");
     }
+    // 1b) 中间件 after 在异步路径：跑一次、发送前加头
+    {
+        g_after_count.store(0);
+        int fd = dial(port);
+        CHECK(fd >= 0);
+        send_all(fd, "GET /mw-async HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
+        std::string b, carry;
+        std::string resp = read_one(fd, b, carry);
+        ::close(fd);
+        CHECK(parse_status(resp) == 200);
+        CHECK(b == "mw");
+        CHECK(resp.find("X-After: 1") != std::string::npos);   // after 在发送前加了头
+        CHECK(g_after_count.load() == 1);                      // 异步也只跑一次 after
+    }
     // 2) work 抛异常 → 500
     {
         int st = req_once(port, "GET", "/work-throw", "");
@@ -212,6 +259,23 @@ int main(int argc, char** argv) {
         std::string r2 = read_one(fd, b2, carry);
         CHECK(parse_status(r2) == 200); CHECK(b2 == "0");        // 第二个请求 body 为空（无泄漏）
         ::close(fd);
+    }
+    // 7) Keep-Alive 连续请求：每次各跑一次 after（after 栈不跨请求累积）
+    {
+        g_after_count.store(0);
+        int fd = dial(port);
+        CHECK(fd >= 0);
+        std::string carry, b1, b2;
+        send_all(fd, "GET /mw-sync HTTP/1.1\r\nHost: t\r\nConnection: keep-alive\r\n\r\n");
+        std::string r1 = read_one(fd, b1, carry);
+        CHECK(parse_status(r1) == 200 && b1 == "s");
+        CHECK(r1.find("X-After: 1") != std::string::npos);
+        send_all(fd, "GET /mw-sync HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
+        std::string r2 = read_one(fd, b2, carry);
+        CHECK(parse_status(r2) == 200 && b2 == "s");
+        CHECK(r2.find("X-After: 1") != std::string::npos);
+        ::close(fd);
+        CHECK(g_after_count.load() == 2);              // 两请求各一次；若跨请求累积会是 3
     }
     // 5) 客户端在 work 完成前断开 → 不崩、work 仍执行、但失效回调 on_success 不执行
     {

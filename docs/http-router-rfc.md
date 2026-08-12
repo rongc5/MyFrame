@@ -154,16 +154,35 @@ before(全局→路由，顺序) → handler
 - **某个 after 抛异常** → **记录并继续**跑剩余 after；**不再重写响应**、**不阻断 finalize**；
 - **已 finalize 之后的任何异常** → **不得二次发送**。
 
-### 4.6 连接断开 / 取消 —— after = 请求结束钩子
+### 4.6 连接断开 / 取消 —— after = 请求结束钩子（v1 决策已定）
 after 定义为**请求结束钩子**（非"响应发送钩子"），以便计时/审计/资源释放在所有路径都不漏。
-- 语义目标：断开/异步取消也应执行一次 after，`reason=Disconnected`。
-- **v1 实现范围（Commit 3）**：`finalize_once` 已覆盖的 `Success/Error/ShortCircuited` **同步落地**；
-  `Disconnected` 需"断开→finalize"接线（连接消失时当前仅在网络线程丢弃回投消息，无 Context 侧触发）。
-  **决策点（见文末待确认）**：`Disconnected` 触发 after 的接线**是否纳入 Commit 3**，还是先只声明枚举、Commit 3 明确"断线不跑 after"、后续单独接线。**不留模糊行为**。
+- 语义目标（长期）：断开/异步取消也应执行一次 after，`reason=Disconnected`。
+- **v1（Commit 3）明确决策**：只落地 `Success / Error / ShortCircuited` 三条路径的 after（同步或经 `finalize_once`）。
+  **断线/异步取消在 v1 不执行 after**——连接消失时仅在网络线程丢弃回投消息，Context 侧无触发。这是**明确的已知边界，无模糊行为**。
+- `CompletionReason::Disconnected` 枚举值**保留**（不删），但 v1 不产生；"断开→finalize(Disconnected)"接线留作**独立后续提交**，
+  届时补齐"断线只跑一次 after 且不二次发送"的集成测试。使用 after 做资源释放的业务在 v1 须知悉断线路径不回调。
 
 ### 4.7 其它
 - v1 **不引入 `next()` 续延式**，避免异步生命周期复杂化。
 - 框架**只**提供 chain / short-circuit / extensions / pre-post / 错误处理；不含任何业务鉴权。
+
+**实现（提交3，`core/http_middleware.{h,cpp}` + Context 扩展）：**
+- `Middleware{before?, after?}`；`MiddlewareChain::use/use_before/use_after`；
+  `execute(ctx, handler, route_mws?)`：全局 + 路由级构成一条进入栈，进入即 `ctx.push_after(after)`。
+- **after 单一执行点** `HttpContextImpl::run_after_chain(reason)`：逆序、`_after_ran` 保证最多一次、
+  单个 after 抛异常 `PDEBUG` 记录并续跑、不改写响应；`reason==Disconnected` 时 v1 直接跳过。
+- **同步/异步汇合**：`execute` 末尾若 `ctx.async_pending()` 为真则**不跑 after**（交 `finalize_once`）；
+  否则同步就地 `run_after_chain`（在 `on_http_request` 返回、框架发送之前）。`finalize_once` 在
+  `apply` 之后、`do_notify_complete()` 之前调用 `run_after_chain` —— 即"响应已定、字节未发"。
+- **短路 500 兜底**：`has_valid_response` 以 pristine（status==200 且 body/headers 皆空）判定"未设响应"。
+  **已知限制**：无法区分"裸 200 空响应短路"与"忘设响应"；后续以显式 `response_touched` 状态替代。
+- request-scoped：`_after_stack`/`_after_ran` 随 `reset_for_request` 清空，受 `request_generation` 隔离；
+  代号不匹配的陈旧异步回投在 `finalize_once` 即被丢弃，绝不运行当前请求的 after（已回归）。
+- **before 必须同步**：`execute` 在每个 before 返回后检测 `async_pending()`；若 before 内发起了
+  `async_response`（进入 AsyncPending），**记录并不再跑 handler**、立即返回（避免"已挂起却继续"的模糊态）。
+- **after 仅对两阶段 async 与同步路径生效**：`do_notify_complete` 只经 `finalize_once`（两阶段异步）或
+  幂等的 `complete_async_response`（**已弃用的单阶段 API / 裸流式**）触达；后者**不跑 after**——
+  用中间件的业务须使用两阶段 `async_response(work, on_success)` 或同步返回。
 - **业务层**（energyhub，属 Commit 4）实现 `authenticate`：解析 JWT → `ctx.set_ext<Principal>("principal", {...})`；`requireRole(r)` 读 `get_ext<Principal>`。
 ```cpp
 struct Principal { int64_t tenant_id; int64_t user_id; std::string role; };  // 属 energyhub，不进 myframe
@@ -187,6 +206,11 @@ ctx.response().set_json(*j);             // set_json 增加 Document 重载；�
 - **不把 RapidJSON / JWT 类型引入公共接口**：`set_json` 对外只接受 `std::string`（已序列化）或框架内部包装，
   第三方 JSON 库仅存在于 .cpp / 业务层；
 - **序列化失败**（如传入非法 UTF-8 / 编码异常）→ 进入**统一 500 路径**（经 finalize_once），不产出半个响应。
+
+**实现（提交3，`core/http_json.h`，仅响应侧、header-only）：**
+- `HttpResponse::set_json(std::string)` 既有（自动 `application/json; charset=utf-8`、body 值持有）；
+- `myframe::json_error(res, code, msg)`：`{"error":"<escaped>"}` + 状态码 + CT；`json_escape` 处理引号/反斜杠/控制字符；
+- **不含解析**：`parse_json` 属业务层（避免把 RapidJSON 带进框架公共接口）；序列化由业务完成，失败自行走 500。
 
 ### 请求体大小限制必须在接收阶段（不是 parse_json）
 否则超大 body 已完整进 `_recv_body`，挡不住内存攻击。提前拒绝的位置：

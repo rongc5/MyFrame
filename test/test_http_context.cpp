@@ -76,6 +76,18 @@ int main() {
         c.reset_for_request();
         CHECK(c.request().body.empty());
     }
+    // (5) 代号不匹配的异步回投不得运行“当前请求”的 after（gen 隔离）
+    {
+        myframe::HttpContextImpl c(nullptr, nullptr);   // gen=0（请求A）
+        c.reset_for_request();                          // gen=1（请求B）
+        int b_after = 0;
+        c.push_after([&b_after](myframe::HttpContext&, myframe::CompletionReason) { ++b_after; });
+        std::function<void(myframe::HttpContext&)> none;
+        c.finalize_once(0, none, myframe::CompletionReason::Success);   // A 的陈旧回投(gen=0)
+        CHECK(b_after == 0);                            // 不得运行 B 的 after
+        c.finalize_once(1, none, myframe::CompletionReason::Success);   // B 正常完成
+        CHECK(b_after == 1);                            // 恰好一次
+    }
 
     if (g_fail == 0) { printf("test_http_context: ALL PASS\n"); return 0; }
     printf("test_http_context: %d FAIL\n", g_fail);

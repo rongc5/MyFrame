@@ -61,6 +61,15 @@ struct MfAsyncHolder<void> {
     }
 };
 
+class HttpContext;   // 供中间件 typedef 前置引用
+
+// 请求完成原因（after 钩子 = 请求结束钩子；契约见 docs/http-router-rfc.md §4）。
+// v1 只产生 Success/Error/ShortCircuited；Disconnected 保留、暂不触发（断线不跑 after）。
+enum class CompletionReason { Success, Error, ShortCircuited, Disconnected };
+// before：返回 false = 短路（须已设响应，否则框架兜底 500）。after：请求结束钩子，逆序、最多一次。
+typedef std::function<bool(HttpContext&)> BeforeMiddleware;
+typedef std::function<void(HttpContext&, CompletionReason)> AfterMiddleware;
+
 class HttpContext {
 public:
     virtual ~HttpContext() = default;
@@ -127,6 +136,15 @@ public:
 
     // ����첽��Ӧ��ɲ�֪ͨ���ͣ����� set_async_response_pending(false) + notify_send_ready()��
     virtual void complete_async_response() = 0;
+
+    // ===== 中间件 after 生命周期（请求结束钩子；由 MiddlewareChain 驱动）=====
+    // 进入某 before 时登记其 after（含短路的那个）；request-scoped，每请求 reset 清空。
+    virtual void push_after(AfterMiddleware after) = 0;
+    // 逆序执行已登记的 after，最多一次；单个 after 抛异常记录并继续、不改写响应、不阻断。
+    // reason==Disconnected 时 v1 不执行（断线不跑 after）。
+    virtual void run_after_chain(CompletionReason reason) = 0;
+    // handler 返回后是否处于异步挂起：是则 after 交由 finalize_once 在真正完成时执行。
+    virtual bool async_pending() const = 0;
 
     // ������ʽ��Ӧģʽ
     virtual void enable_streaming() = 0;
