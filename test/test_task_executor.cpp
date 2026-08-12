@@ -61,6 +61,28 @@ int main() {
         CHECK(ex.submit([]{}) == false);
     }
 
+    // 5) shutdown：取消排队任务、等待在执行任务结束、及时返回（不排空队列）
+    //    用「submit 变 false」作为闸门，确保 shutdown 已清空队列后才放行在执行任务，
+    //    从而排队任务确定性地不被执行。
+    {
+        TaskExecutor ex(1, 16);
+        std::atomic<bool> block(true);
+        std::atomic<int> inflight_ran(0), queued_ran(0);
+        ex.submit([&]{ while (block.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1)); ++inflight_ran; });
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));   // 让唯一线程取走并阻塞
+        for (int i = 0; i < 5; ++i) ex.submit([&queued_ran]{ ++queued_ran; });  // 5 个排队
+
+        std::thread killer([&]{ ex.shutdown(); });     // 另一线程发起停机（会 join，阻塞在在执行任务）
+        for (int i = 0; i < 200 && ex.submit([]{}); ++i)          // 等到 submit 被拒 = _stop 已置且队列已清
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        CHECK(ex.submit([]{}) == false);               // 停机中：拒绝提交
+        block.store(false);                            // 放行在执行任务 → 停机得以完成
+        killer.join();
+
+        CHECK(inflight_ran.load() == 1);               // 在执行的任务被等待完成
+        CHECK(queued_ran.load() == 0);                 // 排队任务被取消（未执行）
+    }
+
     if (g_fail == 0) { printf("test_task_executor: ALL PASS\n"); return 0; }
     printf("test_task_executor: %d FAIL\n", g_fail);
     return 1;

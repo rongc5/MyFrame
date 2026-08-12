@@ -6,6 +6,7 @@
 #include "protocol_adapters/http_context_adapter.h"
 #include <cstdio>
 #include <string>
+#include <stdexcept>
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); ++g_fail; } } while (0)
@@ -36,6 +37,45 @@ int main() {
     CHECK(ctx.get_ext<Principal>("principal") == NULL);         // 扩展清空 → 无跨请求泄漏
     CHECK(ctx.response().status == 200);                        // response 复位为默认
     CHECK(ctx.response().body.empty());
+
+    // ===== finalize_once：网络线程统一完成出口的三重不变式 =====
+    // (1) 幂等：同一代号只应用一次（对应“complete_async_response 重复调用只发送一次”）
+    {
+        myframe::HttpContextImpl c(nullptr, nullptr);   // gen=0, Handling
+        int applied = 0;
+        std::function<void(myframe::HttpContext&)> inc =
+            [&applied](myframe::HttpContext&) { ++applied; };
+        c.finalize_once(0, inc);
+        c.finalize_once(0, inc);          // 已 Finalized → 幂等
+        CHECK(applied == 1);
+    }
+    // (2) 代号变化 → 丢弃陈旧异步结果（Keep-Alive 已进入下一请求）
+    {
+        myframe::HttpContextImpl c(nullptr, nullptr);   // gen=0
+        c.reset_for_request();                          // gen=1, Handling
+        int applied = 0;
+        std::function<void(myframe::HttpContext&)> inc =
+            [&applied](myframe::HttpContext&) { ++applied; };
+        c.finalize_once(0, inc);          // 旧代号 → 丢弃
+        CHECK(applied == 0);
+        c.finalize_once(1, inc);          // 新代号 → 应用
+        CHECK(applied == 1);
+    }
+    // (3) apply 抛异常（work 异常 rethrow 或 on_success 抛）→ 兜底 500，请求仍完成
+    {
+        myframe::HttpContextImpl c(nullptr, nullptr);
+        c.finalize_once(0, [](myframe::HttpContext&) { throw std::runtime_error("boom"); });
+        CHECK(c.response().status == 500);
+        c.finalize_once(0, [](myframe::HttpContext& x) { x.response().status = 200; }); // 已完成 → 幂等
+        CHECK(c.response().status == 500);
+    }
+    // (4) 请求级 body 复位：reset 后 request().body 为空（防 Keep-Alive 跨请求泄漏）
+    {
+        myframe::HttpContextImpl c(nullptr, nullptr);
+        c.mutable_request().body = "secret";
+        c.reset_for_request();
+        CHECK(c.request().body.empty());
+    }
 
     if (g_fail == 0) { printf("test_http_context: ALL PASS\n"); return 0; }
     printf("test_http_context: %d FAIL\n", g_fail);
