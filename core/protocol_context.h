@@ -194,6 +194,14 @@ public:
     // 当前请求代号（Keep-Alive 每请求 ++；异步回投据此判断是否已换请求）
     virtual uint64_t request_generation() const = 0;
 
+    // ===== 路由参数 / HEAD body 抑制（由 RoutingHandler 分发层写入；request-scoped）=====
+    // 捕获的 {param}（Router 匹配后由分发层注入）；不存在返回空串。
+    virtual const std::string& route_param(const std::string& key) const = 0;
+    virtual void set_route_params(const std::map<std::string, std::string>& params) = 0;
+    // HEAD：复用 GET handler 但发送阶段抑制 body（保留状态/headers/Content-Length）。
+    virtual void set_suppress_body(bool on) = 0;
+    virtual bool suppress_body() const = 0;
+
     // ========== �ײ���� ==========
 
     // ��ȡ������Ϣ

@@ -23,6 +23,7 @@ test/test_*
 !test/test_http_router.cpp
 !test/test_http_middleware.cpp
 !test/test_http_json.cpp
+!test/test_http_routing.cpp
 build_test/
 test/simple_*
 test/https_*

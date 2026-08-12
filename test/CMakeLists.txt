@@ -35,6 +35,12 @@ maybe_add_exe(test_task_executor ${CMAKE_CURRENT_SOURCE_DIR}/test_task_executor.
 if(TARGET test_task_executor)
     add_test(NAME task_executor COMMAND test_task_executor)
 endif()
+# Router 接入分发集成（route_param/HEAD→GET 抑制 body/auto-OPTIONS/404/405/400）
+maybe_add_exe(test_http_routing ${CMAKE_CURRENT_SOURCE_DIR}/test_http_routing.cpp)
+if(TARGET test_http_routing)
+    add_test(NAME http_routing COMMAND test_http_routing)
+    set_tests_properties(http_routing PROPERTIES TIMEOUT 60)
+endif()
 # 中间件链回归（before 顺序/after 逆序/短路/异常/after-once）
 maybe_add_exe(test_http_middleware ${CMAKE_CURRENT_SOURCE_DIR}/test_http_middleware.cpp)
 if(TARGET test_http_middleware)

@@ -106,6 +106,10 @@ handler 签名：`std::function<void(HttpContext&)>`。
   - 无显式 `OPTIONS` → 自动 **204 + `Allow`**；
   - `Allow` 组装：存在 `GET` 则同时列 `GET, HEAD`；自动 `OPTIONS` 启用时再列 `OPTIONS`（去重、字典序）；
   - **HEAD body 抑制放在分发/发送层**，不污染纯 Router。
+- **框架生成响应也经全局 middleware**（避免旁路）：`RoutingHandler` 把 400/404/405/自动 OPTIONS
+  同样交给 `MiddlewareChain::execute`（用合成 handler、`route_mws=nullptr` → **只全局、不跑路由业务 handler/路由级鉴权**），
+  从而 CORS/request-id/access-log 等**全局 after 在错误响应与 OPTIONS 预检上也生效**；after 统一由 `run_after_chain` 执行一次。
+  规则：Found=全局(+路由) middleware；框架 400/404/405/OPTIONS=仅全局 middleware；HEAD→GET 跑与 GET 相同的 middleware，仅发送层抑制实体。
 - **参数生命周期**：`params` 为值语义、随 `MatchResult` 返回并独立拥有；DFS 回溯时对**未命中路径**的捕获做 `erase`；
   同一路径内**参数名唯一**（注册期强制），避免回溯 `erase` 误删同名捕获。
 - **百分号解码边界**：`%` 后不足 2 位或非十六进制 → **400**；`%00` 解为内嵌 `\0`（`std::string` 承载，调用方需自行防注入）；

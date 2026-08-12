@@ -18,7 +18,8 @@ namespace myframe {
 
 HttpContextImpl::HttpContextImpl(http_base_process* process, std::shared_ptr<base_net_obj> conn)
     : _process(process), _conn(conn), _request_generation(0),
-      _state(RequestState::Handling), _after_ran(false), _streaming_enabled(false) {
+      _state(RequestState::Handling), _after_ran(false), _suppress_body(false),
+      _streaming_enabled(false) {
     // ��ʼ��������Ϣ
     if (conn) {
         // ע��base_net_obj ��ǰ���ṩ IP/�˿ڷ��ʽӿ�
@@ -60,8 +61,21 @@ void HttpContextImpl::reset_for_request() {
     _state = RequestState::Handling;
     _after_stack.clear();       // 清中间件 after 栈（request-scoped，防跨请求）
     _after_ran = false;
+    _route_params.clear();      // 清路由参数（request-scoped）
+    _suppress_body = false;
     ++_request_generation;
 }
+
+const std::string& HttpContextImpl::route_param(const std::string& key) const {
+    static const std::string empty;
+    std::map<std::string, std::string>::const_iterator it = _route_params.find(key);
+    return it == _route_params.end() ? empty : it->second;
+}
+void HttpContextImpl::set_route_params(const std::map<std::string, std::string>& params) {
+    _route_params = params;
+}
+void HttpContextImpl::set_suppress_body(bool on) { _suppress_body = on; }
+bool HttpContextImpl::suppress_body() const { return _suppress_body; }
 
 const HttpRequest& HttpContextImpl::request() const {
     return _request;
@@ -377,6 +391,8 @@ void HttpContextDataProcess::msg_recv_finish() {
         } else {
             res_head._headers["Content-Length"] = "0";
         }
+        // HEAD：抑制 body（保留上面已算的 Content-Length，不发送实体）
+        if (_context->suppress_body()) _send_body.clear();
 
         // ȷ���� Connection ͷ
         if (res_head._headers.find("Connection") == res_head._headers.end()) {
@@ -423,6 +439,8 @@ void HttpContextDataProcess::complete_async_response() {
         } else {
             res_head._headers["Content-Length"] = "0";
         }
+        // HEAD：抑制 body（保留上面已算的 Content-Length，不发送实体）
+        if (_context->suppress_body()) _send_body.clear();
 
         PDEBUG("[HttpContextDataProcess] Async response completed: status=%d, body_size=%zu",
                res_head._response_code, _send_body.size());

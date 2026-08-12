@@ -64,7 +64,11 @@ public:
     void set_ext_erased(const std::string& key, std::type_index ti, std::shared_ptr<void> val) override;
     std::shared_ptr<void> get_ext_erased(const std::string& key, std::type_index ti) const override;
     uint64_t request_generation() const override;
-    // 内部：新请求开始时重置（清 response/extensions/user_data/streaming，++generation）
+    const std::string& route_param(const std::string& key) const override;
+    void set_route_params(const std::map<std::string, std::string>& params) override;
+    void set_suppress_body(bool on) override;
+    bool suppress_body() const override;
+    // 内部：新请求开始时重置（清 response/extensions/user_data/streaming/route/suppress，++generation）
     void reset_for_request();
 
     ConnectionInfo& connection_info() override;
@@ -98,6 +102,8 @@ private:
     RequestState _state;
     std::vector<AfterMiddleware> _after_stack;   // 已进入的 after（request-scoped）
     bool _after_ran;                             // after 链是否已执行（最多一次）
+    std::map<std::string, std::string> _route_params;  // 路由捕获参数（request-scoped）
+    bool _suppress_body;                         // HEAD：发送阶段抑制 body
     ConnectionInfo _conn_info;
     bool _streaming_enabled;
 };
