@@ -20,6 +20,7 @@ test/test_*
 !test/test_http_context.cpp
 !test/test_task_executor.cpp
 !test/test_http_async_integration.cpp
+!test/test_http_router.cpp
 build_test/
 test/simple_*
 test/https_*

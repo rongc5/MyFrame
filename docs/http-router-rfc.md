@@ -86,6 +86,18 @@ handler 签名：`std::function<void(HttpContext&)>`。
 - **通配 `*`**：v1 不支持。
 - 注册完成后**冻结**：构建只读结构（静态用 hash、含参用 trie），运行期只读**无锁**。
 
+**实现（提交2，`core/http_router.{h,cpp}`）：**
+- 纯路由表：`Router::add/get/post/put/del` 注册，`match(method, raw_path)` 返回
+  `MatchResult{ status, handler, params, allow }`，`MatchStatus{Found,NotFound,MethodNotAllowed,BadRequest}`。
+- trie 节点含 `static_children`(map) + 唯一 `param_child`；匹配 DFS **静态优先并回溯**
+  （静态前缀走进死路时回退到 `{param}`，兼顾优先级与正确性）。
+- **先按 `/` 分段、再逐段 URL decode**：`%2F` 解为段内字面 `'/'`、不改变层级；非法百分号编码 → `BadRequest(400)`。
+- 冲突检测：重复 `method+path`、同位 `{param}` 名不同（`{id}` vs `{name}`）→ `add` 抛 `std::runtime_error`。
+- `Allow` 取终结点 `methods` 的 map 键（**天然去重 + 字典序稳定**）。
+- `freeze()` 后 `add` 抛异常；`match` 全程只读、**并发安全无锁**（已并发单测）。
+- **Context 绑定推迟**：`route_param()`/把 Router 接入 `on_http_request` 分发放到 energyhub 集成提交，
+  本提交保持 Router 与运行时解耦、可独立单测（`test/test_http_router.cpp`）。
+
 ## 4. Middleware（提交3）
 
 ```cpp

@@ -35,6 +35,11 @@ maybe_add_exe(test_task_executor ${CMAKE_CURRENT_SOURCE_DIR}/test_task_executor.
 if(TARGET test_task_executor)
     add_test(NAME task_executor COMMAND test_task_executor)
 endif()
+# 路由表回归（静态优先/{param}/decode/405 Allow/freeze/并发只读）
+maybe_add_exe(test_http_router ${CMAKE_CURRENT_SOURCE_DIR}/test_http_router.cpp)
+if(TARGET test_http_router)
+    add_test(NAME http_router COMMAND test_http_router)
+endif()
 # 真实 HTTP 服务上的两阶段异步生命周期集成测试（成功/500/503/断开/Keep-Alive body）
 maybe_add_exe(test_http_async_integration ${CMAKE_CURRENT_SOURCE_DIR}/test_http_async_integration.cpp)
 if(TARGET test_http_async_integration)
