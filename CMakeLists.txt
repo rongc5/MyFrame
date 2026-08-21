@@ -134,11 +134,14 @@ add_custom_command(TARGET myframe POST_BUILD
 )
 
 # Test targets - optional
+enable_testing()   # 启用 CTest，使 test/ 内的 add_test() 生效（ctest --output-on-failure）
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt")
     add_subdirectory(test)
 endif()
 
-# Examples targets - optional
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt")
+# Examples targets - optional. 默认 OFF：部分示例源被 .gitignore 忽略，clean checkout 不应因此
+# 无法构建库。需要示例时 -DMYFRAME_BUILD_EXAMPLES=ON（examples/CMakeLists.txt 内已按源存在与否跳过）。
+option(MYFRAME_BUILD_EXAMPLES "Build example programs" OFF)
+if(MYFRAME_BUILD_EXAMPLES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt")
     add_subdirectory(examples)
 endif()

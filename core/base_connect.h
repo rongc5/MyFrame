@@ -318,9 +318,16 @@ class base_connect:public base_net_obj
                     _recv_buf.erase(0, _recv_buf_len); 
                 }
                 if (p_ret > 0 && _peek_drain_backlog > 0) {
-                    size_t need = std::min(_peek_drain_backlog, static_cast<size_t>(p_ret));
-                    size_t flushed = drain_peek_bytes(need);
-                    _peek_drain_backlog -= flushed;
+                    if (_codec) {
+                        // A TLS probe installs SslCodec while handling bytes read
+                        // with MSG_PEEK.  Those bytes must remain in the socket so
+                        // SSL_accept() can consume the complete ClientHello.
+                        _peek_drain_backlog = 0;
+                    } else {
+                        size_t need = std::min(_peek_drain_backlog, static_cast<size_t>(p_ret));
+                        size_t flushed = drain_peek_bytes(need);
+                        _peek_drain_backlog -= flushed;
+                    }
                 }
             }        
 

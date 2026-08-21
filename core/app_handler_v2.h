@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <cstddef>
 #include <memory>
+#include <algorithm>
+#include <cctype>
 
 // Forward declarations (global namespace)
 class normal_msg;
@@ -69,10 +71,17 @@ struct HttpRequest {
 
     HttpRequest() : method("GET"), version("HTTP/1.1") {}
 
-    // 便捷方法
+    // 便捷方法（HTTP 头名大小写不敏感，RFC7230）
     std::string get_header(const std::string& name) const {
         auto it = headers.find(name);
-        return it != headers.end() ? it->second : std::string();
+        if (it != headers.end()) return it->second;           // 先精确命中（常见路径）
+        for (const auto& kv : headers) {                      // 回退：大小写不敏感
+            if (kv.first.size() == name.size() &&
+                std::equal(kv.first.begin(), kv.first.end(), name.begin(),
+                           [](char a, char b){ return std::tolower((unsigned char)a) == std::tolower((unsigned char)b); }))
+                return kv.second;
+        }
+        return std::string();
     }
 
     // 解析 query 参数（简单实现）

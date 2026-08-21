@@ -58,7 +58,9 @@ private:
     IApplicationHandler* _handler;
     std::string _recv_body;      // 保存请求体内容
     std::string _response_body;  // 保存响应体内容
+    bool _head_sent;
     bool _body_sent;
+    bool _suppress_response_body; // HEAD: advertise representation, send no body
 };
 
 } // namespace myframe

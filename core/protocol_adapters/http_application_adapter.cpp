@@ -43,7 +43,9 @@ HttpApplicationDataProcess::HttpApplicationDataProcess(
     IApplicationHandler* handler)
     : http_base_data_process(process)
     , _handler(handler)
+    , _head_sent(false)
     , _body_sent(false)
+    , _suppress_response_body(false)
 {
     PDEBUG("[HttpApplicationDataProcess] Created");
 }
@@ -64,6 +66,7 @@ void HttpApplicationDataProcess::msg_recv_finish() {
     req.url = req_head._url_path;
     req.version = req_head._version;
     req.headers = req_head._headers;
+    _suppress_response_body = (strcasecmp(req.method.c_str(), "HEAD") == 0);
 
     // 获取请求体（move 后 swap 释放内存）
     req.body = std::move(_recv_body);
@@ -85,6 +88,7 @@ void HttpApplicationDataProcess::msg_recv_finish() {
 
         // 保存响应体
         _response_body = res.body;
+        _head_sent = false;
         _body_sent = false;
 
         // 设置响应头参数
@@ -93,8 +97,19 @@ void HttpApplicationDataProcess::msg_recv_finish() {
         res_head._response_str = res.reason;
         res_head._headers = res.headers;
 
-        // 自动设置 Content-Length
-        if (res_head._headers.find("Content-Length") == res_head._headers.end()) {
+        // HEAD never carries a response body. If the handler built the GET
+        // representation, advertise its size and suppress it only at send
+        // time. Legacy handlers may already have cleared the body; omitting
+        // Content-Length then avoids the false `Content-Length: 0` response.
+        bool has_content_length = false;
+        for (const auto& kv : res_head._headers) {
+            if (strcasecmp(kv.first.c_str(), "Content-Length") == 0) {
+                has_content_length = true;
+                break;
+            }
+        }
+        if (!has_content_length &&
+            (!_suppress_response_body || !_response_body.empty())) {
             char buf[32];
             snprintf(buf, sizeof(buf), "%zu", _response_body.size());
             res_head._headers["Content-Length"] = buf;
@@ -113,6 +128,7 @@ void HttpApplicationDataProcess::msg_recv_finish() {
 
         // 发生异常，返回500错误
         _response_body = "Internal Server Error";
+        _head_sent = false;
         _body_sent = false;
 
         auto& res_head = _base_process->get_res_head_para();
@@ -129,6 +145,9 @@ void HttpApplicationDataProcess::msg_recv_finish() {
 
 std::string* HttpApplicationDataProcess::get_send_head() {
     PDEBUG("[HttpApplicationDataProcess] get_send_head called");
+
+    if (_head_sent) return nullptr;
+    _head_sent = true;
 
     auto& res_head = _base_process->get_res_head_para();
 
@@ -176,6 +195,12 @@ std::string* HttpApplicationDataProcess::get_send_body(int& result) {
     }
 
     _body_sent = true;
+
+    if (_suppress_response_body) {
+        std::string().swap(_response_body);
+        result = 1;
+        return nullptr;
+    }
 
     if (_response_body.empty()) {
         result = 1;  // 没有 body，结束发送

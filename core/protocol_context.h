@@ -15,6 +15,21 @@
 #include <vector>
 #include <cstdint>
 #include <memory>
+#include <typeindex>
+#include <utility>
+#include <type_traits>
+#include <exception>
+
+// C++11 兼容的弃用标注（[[deprecated]] 是 C++14）
+#ifndef MYFRAME_DEPRECATED
+#  if __cplusplus >= 201402L
+#    define MYFRAME_DEPRECATED(msg) [[deprecated(msg)]]
+#  elif defined(__GNUC__) || defined(__clang__)
+#    define MYFRAME_DEPRECATED(msg) __attribute__((deprecated(msg)))
+#  else
+#    define MYFRAME_DEPRECATED(msg)
+#  endif
+#endif
 
 namespace myframe {
 
@@ -26,6 +41,43 @@ namespace myframe {
 // ============================================================================
 // HTTP Э��������
 // ============================================================================
+
+// 两阶段异步内部载体：承载 work() 的成功值或异常。
+// 用 shared_ptr<R> 存放结果，不要求 R 可默认构造（成功前为空指针）。
+template <class R>
+struct MfAsyncHolder {
+    std::exception_ptr error;       // 非空表示 work 抛异常
+    std::shared_ptr<R> value;       // 非空表示成功
+    void run(std::function<R()>& work) {
+        try { value = std::make_shared<R>(work()); }
+        catch (...) { error = std::current_exception(); }
+    }
+};
+template <>
+struct MfAsyncHolder<void> {
+    std::exception_ptr error;
+    void run(std::function<void()>& work) {
+        try { work(); } catch (...) { error = std::current_exception(); }
+    }
+};
+
+class HttpContext;   // 供中间件 typedef 前置引用
+
+// 请求完成原因（after 钩子 = 请求结束钩子；契约见 docs/http-router-rfc.md §4）。
+// v1 只产生 Success/Error/ShortCircuited；Disconnected 保留、暂不触发（断线不跑 after）。
+enum class CompletionReason { Success, Error, ShortCircuited, Disconnected };
+// before：返回 false = 短路（须已设响应，否则框架兜底 500）。after：请求结束钩子，逆序、最多一次。
+typedef std::function<bool(HttpContext&)> BeforeMiddleware;
+typedef std::function<void(HttpContext&, CompletionReason)> AfterMiddleware;
+
+// 一个中间件 = 可选 before + 可选 after（同一逻辑单元的前后半）。
+// 放这里以便 Router（路由级 middleware）与 MiddlewareChain（全局）共用同一类型。
+struct Middleware {
+    BeforeMiddleware before;   // 空 = 无前置（总是"进入"）
+    AfterMiddleware  after;    // 空 = 无后置
+    Middleware() {}
+    Middleware(BeforeMiddleware b, AfterMiddleware a) : before(std::move(b)), after(std::move(a)) {}
+};
 
 class HttpContext {
 public:
@@ -42,10 +94,66 @@ public:
     // ========== �߼����� ==========
 
     // �첽��Ӧ - ����һ���߳���ִ�� fn��Ȼ������Ӧ
+    // [已弃用] 单阶段异步：回调在工作线程执行、易捕获裸 ctx 造成悬空/跨线程改 response。
+    MYFRAME_DEPRECATED("use two-phase async_response(work, done) instead")
     virtual void async_response(std::function<void()> fn) = 0;
+
+    // 两阶段异步（安全，默认安全语义）：
+    //   work:       工作线程执行，只算结果，绝不接触 Context；
+    //   on_success: work 成功后回投所属网络线程执行，收到结果值 R。
+    // 框架自动兜底（不需要业务处理错误路径）：
+    //   - work 抛异常  → 500，不调用 on_success；
+    //   - 队列拒绝     → 503，不调用 on_success；
+    //   - on_success 自身抛异常 → 500。
+    // 响应恰好 finalize 一次（含 Keep-Alive 换请求/连接断开的丢弃）。
+    // 注意：R != void 时需显式传 std::function<R()>（lambda 不会自动推导为 std::function）。
+    template <class R>
+    void async_response(std::function<R()> work,
+                        std::function<void(HttpContext&, R)> on_success) {
+        std::shared_ptr<MfAsyncHolder<R> > holder = std::make_shared<MfAsyncHolder<R> >();
+        std::function<void()> work_thunk =
+            [holder, work]() mutable { holder->run(work); };
+        // apply 在网络线程执行：work 有异常则重新抛出（由 finalize_once 兜底成 500），
+        // 否则调用业务 on_success。
+        std::function<void(HttpContext&)> apply_thunk =
+            [holder, on_success](HttpContext& ctx) {
+                if (holder->error) std::rethrow_exception(holder->error);
+                on_success(ctx, *holder->value);
+            };
+        async_response_erased(std::move(work_thunk), std::move(apply_thunk));
+    }
+
+    // void 结果重载（无返回值）。
+    void async_response(std::function<void()> work,
+                        std::function<void(HttpContext&)> on_success) {
+        std::shared_ptr<MfAsyncHolder<void> > holder = std::make_shared<MfAsyncHolder<void> >();
+        std::function<void()> work_thunk =
+            [holder, work]() mutable { holder->run(work); };
+        std::function<void(HttpContext&)> apply_thunk =
+            [holder, on_success](HttpContext& ctx) {
+                if (holder->error) std::rethrow_exception(holder->error);
+                on_success(ctx);
+            };
+        async_response_erased(std::move(work_thunk), std::move(apply_thunk));
+    }
+
+    // 类型擦除落点（模板不能是虚函数）。实现见 HttpContextImpl。
+    //   work_thunk : 工作线程执行，绝不抛异常（异常已被 holder 吞入）；
+    //   apply_thunk: 网络线程执行，成功则应用结果、失败则抛异常（框架兜底 500）。
+    virtual void async_response_erased(std::function<void()> work_thunk,
+                                       std::function<void(HttpContext&)> apply_thunk) = 0;
 
     // ����첽��Ӧ��ɲ�֪ͨ���ͣ����� set_async_response_pending(false) + notify_send_ready()��
     virtual void complete_async_response() = 0;
+
+    // ===== 中间件 after 生命周期（请求结束钩子；由 MiddlewareChain 驱动）=====
+    // 进入某 before 时登记其 after（含短路的那个）；request-scoped，每请求 reset 清空。
+    virtual void push_after(AfterMiddleware after) = 0;
+    // 逆序执行已登记的 after，最多一次；单个 after 抛异常记录并继续、不改写响应、不阻断。
+    // reason==Disconnected 时 v1 不执行（断线不跑 after）。
+    virtual void run_after_chain(CompletionReason reason) = 0;
+    // handler 返回后是否处于异步挂起：是则 after 交由 finalize_once 在真正完成时执行。
+    virtual bool async_pending() const = 0;
 
     // ������ʽ��Ӧģʽ
     virtual void enable_streaming() = 0;
@@ -70,10 +178,38 @@ public:
     // ========== �û����ݴ洢 ==========
 
     // �洢�û��Զ�������
+    MYFRAME_DEPRECATED("use set_ext<T>() instead")
     virtual void set_user_data(const std::string& key, void* data) = 0;
 
-    // ��ȡ�û��Զ�������
+    MYFRAME_DEPRECATED("use get_ext<T>() instead")
     virtual void* get_user_data(const std::string& key) const = 0;
+
+    // ===== 类型安全请求扩展（拥有对象；每请求 reset_for_request 清空）=====
+    template <class T, class... A>
+    T& set_ext(const std::string& key, A&&... args) {
+        typedef typename std::remove_cv<typename std::remove_reference<T>::type>::type S;
+        std::shared_ptr<S> p = std::make_shared<S>(std::forward<A>(args)...);
+        set_ext_erased(key, std::type_index(typeid(S)), std::static_pointer_cast<void>(p));
+        return *p;
+    }
+    template <class T>
+    T* get_ext(const std::string& key) const {
+        typedef typename std::remove_cv<typename std::remove_reference<T>::type>::type S;
+        std::shared_ptr<void> v = get_ext_erased(key, std::type_index(typeid(S)));
+        return v ? static_cast<S*>(v.get()) : nullptr;
+    }
+    virtual void set_ext_erased(const std::string& key, std::type_index ti, std::shared_ptr<void> val) = 0;
+    virtual std::shared_ptr<void> get_ext_erased(const std::string& key, std::type_index ti) const = 0;
+    // 当前请求代号（Keep-Alive 每请求 ++；异步回投据此判断是否已换请求）
+    virtual uint64_t request_generation() const = 0;
+
+    // ===== 路由参数 / HEAD body 抑制（由 RoutingHandler 分发层写入；request-scoped）=====
+    // 捕获的 {param}（Router 匹配后由分发层注入）；不存在返回空串。
+    virtual const std::string& route_param(const std::string& key) const = 0;
+    virtual void set_route_params(const std::map<std::string, std::string>& params) = 0;
+    // HEAD：复用 GET handler 但发送阶段抑制 body（保留状态/headers/Content-Length）。
+    virtual void set_suppress_body(bool on) = 0;
+    virtual bool suppress_body() const = 0;
 
     // ========== �ײ���� ==========
 

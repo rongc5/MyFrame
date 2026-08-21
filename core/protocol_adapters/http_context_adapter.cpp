@@ -1,5 +1,6 @@
 // MyFrame Unified Protocol Architecture - HTTP Context Adapter Implementation
 #include "http_context_adapter.h"
+#include "../task_executor.h"
 #include "../base_net_obj.h"
 #include "../string_pool.h"
 #include "../common_obj_container.h"
@@ -16,7 +17,9 @@ namespace myframe {
 // ============================================================================
 
 HttpContextImpl::HttpContextImpl(http_base_process* process, std::shared_ptr<base_net_obj> conn)
-    : _process(process), _conn(conn), _streaming_enabled(false) {
+    : _process(process), _conn(conn), _request_generation(0),
+      _state(RequestState::Handling), _after_ran(false), _suppress_body(false),
+      _streaming_enabled(false) {
     // ��ʼ��������Ϣ
     if (conn) {
         // ע��base_net_obj ��ǰ���ṩ IP/�˿ڷ��ʽӿ�
@@ -33,6 +36,47 @@ HttpContextImpl::~HttpContextImpl() {
     _user_data.clear();
 }
 
+void HttpContextImpl::set_ext_erased(const std::string& key, std::type_index ti, std::shared_ptr<void> val) {
+    std::unordered_map<std::string, std::pair<std::type_index, std::shared_ptr<void> > >::iterator it = _ext.find(key);
+    if (it != _ext.end()) { it->second.first = ti; it->second.second = std::move(val); }
+    else { _ext.emplace(key, std::make_pair(ti, std::move(val))); }
+}
+
+std::shared_ptr<void> HttpContextImpl::get_ext_erased(const std::string& key, std::type_index ti) const {
+    std::unordered_map<std::string, std::pair<std::type_index, std::shared_ptr<void> > >::const_iterator it = _ext.find(key);
+    if (it == _ext.end() || it->second.first != ti) return std::shared_ptr<void>();
+    return it->second.second;
+}
+
+uint64_t HttpContextImpl::request_generation() const { return _request_generation; }
+
+// 新请求开始时重置：清 response/extensions/user_data/streaming，++generation。
+// 杜绝 Keep-Alive 下上一请求的租户身份/响应残留泄漏进下一请求。
+void HttpContextImpl::reset_for_request() {
+    _request = HttpRequest();     // 清请求（含 body/headers），防 Keep-Alive 跨请求泄漏
+    _response = HttpResponse();
+    _ext.clear();
+    _user_data.clear();
+    _streaming_enabled = false;
+    _state = RequestState::Handling;
+    _after_stack.clear();       // 清中间件 after 栈（request-scoped，防跨请求）
+    _after_ran = false;
+    _route_params.clear();      // 清路由参数（request-scoped）
+    _suppress_body = false;
+    ++_request_generation;
+}
+
+const std::string& HttpContextImpl::route_param(const std::string& key) const {
+    static const std::string empty;
+    std::map<std::string, std::string>::const_iterator it = _route_params.find(key);
+    return it == _route_params.end() ? empty : it->second;
+}
+void HttpContextImpl::set_route_params(const std::map<std::string, std::string>& params) {
+    _route_params = params;
+}
+void HttpContextImpl::set_suppress_body(bool on) { _suppress_body = on; }
+bool HttpContextImpl::suppress_body() const { return _suppress_body; }
+
 const HttpRequest& HttpContextImpl::request() const {
     return _request;
 }
@@ -42,44 +86,129 @@ HttpResponse& HttpContextImpl::response() {
 }
 
 void HttpContextImpl::async_response(std::function<void()> fn) {
-    // 设置异步响应标志，阻止立即发送
+    // [已弃用] 单阶段异步：fn 在工作线程执行且可能接触裸 ctx（不安全）。
+    // 兼容期改用有界执行器（不再每请求 detach 新线程）；请迁移到两阶段 async_response(work, on_success)。
     if (_process) {
         auto* data_process = _process->get_process();
         if (data_process) {
             auto* http_data_process = dynamic_cast<http_base_data_process*>(data_process);
-            if (http_data_process) {
-                http_data_process->set_async_response_pending(true);
-                PDEBUG("[HttpContext] Async response mode enabled");
-            }
+            if (http_data_process) http_data_process->set_async_response_pending(true);
         }
     }
-
-    // 启动异步执行，在后台线程执行回调
-    if (fn) {
-        // 注意：这里需要配合业务线程或使用线程池
-        // 当前实现：直接在新线程中执行
-        // TODO: 可以改用线程池或业务线程调度
-        std::thread([fn, this]() {
-            fn();
-            // 回调执行完成后，需要调用 complete_async_response() 来触发发送
-        }).detach();
+    if (!fn) return;
+    bool submitted = default_task_executor().submit([fn]() { fn(); });
+    if (!submitted) {
+        // 执行器拒绝：直接完成（幂等），避免永远 pending
+        _response = HttpResponse();
+        _response.status = 503;
+        _response.reason = "Service Unavailable";
+        complete_async_response();
     }
 }
 
-void HttpContextImpl::complete_async_response() {
-    // ����첽��Ӧ��ɲ�֪ͨ���Է���
-    // ���ƾɿ�ܵ� set_async_response_pending(false) + notify_send_ready()
+void HttpContextImpl::async_response_erased(std::function<void()> work_thunk,
+                                            std::function<void(HttpContext&)> apply_thunk) {
+    // 标记异步挂起，阻止立即发送
     if (_process) {
-        // ��Ҫͨ�� http_base_data_process ����
+        auto* dp = _process->get_process();
+        auto* hdp = dp ? dynamic_cast<http_base_data_process*>(dp) : nullptr;
+        if (hdp) hdp->set_async_response_pending(true);
+    }
+    _state = RequestState::AsyncPending;
+    uint64_t gen = _request_generation;
+
+    auto c = _conn.lock();
+    if (!c) { finalize_once(gen, nullptr, CompletionReason::Disconnected); return; }   // 连接已不在：finalize 且 v1 不跑 after
+
+    ObjId objid = c->get_id();
+    bool submitted = default_task_executor().submit(
+        [work_thunk, apply_thunk, objid, gen]() {
+            work_thunk();   // 工作线程：只算结果、绝不接触 Context、绝不抛异常
+            std::shared_ptr<::normal_msg> tmsg =
+                std::make_shared<HttpContextTaskMessage>(
+                    [apply_thunk, gen](HttpContext& ctx) {
+                        // 网络线程统一出口：代号校验 + finalize-once + 异常兜底
+                        static_cast<HttpContextImpl&>(ctx).finalize_once(gen, apply_thunk);
+                    });
+            ObjId t = objid;   // put_obj_msg 取 ObjId&，需非 const 左值
+            base_net_thread::put_obj_msg(t, tmsg);   // 按连接 ID 投回网络线程；连接没了自动丢弃
+        });
+
+    if (!submitted) {
+        // 队列拒绝 → 503（此刻仍在网络线程，经统一出口完成；reason=Error 让 after 跑）
+        finalize_once(gen, [](HttpContext& ctx) {
+            ctx.response() = HttpResponse();
+            ctx.response().status = 503;
+            ctx.response().reason = "Service Unavailable";
+        }, CompletionReason::Error);
+    }
+}
+
+
+// 实际触发发送：set_async_response_pending(false) + notify_send_ready()。
+// 幂等由调用方（_state）保证，这里不再判重。
+void HttpContextImpl::do_notify_complete() {
+    if (_process) {
         auto* data_process = _process->get_process();
         if (data_process) {
-            // ���� http_base_data_process �� complete_async_response()
             auto* http_data_process = dynamic_cast<http_base_data_process*>(data_process);
             if (http_data_process) {
                 http_data_process->complete_async_response();
             }
         }
     }
+}
+
+// 完成异步响应并通知发送。幂等：重复调用只发送一次。
+// （旧单阶段 API 与流式仍会直接调用它；两阶段路径走 finalize_once。）
+void HttpContextImpl::complete_async_response() {
+    if (_state == RequestState::Finalized) return;   // 幂等：已完成
+    _state = RequestState::Finalized;
+    do_notify_complete();
+}
+
+// 网络线程统一完成出口：代号校验 + finalize-once + apply 异常兼底 500。
+void HttpContextImpl::finalize_once(uint64_t gen, const std::function<void(HttpContext&)>& apply,
+                                    CompletionReason reason) {
+    if (gen != _request_generation) return;          // 已换请求（Keep-Alive 下一请求）→ 丢弃陈旧结果
+    if (_state == RequestState::Finalized) return;   // 已完成 → 幂等
+    _state = RequestState::Finalized;
+    CompletionReason final_reason = reason;
+    try {
+        if (apply) apply(*this);                     // 成功回调 / rethrow work 异常
+    } catch (...) {
+        // work 异常或 on_success 自身抛异常 → 默认安全：500
+        _response = HttpResponse();
+        _response.status = 500;
+        _response.reason = "Internal Server Error";
+        final_reason = CompletionReason::Error;
+    }
+    run_after_chain(final_reason);                   // after 在“响应已定、字节未发”时逆序执行
+    do_notify_complete();                            // 恰好触发一次发送
+}
+
+// 登记进入的 after（含短路那个）；request-scoped，reset 清空。
+void HttpContextImpl::push_after(AfterMiddleware after) {
+    if (after) _after_stack.push_back(std::move(after));
+}
+
+// 逆序执行 after，最多一次；单个 after 抛异常记录并继续、不改写响应、不阻断 finalize。
+// v1：reason==Disconnected 不执行（断线不跑 after）。
+void HttpContextImpl::run_after_chain(CompletionReason reason) {
+    if (_after_ran) return;
+    _after_ran = true;
+    if (reason == CompletionReason::Disconnected) return;   // v1：断线/取消不跑 after
+    for (std::vector<AfterMiddleware>::reverse_iterator it = _after_stack.rbegin();
+         it != _after_stack.rend(); ++it) {
+        try { if (*it) (*it)(*this, reason); }
+        catch (...) {
+            PDEBUG("[HttpContext] after middleware threw; continuing");   // 记录并继续
+        }
+    }
+}
+
+bool HttpContextImpl::async_pending() const {
+    return _state == RequestState::AsyncPending;
 }
 
 void HttpContextImpl::enable_streaming() {
@@ -226,6 +355,9 @@ std::string* HttpContextDataProcess::get_send_body(int& result) {
 void HttpContextDataProcess::msg_recv_finish() {
     if (!_handler || !_context) return;
 
+    // 每个请求开始先重置上下文（Keep-Alive 复用连接时防跨请求泄漏）
+    _context->reset_for_request();
+
     try {
         // ���������Ϣ��ֱ�ӷ���˽�г�Ա����Ϊ�� friend��
         auto& req_head = _base_process->get_req_head_para();
@@ -235,7 +367,13 @@ void HttpContextDataProcess::msg_recv_finish() {
         ctx_req.url = req_head._url_path;
         ctx_req.version = req_head._version;
         ctx_req.headers = req_head._headers;
-        ctx_req.body = _recv_body;  // ����������
+        ctx_req.body = std::move(_recv_body);  // move：转交本请求体并清空缓冲，防跨请求泄漏
+        _recv_body.clear();                    // move 后置空（保险，明确语义）
+        // Body suppression is a transport-level HEAD invariant. Apply it to
+        // explicit HEAD handlers and non-router handlers as well as auto-HEAD.
+        if (strcasecmp(ctx_req.method.c_str(), "HEAD") == 0) {
+            _context->set_suppress_body(true);
+        }
 
         // ���ô�����
         detail::HandlerContextScope scope(this);
@@ -252,12 +390,22 @@ void HttpContextDataProcess::msg_recv_finish() {
         // ������Ӧ�嵽 _send_body
         _send_body = ctx_res.body;
         
-        // �Զ����� Content-Length
-        if (!_send_body.empty()) {
-            res_head._headers["Content-Length"] = std::to_string(_send_body.size());
-        } else {
-            res_head._headers["Content-Length"] = "0";
+        bool has_content_length = false;
+        for (const auto& kv : res_head._headers) {
+            if (strcasecmp(kv.first.c_str(), "Content-Length") == 0) {
+                has_content_length = true;
+                break;
+            }
         }
+        if (!has_content_length) {
+            if (!_send_body.empty()) {
+                res_head._headers["Content-Length"] = std::to_string(_send_body.size());
+            } else if (!_context->suppress_body()) {
+                res_head._headers["Content-Length"] = "0";
+            }
+        }
+        // HEAD：抑制 body（保留上面已算的 Content-Length，不发送实体）
+        if (_context->suppress_body()) _send_body.clear();
 
         // ȷ���� Connection ͷ
         if (res_head._headers.find("Connection") == res_head._headers.end()) {
@@ -298,12 +446,22 @@ void HttpContextDataProcess::complete_async_response() {
         // 同步响应体
         _send_body = ctx_res.body;
 
-        // 自动设置 Content-Length
-        if (!_send_body.empty()) {
-            res_head._headers["Content-Length"] = std::to_string(_send_body.size());
-        } else {
-            res_head._headers["Content-Length"] = "0";
+        bool has_content_length = false;
+        for (const auto& kv : res_head._headers) {
+            if (strcasecmp(kv.first.c_str(), "Content-Length") == 0) {
+                has_content_length = true;
+                break;
+            }
         }
+        if (!has_content_length) {
+            if (!_send_body.empty()) {
+                res_head._headers["Content-Length"] = std::to_string(_send_body.size());
+            } else if (!_context->suppress_body()) {
+                res_head._headers["Content-Length"] = "0";
+            }
+        }
+        // HEAD：抑制 body（保留上面已算的 Content-Length，不发送实体）
+        if (_context->suppress_body()) _send_body.clear();
 
         PDEBUG("[HttpContextDataProcess] Async response completed: status=%d, body_size=%zu",
                res_head._response_code, _send_body.size());

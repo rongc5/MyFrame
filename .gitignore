@@ -16,6 +16,17 @@ lib/
 *.exe
 *.app
 test/test_*
+!test/test_http_header.cpp
+!test/test_http_head.cpp
+!test/test_https_head.cpp
+!test/test_http_context.cpp
+!test/test_task_executor.cpp
+!test/test_http_async_integration.cpp
+!test/test_http_router.cpp
+!test/test_http_middleware.cpp
+!test/test_http_json.cpp
+!test/test_http_routing.cpp
+build_test/
 test/simple_*
 test/https_*
 test/quick_*

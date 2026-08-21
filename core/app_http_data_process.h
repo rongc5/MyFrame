@@ -6,7 +6,8 @@
 class app_http_data_process : public http_base_data_process {
 public:
     app_http_data_process(http_base_process* p, myframe::IApplicationHandler* h)
-        : http_base_data_process(p), _handler(h), _head_ready(false), _body_ready(false) {}
+        : http_base_data_process(p), _handler(h), _head_ready(false), _body_ready(false),
+          _suppress_body(false) {}
 
     virtual void header_recv_finish() override {}
     virtual size_t process_recv_body(const char* buf, size_t len, int& result) override {
@@ -34,6 +35,7 @@ public:
             }
         }
         req.body.swap(_body);
+        _suppress_body = (strcasecmp(req.method.c_str(), "HEAD") == 0);
 
         myframe::HttpResponse rsp;
         if (_handler) {
@@ -46,7 +48,14 @@ public:
         }
 
         // 生成发送头
-        if (rsp.headers.find("Content-Length") == rsp.headers.end()) {
+        bool has_content_length = false;
+        for (auto it = rsp.headers.begin(); it != rsp.headers.end(); ++it) {
+            if (strcasecmp(it->first.c_str(), "Content-Length") == 0) {
+                has_content_length = true;
+                break;
+            }
+        }
+        if (!has_content_length && (!_suppress_body || !rsp.body.empty())) {
             rsp.headers["Content-Length"] = std::to_string(rsp.body.size());
         }
         if (rsp.headers.find("Connection") == rsp.headers.end()) {
@@ -74,7 +83,9 @@ public:
     }
     virtual std::string* get_send_body(int& result) override {
         if (!_body_ready || !_p_body) { result = 1; return 0; }
-        _body_ready = false; result = 1; return _p_body.release();
+        _body_ready = false; result = 1;
+        if (_suppress_body) { _p_body.reset(); return 0; }
+        return _p_body.release();
     }
     void handle_msg(std::shared_ptr<normal_msg>& msg) override {
         if (_handler) {
@@ -96,4 +107,5 @@ private:
     std::unique_ptr<std::string> _p_body;
     bool _head_ready;
     bool _body_ready;
+    bool _suppress_body;
 };

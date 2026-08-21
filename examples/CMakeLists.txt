@@ -12,189 +12,148 @@ set(COMMON_LIBS
     ${OPENSSL_LIBRARIES}
 )
 
+
+# 干净 checkout 中部分示例源被 .gitignore 忽略而缺失。mf_example 只注册存在的源，缺失即跳过，
+# 保证 clean checkout 也能 cmake 配置成功（无需先备齐全部示例源）。
+function(mf_example target src)
+  # 必需示例：源缺失即 FATAL（可抓出文件名拼错）。输出目录随每个 target 设置。
+  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${src}")
+    message(FATAL_ERROR "myframe example '${target}': missing required source ${src}")
+  endif()
+  add_executable(${target} ${src})
+  target_link_libraries(${target} ${COMMON_LIBS})
+  set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples)
+endfunction()
+
+function(mf_optional_example target src)
+  # 可选示例：源被 .gitignore 忽略、clean checkout 缺失时安全跳过。
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${src}")
+    add_executable(${target} ${src})
+    target_link_libraries(${target} ${COMMON_LIBS})
+    set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples)
+  else()
+    message(STATUS "myframe: skip optional example '${target}' (missing ${src})")
+  endif()
+endfunction()
 # HTTP Server Example
-add_executable(http_server simple_http_server.cpp)
-target_link_libraries(http_server ${COMMON_LIBS})
+mf_example(http_server simple_http_server.cpp)
 
 # Level demonstrations
-add_executable(level1_multi_protocol level1_multi_protocol.cpp)
-target_link_libraries(level1_multi_protocol ${COMMON_LIBS})
+mf_example(level1_multi_protocol level1_multi_protocol.cpp)
 
-add_executable(level2_multi_protocol level2_multi_protocol.cpp)
-target_link_libraries(level2_multi_protocol ${COMMON_LIBS})
+mf_example(level2_multi_protocol level2_multi_protocol.cpp)
 
-add_executable(level3_custom_echo level3_custom_echo.cpp)
-target_link_libraries(level3_custom_echo ${COMMON_LIBS})
+mf_example(level3_custom_echo level3_custom_echo.cpp)
 
-add_executable(level3_multi_protocol level3_multi_protocol.cpp)
-target_link_libraries(level3_multi_protocol ${COMMON_LIBS})
+mf_example(level3_multi_protocol level3_multi_protocol.cpp)
 
 # Thread user-data API demo
-add_executable(thread_user_data_demo thread_user_data_demo.cpp)
-target_link_libraries(thread_user_data_demo ${COMMON_LIBS})
+mf_example(thread_user_data_demo thread_user_data_demo.cpp)
 
 # Async HTTP Server Demo - showcases async response handling
-add_executable(async_http_demo async_http_server_demo.cpp)
-target_link_libraries(async_http_demo ${COMMON_LIBS})
+mf_example(async_http_demo async_http_server_demo.cpp)
 
 # HTTPS Server Example
-add_executable(https_server simple_https_server.cpp)
-target_link_libraries(https_server ${COMMON_LIBS})
+mf_example(https_server simple_https_server.cpp)
 
 # WebSocket Secure Server Example
-add_executable(wss_server simple_wss_server.cpp)
-target_link_libraries(wss_server ${COMMON_LIBS})
+mf_example(wss_server simple_wss_server.cpp)
 
 
 # HTTP/2 Client Example
-add_executable(h2_client simple_h2_client.cpp)
-target_link_libraries(h2_client ${COMMON_LIBS})
+mf_example(h2_client simple_h2_client.cpp)
 
 # HTTP Outbound Client Example
-add_executable(http_out_client http_out_client.cpp)
-target_link_libraries(http_out_client ${COMMON_LIBS})
+mf_example(http_out_client http_out_client.cpp)
 
 # TLS multi-fetch demo (HTTPS client sample)
-add_executable(tls_multi_fetch tls_multi_fetch.cpp)
-target_link_libraries(tls_multi_fetch ${COMMON_LIBS})
+mf_example(tls_multi_fetch tls_multi_fetch.cpp)
 
 # HTTP/2 Outbound Client using out_connect
-add_executable(http2_out_client http2_out_client.cpp)
-target_link_libraries(http2_out_client ${COMMON_LIBS})
+mf_example(http2_out_client http2_out_client.cpp)
 
 # Minimal business HTTP client example
-add_executable(biz_http_client biz_http_client.cpp)
-target_link_libraries(biz_http_client ${COMMON_LIBS})
+mf_example(biz_http_client biz_http_client.cpp)
 
 # HTTP graceful close demo
-add_executable(http_close_demo http_close_demo.cpp)
-target_link_libraries(http_close_demo ${COMMON_LIBS})
+mf_example(http_close_demo http_close_demo.cpp)
 
 # Unified router client for http/https/ws/wss using event loop
-add_executable(router_client router_client.cpp)
-target_link_libraries(router_client ${COMMON_LIBS})
+mf_example(router_client router_client.cpp)
 
 # Router business client with headers/body and WS handler
-add_executable(router_biz_client router_biz_client.cpp)
-target_link_libraries(router_biz_client ${COMMON_LIBS})
+mf_example(router_biz_client router_biz_client.cpp)
 
 # ClientConnRouter Example
-add_executable(client_conn_factory_example client_conn_factory_example.cpp)
-target_link_libraries(client_conn_factory_example ${COMMON_LIBS})
+mf_example(client_conn_factory_example client_conn_factory_example.cpp)
 
 # XPROTO Demo (custom protocol via MultiProtocolFactory + CustomProbe)
-add_executable(xproto_server xproto_server.cpp)
-target_link_libraries(xproto_server ${COMMON_LIBS})
-add_executable(xproto_client xproto_client.cpp)
-target_link_libraries(xproto_client ${COMMON_LIBS})
+mf_example(xproto_server xproto_server.cpp)
+mf_example(xproto_client xproto_client.cpp)
 # Stock system examples (optional if sources exist)
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/stock_index_server.cpp" AND
     EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/stock_bridge_server.cpp" AND
     EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/stock_driver.cpp")
-    add_executable(stock_index_server stock_index_server.cpp)
-    target_link_libraries(stock_index_server ${COMMON_LIBS})
-    add_executable(stock_bridge_server stock_bridge_server.cpp)
-    target_link_libraries(stock_bridge_server ${COMMON_LIBS})
-    add_executable(stock_driver stock_driver.cpp)
-    target_link_libraries(stock_driver ${COMMON_LIBS})
+    mf_optional_example(stock_index_server stock_index_server.cpp)
+    mf_optional_example(stock_bridge_server stock_bridge_server.cpp)
+    mf_optional_example(stock_driver stock_driver.cpp)
     set(HAVE_STOCK_EXAMPLES TRUE)
 else()
     set(HAVE_STOCK_EXAMPLES FALSE)
 endif()
 
 # Multi-protocol and multi-threading examples
-add_executable(demo_multi_protocol_server multi_protocol_server.cpp)
-target_link_libraries(demo_multi_protocol_server ${COMMON_LIBS})
-add_executable(demo_multi_thread_server multi_thread_server.cpp)
-target_link_libraries(demo_multi_thread_server ${COMMON_LIBS})
+mf_optional_example(demo_multi_protocol_server multi_protocol_server.cpp)
+mf_example(demo_multi_thread_server multi_thread_server.cpp)
 # HTTP/2 Server Example (TLS + ALPN h2)
-add_executable(h2_server simple_h2_server.cpp)
-target_link_libraries(h2_server ${COMMON_LIBS})
+mf_example(h2_server simple_h2_server.cpp)
 
 # HTTP Server Close Demo (graceful close after response)
-add_executable(http_server_close_demo http_server_close_demo.cpp)
-target_link_libraries(http_server_close_demo ${COMMON_LIBS})
+mf_example(http_server_close_demo http_server_close_demo.cpp)
 
 # WS benchmark client
-add_executable(ws_bench_client ws_bench_client.cpp)
-target_link_libraries(ws_bench_client ${COMMON_LIBS})
+mf_optional_example(ws_bench_client ws_bench_client.cpp)
 
 # WebSocket broadcast demos
-add_executable(ws_broadcast_user ws_broadcast_user.cpp)
-target_link_libraries(ws_broadcast_user ${COMMON_LIBS})
-add_executable(ws_broadcast_periodic ws_broadcast_periodic.cpp)
-target_link_libraries(ws_broadcast_periodic ${COMMON_LIBS})
+mf_example(ws_broadcast_user ws_broadcast_user.cpp)
+mf_example(ws_broadcast_periodic ws_broadcast_periodic.cpp)
 
 # Framework WS smoke-test pair
-add_executable(framework_ws_server framework_ws_server.cpp)
-target_link_libraries(framework_ws_server ${COMMON_LIBS})
-add_executable(framework_ws_client framework_ws_client.cpp)
-target_link_libraries(framework_ws_client ${COMMON_LIBS})
-add_executable(framework_ws_client_idle framework_ws_client_idle.cpp)
-target_link_libraries(framework_ws_client_idle ${COMMON_LIBS})
+mf_example(framework_ws_server framework_ws_server.cpp)
+mf_example(framework_ws_client framework_ws_client.cpp)
+mf_example(framework_ws_client_idle framework_ws_client_idle.cpp)
 
 # StickBridge client demo leveraging myframe websocket stack
-add_executable(ws_stickbridge_client ws_stickbridge_client.cpp)
-target_link_libraries(ws_stickbridge_client ${COMMON_LIBS})
+mf_example(ws_stickbridge_client ws_stickbridge_client.cpp)
 
 # Unified Protocol Architecture - Simple HTTP Example (Level 1 API)
-add_executable(unified_simple_http unified_simple_http.cpp)
-target_link_libraries(unified_simple_http ${COMMON_LIBS})
+mf_example(unified_simple_http unified_simple_http.cpp)
 
 # Unified Protocol Architecture - Mixed HTTP + WebSocket Example (Level 1 API)
-add_executable(unified_mixed_server unified_mixed_server.cpp)
-target_link_libraries(unified_mixed_server ${COMMON_LIBS})
+mf_example(unified_mixed_server unified_mixed_server.cpp)
 
 # Unified Protocol Architecture - WebSocket Client Test
-add_executable(unified_ws_client_test unified_ws_client_test.cpp)
-target_link_libraries(unified_ws_client_test ${COMMON_LIBS})
+mf_example(unified_ws_client_test unified_ws_client_test.cpp)
 
 # Unified Protocol Architecture - Level 2 Context Demo
-add_executable(unified_level2_demo unified_level2_demo.cpp)
-target_link_libraries(unified_level2_demo ${COMMON_LIBS})
+mf_example(unified_level2_demo unified_level2_demo.cpp)
 
 # Unified Protocol Architecture - HTTPS/WSS Server Demo
-add_executable(unified_https_wss_server unified_https_wss_server.cpp)
-target_link_libraries(unified_https_wss_server ${COMMON_LIBS})
+mf_example(unified_https_wss_server unified_https_wss_server.cpp)
 
 # Unified Protocol Architecture - Async Response Demo
-add_executable(unified_async_demo unified_async_demo.cpp)
-target_link_libraries(unified_async_demo ${COMMON_LIBS})
+mf_example(unified_async_demo unified_async_demo.cpp)
 
 # Simple Async Test with Timer
-add_executable(simple_async_test simple_async_test.cpp)
-target_link_libraries(simple_async_test ${COMMON_LIBS})
+mf_example(simple_async_test simple_async_test.cpp)
 
 # Test memory management
-add_executable(test_memory_management test_memory_management.cpp)
-target_link_libraries(test_memory_management ${COMMON_LIBS})
+mf_example(test_memory_management test_memory_management.cpp)
 
 # Test edge cases
-add_executable(test_edge_cases test_edge_cases.cpp)
-target_link_libraries(test_edge_cases ${COMMON_LIBS})
+mf_example(test_edge_cases test_edge_cases.cpp)
 
-# Set output directory
-# Always-present example targets
-set_target_properties(
-    http_server async_http_demo https_server wss_server
-    level1_multi_protocol level2_multi_protocol level3_custom_echo level3_multi_protocol
-    thread_user_data_demo test_memory_management test_edge_cases
-    h2_client http_out_client http2_out_client biz_http_client http_close_demo http_server_close_demo router_client router_biz_client client_conn_factory_example xproto_server xproto_client ws_bench_client tls_multi_fetch
-    demo_multi_protocol_server demo_multi_thread_server h2_server ws_stickbridge_client
-    ws_broadcast_user ws_broadcast_periodic framework_ws_server framework_ws_client framework_ws_client_idle
-    unified_simple_http unified_mixed_server unified_ws_client_test unified_level2_demo unified_https_wss_server unified_async_demo simple_async_test
-    PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
-)
 
-# Optional stock targets
-if (HAVE_STOCK_EXAMPLES)
-    set_target_properties(
-        stock_index_server stock_bridge_server stock_driver
-        PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/examples
-    )
-endif()
 
 # Multi-thread server fixed
 # Optional: keep fixed multi-thread server if desired
@@ -205,5 +164,4 @@ endif()
 # endif()
 
 # EastMoney xdxr URL repro for stockbridge daemon httpGet diagnosis
-add_executable(em_xdxr_test em_xdxr_test.cpp)
-target_link_libraries(em_xdxr_test ${COMMON_LIBS})
+mf_example(em_xdxr_test em_xdxr_test.cpp)

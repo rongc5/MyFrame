@@ -317,10 +317,27 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
     return true;
 }
 
-void http2_process::send_response(uint32_t stream_id, const myframe::HttpResponse& rsp) {
+void http2_process::send_response(uint32_t stream_id, const myframe::HttpResponse& rsp,
+                                  bool suppress_body) {
     using namespace hpack;
-    // Minimal response: status + content-type + content-length + body
+    // Minimal response: status + content-type + optional content-length + body.
+    // For HEAD, content-length describes the GET representation when known,
+    // while DATA remains empty.
     std::string body = rsp.body;
+    bool has_content_length = false;
+    std::string content_length;
+    for (const auto& kv : rsp.headers) {
+        if (strcasecmp(kv.first.c_str(), "content-length") == 0) {
+            has_content_length = true;
+            content_length = kv.second;
+            break;
+        }
+    }
+    if (!has_content_length && (!suppress_body || !body.empty())) {
+        has_content_length = true;
+        content_length = std::to_string(body.size());
+    }
+    if (suppress_body) body.clear();
     std::string block;
     // Encode :status 200
     // Literal without indexing, name by index if available
@@ -338,16 +355,18 @@ void http2_process::send_response(uint32_t stream_id, const myframe::HttpRespons
         auto it = rsp.headers.find("Content-Type");
         encode_string(block, it != rsp.headers.end() ? it->second : std::string("text/plain"), false);
     }
-    // content-length
-    {
+    // content-length (legal to omit when a legacy HEAD handler already
+    // discarded the representation and did not provide an explicit length)
+    if (has_content_length) {
         uint32_t name_idx = static_index_of_name("content-length");
         encode_integer(block, name_idx ? name_idx : 0, 4, 0x00);
         if (!name_idx) { encode_string(block, std::string("content-length"), false); }
-        encode_string(block, std::to_string(body.size()), false);
+        encode_string(block, content_length, false);
     }
     // other headers (optional, non-pseudo)
     for (auto& kv : rsp.headers) {
-        if (kv.first == "Content-Type" || kv.first == "content-type" || kv.first == "content-length") continue;
+        if (strcasecmp(kv.first.c_str(), "content-type") == 0 ||
+            strcasecmp(kv.first.c_str(), "content-length") == 0) continue;
         // HTTP/2 requires lowercase header field-names. Values keep original case.
         std::string lname = kv.first; for (auto& c : lname) c = (char)tolower(c);
         const std::string& lval = kv.second;
@@ -409,9 +428,10 @@ void http2_process::finish_stream(uint32_t stream_id) {
         _app->on_http(req, rsp);
     }
     if (rsp.headers.find("Content-Type") == rsp.headers.end()) rsp.set_content_type("text/plain");
-    if (rsp.body.empty()) rsp.body = "OK";
+    const bool head_only = strcasecmp(req.method.c_str(), "HEAD") == 0;
+    if (rsp.body.empty() && !head_only) rsp.body = "OK";
     PDEBUG("[h2] stream=%u %s %s body=%zu", stream_id, req.method.c_str(), req.url.c_str(), req.body.size());
-    send_response(stream_id, rsp);
+    send_response(stream_id, rsp, head_only);
 }
 
 void http2_process::handle_msg(std::shared_ptr<normal_msg>& msg) {

@@ -27,7 +27,8 @@ private:
     void on_connected_once();
     bool parse_frames(size_t& consumed);
     bool handle_headers_block(uint32_t stream_id, const std::string& block, bool end_stream);
-    void send_response(uint32_t stream_id, const myframe::HttpResponse& rsp);
+    void send_response(uint32_t stream_id, const myframe::HttpResponse& rsp,
+                       bool suppress_body = false);
     void on_data(uint32_t stream_id, const unsigned char* p, uint32_t len, bool end_stream);
     void finish_stream(uint32_t stream_id);
 
