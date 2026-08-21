@@ -369,6 +369,11 @@ void HttpContextDataProcess::msg_recv_finish() {
         ctx_req.headers = req_head._headers;
         ctx_req.body = std::move(_recv_body);  // move：转交本请求体并清空缓冲，防跨请求泄漏
         _recv_body.clear();                    // move 后置空（保险，明确语义）
+        // Body suppression is a transport-level HEAD invariant. Apply it to
+        // explicit HEAD handlers and non-router handlers as well as auto-HEAD.
+        if (strcasecmp(ctx_req.method.c_str(), "HEAD") == 0) {
+            _context->set_suppress_body(true);
+        }
 
         // ���ô�����
         detail::HandlerContextScope scope(this);
@@ -385,11 +390,19 @@ void HttpContextDataProcess::msg_recv_finish() {
         // ������Ӧ�嵽 _send_body
         _send_body = ctx_res.body;
         
-        // �Զ����� Content-Length
-        if (!_send_body.empty()) {
-            res_head._headers["Content-Length"] = std::to_string(_send_body.size());
-        } else {
-            res_head._headers["Content-Length"] = "0";
+        bool has_content_length = false;
+        for (const auto& kv : res_head._headers) {
+            if (strcasecmp(kv.first.c_str(), "Content-Length") == 0) {
+                has_content_length = true;
+                break;
+            }
+        }
+        if (!has_content_length) {
+            if (!_send_body.empty()) {
+                res_head._headers["Content-Length"] = std::to_string(_send_body.size());
+            } else if (!_context->suppress_body()) {
+                res_head._headers["Content-Length"] = "0";
+            }
         }
         // HEAD：抑制 body（保留上面已算的 Content-Length，不发送实体）
         if (_context->suppress_body()) _send_body.clear();
@@ -433,11 +446,19 @@ void HttpContextDataProcess::complete_async_response() {
         // 同步响应体
         _send_body = ctx_res.body;
 
-        // 自动设置 Content-Length
-        if (!_send_body.empty()) {
-            res_head._headers["Content-Length"] = std::to_string(_send_body.size());
-        } else {
-            res_head._headers["Content-Length"] = "0";
+        bool has_content_length = false;
+        for (const auto& kv : res_head._headers) {
+            if (strcasecmp(kv.first.c_str(), "Content-Length") == 0) {
+                has_content_length = true;
+                break;
+            }
+        }
+        if (!has_content_length) {
+            if (!_send_body.empty()) {
+                res_head._headers["Content-Length"] = std::to_string(_send_body.size());
+            } else if (!_context->suppress_body()) {
+                res_head._headers["Content-Length"] = "0";
+            }
         }
         // HEAD：抑制 body（保留上面已算的 Content-Length，不发送实体）
         if (_context->suppress_body()) _send_body.clear();

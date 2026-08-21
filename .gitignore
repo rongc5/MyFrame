@@ -17,6 +17,7 @@ lib/
 *.app
 test/test_*
 !test/test_http_header.cpp
+!test/test_http_head.cpp
 !test/test_http_context.cpp
 !test/test_task_executor.cpp
 !test/test_http_async_integration.cpp
