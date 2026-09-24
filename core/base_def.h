@@ -189,6 +189,12 @@ const int URLESCAPE[] =
 // HTTP/2 client timers
 #define H2_PING_TIMER_TYPE 9
 #define H2_TOTAL_TIMEOUT_TIMER_TYPE 10
+// Unified protocol sniffing has its own timer type.  It must not use
+// NONE_DATA_TIMER_TYPE: after a successful handoff that stale timer is still
+// delivered to the connection, and base_connect treats NONE_DATA as a hard
+// idle timeout (closing long-lived WebSocket connections about five seconds
+// after their HTTP upgrade).
+#define PROTOCOL_DETECT_TIMER_TYPE 11
 // Level 1 application handlers may request timers using this type
 #define APPLICATION_TIMER_TYPE 100
 

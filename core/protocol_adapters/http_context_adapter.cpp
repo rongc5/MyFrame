@@ -324,7 +324,9 @@ HttpContextDataProcess::~HttpContextDataProcess() {
 size_t HttpContextDataProcess::process_recv_body(const char* buf, size_t len, int& result) {
     // ���ղ��洢������
     _recv_body.append(buf, len);
-    result = 1;
+    // Network reads may split a Content-Length body. The owning parser alone
+    // decides completion after comparing its accumulated byte count.
+    result = 0;
     return len;
 }
 

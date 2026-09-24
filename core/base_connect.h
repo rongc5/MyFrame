@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <memory>
 #include <deque>
+#include <mutex>
 #include <sys/uio.h>
 
 template<class PROCESS>
@@ -45,20 +46,21 @@ class base_connect:public base_net_obj
 
         virtual void event_process(int event)
         {
-            if ((event & EPOLLERR) == EPOLLERR || (event & EPOLLHUP) == EPOLLHUP
-#ifdef EPOLLRDHUP
-                || (event & EPOLLRDHUP) == EPOLLRDHUP
-#endif
-            )
-            {
-                // FIX(fd-leak): the RECV EOF path calls notify_peer_close() before
-                // teardown so the application layer releases its hold on the
-                // connection. The EPOLLRDHUP/ERR/HUP path here historically threw
-                // WITHOUT it, leaving the conn referenced by the app layer -> the
-                // object never destructs -> fd leaks in CLOSE_WAIT. Fire it here too.
+            if ((event & EPOLLERR) == EPOLLERR) {
+                int socket_error = 0;
+                socklen_t error_len = sizeof(socket_error);
+                if (getsockopt(_fd, SOL_SOCKET, SO_ERROR, &socket_error, &error_len) != 0 ||
+                    socket_error == 0) {
+                    socket_error = errno;
+                }
                 if (_process) _process->notify_peer_close();
-                THROW_COMMON_EXCEPT("epoll error "<< strError(errno).c_str());
+                THROW_COMMON_EXCEPT("epoll socket error " << strError(socket_error).c_str());
             }
+
+            bool peer_closed = (event & EPOLLHUP) == EPOLLHUP;
+#ifdef EPOLLRDHUP
+            peer_closed = peer_closed || (event & EPOLLRDHUP) == EPOLLRDHUP;
+#endif
 
             if ((event & EPOLLIN) == EPOLLIN) //读
             {
@@ -71,7 +73,15 @@ class base_connect:public base_net_obj
                 if (_codec) { _codec->on_writable_event(); }
                 touch_active(GetMilliSecond());
                 real_send();
-            }	
+            }
+
+            // RDHUP may arrive together with EPOLLIN. Process the final readable
+            // bytes first, then enter the normal teardown path without reporting a
+            // transport error for an ordinary browser connection close.
+            if (peer_closed) {
+                if (_process) _process->notify_peer_close();
+                THROW_COMMON_EXCEPT("peer closed");
+            }
         }
         virtual int real_net_process()
         {
@@ -128,12 +138,14 @@ class base_connect:public base_net_obj
 
         virtual void notice_send()
         {
+            std::lock_guard<std::recursive_mutex> lock(_send_mutex);
             update_event(_epoll_event | EPOLLOUT);
 
             if (_process)
             {
                 real_send();
             }
+
         }
 
         virtual void handle_timeout(std::shared_ptr<timer_msg> & t_msg)
@@ -336,6 +348,11 @@ class base_connect:public base_net_obj
 
         void real_send()
         {
+            // notice_send() may originate in an application worker while the
+            // epoll thread is already draining this connection. Serialize the
+            // whole frame-header/body state machine so two writers cannot
+            // splice WebSocket frames or consume the same queued payload.
+            std::lock_guard<std::recursive_mutex> lock(_send_mutex);
             // If SSL or custom codec is installed, fall back to single-buffer SEND path
             if (_codec) {
                 int i = 0;
@@ -459,6 +476,7 @@ class base_connect:public base_net_obj
         std::unique_ptr<PROCESS> _process;
         std::unique_ptr<ICodec> _codec;
         std::deque<send_buf_ptr> _pending_send;
+        std::recursive_mutex _send_mutex;
         size_t _peek_drain_backlog;
 
     public:

@@ -109,12 +109,13 @@ size_t http_req_process::process_recv_body(const char *buf, size_t len, int &res
     else if (content_length)
     {
         _recv_type = CONTENT_LENGTH_TYPE;
-        ret = _data_process->process_recv_body(buf, len, result);
+        size_t remain = _recv_body_length >= content_length
+            ? 0 : static_cast<size_t>(content_length - _recv_body_length);
+        size_t take = len < remain ? len : remain;
+        int data_result = 0;
+        ret = _data_process->process_recv_body(buf, take, data_result);
         _recv_body_length += ret;
-        if (_recv_body_length == content_length)
-        {
-            result = 1;
-        }
+        result = _recv_body_length >= content_length ? 1 : 0;
     }
     else
     {
@@ -213,5 +214,3 @@ void http_req_process::send_finish()
     //http_base_process<DATA_PROCESS>::_http_status = RECV_HEAD;
     change_http_status(RECV_HEAD);
 }
-
-

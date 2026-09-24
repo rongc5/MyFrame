@@ -10,6 +10,12 @@ static inline uint64_t pack_epoll_payload(base_net_obj * obj) {
          | (uint64_t)(uint32_t)obj->get_id()._id;
 }
 
+static inline bool is_expected_disconnect(const char* message) {
+    if (!message) return false;
+    return strstr(message, "peer closed") != NULL ||
+           strstr(message, "client close the socket") != NULL;
+}
+
 
 
 void common_epoll::add_to_epoll(base_net_obj * p_obj)
@@ -138,8 +144,10 @@ int common_epoll::epoll_wait(std::map<ObjId, std::shared_ptr<base_net_obj> > &ex
         }
         catch (CMyCommonException &e)
         {
-            fprintf(stderr, "[epoll_wait] CMyCommonException obj_id=%d fd=%d: %s\n",
-                    p_obj->get_id()._id, p_obj->get_sfd(), e.what());
+            if (!is_expected_disconnect(e.what())) {
+                fprintf(stderr, "[epoll_wait] CMyCommonException obj_id=%d fd=%d: %s\n",
+                        p_obj->get_id()._id, p_obj->get_sfd(), e.what());
+            }
             expect_list.insert(std::make_pair(p_obj->get_id(), p_obj));
         }
         catch (std::exception &e)

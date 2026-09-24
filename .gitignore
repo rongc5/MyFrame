@@ -17,6 +17,7 @@ lib/
 *.app
 test/test_*
 !test/test_http_header.cpp
+!test/test_http_content_length_fragments.cpp
 !test/test_http_head.cpp
 !test/test_https_head.cpp
 !test/test_http_context.cpp

@@ -44,8 +44,8 @@ void http_res_process::reset()
 
 size_t http_res_process::process_recv_body(const char *buf, size_t len, int &result)
 {
-
-    int ret = 0;
+    result = 0;
+    size_t ret = 0;
     if (_chunked)   // chunked 优先于方法判断：即便 GET 带 chunked 也须按帧消费,否则连接失步
     {
         return process_chunked(buf, len, result);
@@ -81,14 +81,14 @@ size_t http_res_process::process_recv_body(const char *buf, size_t len, int &res
                 {
                     size_t remain = static_cast<size_t>(content_length - _recv_body_length);
                     size_t take = len < remain ? len : remain;
-                    ret = _data_process->process_recv_body(buf, take, result);
+                    // The data callback reports whether it has handled this chunk,
+                    // not whether the HTTP message is complete. A header-only read
+                    // can call it with take=0 and result=1.
+                    int data_result = 0;
+                    ret = _data_process->process_recv_body(buf, take, data_result);
                     _recv_body_length += ret;
                 }
-
-                if (_recv_body_length >= content_length)
-                {
-                    result = 1;
-                }
+                result = _recv_body_length >= content_length ? 1 : 0;
             }				
         }
         else //parse boundary

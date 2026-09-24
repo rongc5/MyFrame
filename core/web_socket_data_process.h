@@ -4,6 +4,7 @@
 #include "base_def.h"
 #include "base_data_process.h"
 #include "web_socket_msg.h"
+#include <mutex>
 
 class web_socket_process;
 
@@ -30,7 +31,10 @@ class web_socket_data_process:public base_data_process
         // Whether there's at least one queued outbound message. Used by the
         // send pipeline to distinguish "no message" from "message with empty
         // payload" (since the latter has get_next_send_len == 0).
-        bool has_pending_send() const { return !_send_list.empty(); }
+        bool has_pending_send() const {
+            std::lock_guard<std::mutex> lock(_send_list_mutex);
+            return !_send_list.empty();
+        }
         virtual std::string *get_send_buf();
         virtual void msg_recv_finish() = 0;
 
@@ -47,9 +51,9 @@ class web_socket_data_process:public base_data_process
         web_socket_process *_process;
         ws_msg_type _p_current_send;
         std::list<ws_msg_type> _send_list;
+        mutable std::mutex _send_list_mutex;
         std::string _recent_msg;
 };
 
 
 #endif
-

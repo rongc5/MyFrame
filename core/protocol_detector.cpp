@@ -63,7 +63,10 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
         _start_ms = GetMilliSecond();
         std::shared_ptr<timer_msg> t(new timer_msg);
         t->_obj_id = get_base_net()->get_id()._id;
-        t->_timer_type = NONE_DATA_TIMER_TYPE;
+        // This timer can outlive this detector after set_process() hands the
+        // connection to HTTP/WebSocket.  Keep it distinct from the connection
+        // idle timeout so the new protocol can safely ignore the stale event.
+        t->_timer_type = PROTOCOL_DETECT_TIMER_TYPE;
         t->_time_length = DETECT_TIMEOUT_MS;
         add_timer(t);
         _timer_id = t->_timer_id;

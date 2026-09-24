@@ -28,7 +28,10 @@ public:
         listen_process* proc = nullptr;
         _listen_fd = init_listen(th, _ip, _port, conn, proc);
         _listen_conn = std::move(conn);
-        _listen_proc.reset(proc);
+        // listen_connect::set_process() already transferred ownership of proc into
+        // the connection's unique_ptr. Keep only a non-owning pointer here; owning
+        // it again caused a double-free when server/ListenFactory shut down.
+        _listen_proc = proc;
 
         // 绑定业务工厂，并将已注册的 worker 交给 listen_process 做轮询
         if (_listen_proc) {
@@ -93,5 +96,5 @@ private:
 
     // 保存 listen 的连接对象，防止被容器析构
     std::shared_ptr< listen_connect<listen_process> > _listen_conn;
-    std::unique_ptr<listen_process>                 _listen_proc;
+    listen_process*                                  _listen_proc{nullptr};
 };

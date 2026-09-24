@@ -123,8 +123,9 @@ private:
 inline void app_ws_data_process::register_self() {
     if (!_username.empty()) {
         WsPushHub::Instance().Register(_username, this);
-        // 首次建立连接后，推送一次初始化事件，供业务侧（如前端）拉取初始数据
-        try { this->send_text(std::string("{\"type\":\"init\"}")); } catch(...) {}
+        // 不在 on_handshake_ok() 中排业务帧：此回调发生在 101 响应尚未真正写出时，
+        // 抢先 notice_send() 会让客户端先收到 0x81 数据帧而不是 HTTP 握手头。
+        // 初始状态由业务客户端在连接前读取 REST snapshot，Hub 只负责后续实时推送。
     }
 }
 inline void app_ws_data_process::unregister_self() {

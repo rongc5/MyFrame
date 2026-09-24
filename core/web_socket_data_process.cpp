@@ -16,6 +16,7 @@ web_socket_data_process::web_socket_data_process(web_socket_process *p):base_dat
 web_socket_data_process::~web_socket_data_process()
 {
     PDEBUG("%p", this);
+    std::lock_guard<std::mutex> lock(_send_list_mutex);
     for (auto& msg : _send_list) {
         myframe::string_release(msg._p_msg);
     }
@@ -57,6 +58,7 @@ std::string *web_socket_data_process::get_send_buf()
 
 uint64_t web_socket_data_process::get_next_send_len(int8_t &content_type)
 {
+    std::lock_guard<std::mutex> lock(_send_list_mutex);
     uint64_t len = 0;
     if (_send_list.begin() != _send_list.end())
     {
@@ -68,13 +70,17 @@ uint64_t web_socket_data_process::get_next_send_len(int8_t &content_type)
 
 void web_socket_data_process::put_send_msg(ws_msg_type msg)
 {
-    _send_list.push_back(msg);
+    {
+        std::lock_guard<std::mutex> lock(_send_list_mutex);
+        _send_list.push_back(msg);
+    }
     // 仅在握手完成后触发发送，避免在握手阶段写入帧
     _process->notice_send();
 }
 
 ws_msg_type web_socket_data_process::get_send_msg()
 {
+    std::lock_guard<std::mutex> lock(_send_list_mutex);
     ws_msg_type ret;
     if (_send_list.begin() != _send_list.end())
     {

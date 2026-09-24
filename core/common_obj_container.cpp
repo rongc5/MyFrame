@@ -7,6 +7,14 @@
 #include "common_util.h"
 #include "common_domain.h"
 
+namespace {
+bool is_expected_disconnect(const char* message) {
+    if (!message) return false;
+    return strstr(message, "peer closed") != NULL ||
+           strstr(message, "client close the socket") != NULL;
+}
+}
+
 common_obj_container::common_obj_container(uint32_t thread_index, uint32_t epoll_size)
 {
     _p_epoll = new common_epoll();
@@ -221,8 +229,10 @@ void common_obj_container::obj_process()
         catch(CMyCommonException &e)
         {
             PDEBUG("CMyCommonException obj_id=%d: %s", u.second ? u.second->get_id()._id : -1, e.what());
-            fprintf(stderr, "[obj_process] CMyCommonException obj_id=%d: %s\n",
-                    u.second ? u.second->get_id()._id : -1, e.what());
+            if (!is_expected_disconnect(e.what())) {
+                fprintf(stderr, "[obj_process] CMyCommonException obj_id=%d: %s\n",
+                        u.second ? u.second->get_id()._id : -1, e.what());
+            }
             exception_vec.push_back(u.second);
         }
         catch(std::exception &e)

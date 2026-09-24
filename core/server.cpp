@@ -14,6 +14,17 @@ server::server(int thread_num)
 server::~server() {
     stop();
     join();
+
+    // Factories can retain connections registered in a thread's container
+    // (notably ListenFactory::_listen_conn). Release those external owners
+    // while the containers/epoll instances are still alive. Otherwise the
+    // retained connection is destroyed after `_listen`, and its destructor
+    // attempts to unregister itself through a dangling container pointer.
+    _acceptor.reset();
+    _factory.reset();
+    _worker_factories.clear();
+    _unified_worker_factories.clear();
+
     for (auto* w : _workers) {
         delete w;
     }

@@ -51,7 +51,11 @@ size_t http_base_process::process_recv_buf(const char *buf, size_t len)
     size_t ret = 0;
     bool staus_change = false;
     std::string left_str, recv_head;
-    if (_http_status == RECV_HEAD && strstr(buf, CRLF2))
+    // Network buffers are length-delimited and are not guaranteed to be NUL
+    // terminated. A bounded search prevents fragmented headers from being
+    // completed by stale bytes beyond `len`.
+    if (_http_status == RECV_HEAD &&
+        std::string(buf, len).find(CRLF2) != std::string::npos)
     {
         recv_head.append(buf, len);
         check_head_finish(recv_head, left_str);
@@ -172,7 +176,6 @@ void http_base_process::check_head_finish(std::string & recv_head, std::string &
         }
     }			
 }
-
 
 
 
