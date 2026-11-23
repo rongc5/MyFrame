@@ -149,7 +149,7 @@ class base_net_thread:public base_thread
     protected:
         IFactory* _factory_for_thread{nullptr};
         std::vector<uint32_t> _worker_pool; // 监听线程可维护的 worker 索引集合
-        unsigned long _rr_hint{0};
+        std::atomic<unsigned long> _rr_hint{0};
         struct ThreadUserDataEntry {
             std::shared_ptr<void> handle;
             bool owns{false};

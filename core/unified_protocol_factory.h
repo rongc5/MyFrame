@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <algorithm>
+#include <atomic>
 
 // Forward declarations
 class base_net_thread;
@@ -36,6 +37,10 @@ public:
 
     UnifiedProtocolFactory();
     virtual ~UnifiedProtocolFactory();
+
+    // Explicit because std::atomic would otherwise delete the public copy operations.
+    UnifiedProtocolFactory(const UnifiedProtocolFactory& other);
+    UnifiedProtocolFactory& operator=(const UnifiedProtocolFactory& other);
 
     // ========================================================================
     // Level 1: Application Handler 注册
@@ -155,7 +160,7 @@ private:
     // 成员变量
     std::vector<ProtocolEntry> _protocols;     // 注册的协议列表
     std::vector<uint32_t> _worker_indices;     // worker 线程索引
-    uint32_t _rr_hint;                         // round-robin 提示
+    std::atomic<unsigned long> _rr_hint;       // round-robin 提示
     common_obj_container* _container;          // 网络容器
     bool _detector_enabled;
 };

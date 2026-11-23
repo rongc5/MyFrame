@@ -83,3 +83,17 @@ endif()
 maybe_add_exe(test_business_handler ${CMAKE_CURRENT_SOURCE_DIR}/test_business_handler.cpp)
 # Regression test for channel_data_process watchdog routing + obj_process unconditional dispatch.
 maybe_add_exe(test_channel_watchdog ${CMAKE_CURRENT_SOURCE_DIR}/test_channel_watchdog.cpp)
+# Accept fairness, per-server stop/join isolation, and channel wakeup/FD lifecycle.
+maybe_add_exe(test_server_lifecycle ${CMAKE_CURRENT_SOURCE_DIR}/test_server_lifecycle.cpp)
+if(TARGET test_server_lifecycle)
+    foreach(case accept_backlog accept_burst accept_emfile server_isolation idempotent_stop_join channel_coalescing channel_fd_teardown)
+        add_test(NAME lifecycle_${case} COMMAND test_server_lifecycle ${case})
+        set_tests_properties(lifecycle_${case} PROPERTIES TIMEOUT 60)
+    endforeach()
+endif()
+# High-concurrency exact connection and message accounting stress test.
+maybe_add_exe(test_high_concurrency_stress ${CMAKE_CURRENT_SOURCE_DIR}/test_high_concurrency_stress.cpp)
+if(TARGET test_high_concurrency_stress)
+    add_test(NAME high_concurrency_stress COMMAND test_high_concurrency_stress)
+    set_tests_properties(high_concurrency_stress PROPERTIES TIMEOUT 90)
+endif()

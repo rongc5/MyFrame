@@ -25,6 +25,28 @@ UnifiedProtocolFactory::UnifiedProtocolFactory()
 UnifiedProtocolFactory::~UnifiedProtocolFactory() {
 }
 
+UnifiedProtocolFactory::UnifiedProtocolFactory(const UnifiedProtocolFactory& other)
+    : IFactory(other)
+    , _protocols(other._protocols)
+    , _worker_indices(other._worker_indices)
+    , _rr_hint(other._rr_hint.load(std::memory_order_relaxed))
+    , _container(other._container)
+    , _detector_enabled(other._detector_enabled)
+{
+}
+
+UnifiedProtocolFactory& UnifiedProtocolFactory::operator=(const UnifiedProtocolFactory& other) {
+    if (this != &other) {
+        IFactory::operator=(other);
+        _protocols = other._protocols;
+        _worker_indices = other._worker_indices;
+        _rr_hint.store(other._rr_hint.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        _container = other._container;
+        _detector_enabled = other._detector_enabled;
+    }
+    return *this;
+}
+
 // ============================================================================
 // Level 1: Application Handler 注册实现
 // ============================================================================
@@ -372,7 +394,7 @@ void UnifiedProtocolFactory::on_accept(base_net_thread* listen_th, int fd) {
 
     // Round-robin 到 worker 线程
     if (!_worker_indices.empty()) {
-        unsigned long idx = _rr_hint++;
+        unsigned long idx = _rr_hint.fetch_add(1, std::memory_order_relaxed);
         target_index = _worker_indices[idx % _worker_indices.size()];
     }
 

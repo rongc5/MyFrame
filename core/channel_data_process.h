@@ -3,6 +3,7 @@
 
 #include "common_def.h"
 #include "base_data_process.h"
+#include <unistd.h>
 
 class normal_obj_msg //内部传递的消息
 {
@@ -26,6 +27,12 @@ class channel_data_process:public base_data_process
             for (auto &que : _queue)
             {
                 que.clear();
+            }
+            // This object owns the socketpair write end.
+            if (_channelid >= 0)
+            {
+                ::close(_channelid);
+                _channelid = -1;
             }
         }	
 

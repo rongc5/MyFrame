@@ -80,8 +80,9 @@ public:
         out_conn->set_process(out_proc);
         // 注册到 epoll
         out_conn->set_net_container(owner_thread->get_net_container());
-        // 改为边沿触发，避免饥饿
-        out_conn->update_event(EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLET);
+        // Level-triggered on purpose: event_process() stops at a fairness budget
+        // without reaching EAGAIN, so the remaining backlog must re-arm epoll.
+        out_conn->update_event(EPOLLIN | EPOLLERR | EPOLLHUP);
         PDEBUG("[listen] added listen_fd=%d to epoll", fd);
         return fd;
     }

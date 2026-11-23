@@ -98,11 +98,18 @@ void server::start() {
 }
 
 void server::stop() {
-    base_thread::stop_all_thread();
+    // Listener first so no new connections are dispatched to stopping workers.
+    if (_listen) _listen->stop();
+    for (auto* w : _workers) {
+        w->stop();
+    }
 }
 
 void server::join() {
-    base_thread::join_all_thread();
+    if (_listen) _listen->join_thread();
+    for (auto* w : _workers) {
+        w->join_thread();
+    }
 }
 
 size_t server::size() const { return (size_t)_threads; }

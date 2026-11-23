@@ -94,10 +94,17 @@ class listen_connect:public base_net_obj
                     {
                         int err = errno;
                         if (err == EAGAIN || err == EWOULDBLOCK) {
-                            // 边沿触发/非阻塞模式下，返回再试
+                            // Backlog drained; wait for the next readiness event.
+                            break;
+                        }
+                        if (err == EINTR || err == ECONNABORTED) {
+                            // Transient: level-triggered epoll reports any remainder.
                             break;
                         }
                         PDEBUG("accept fail:%s", strError(err).c_str());
+                        // Persistent failure (e.g. EMFILE): the connection stays queued,
+                        // so level-triggered epoll would otherwise spin at full CPU.
+                        pause_accept();
                         break;
                     }
                 }
@@ -113,6 +120,15 @@ class listen_connect:public base_net_obj
             return 0;
         }
 
+        // Resumes accepting after a pause_accept() backoff.
+        virtual void handle_timeout(std::shared_ptr<timer_msg> & t_msg)
+        {
+            (void)t_msg;
+            if (!_accept_paused) return;
+            _accept_paused = false;
+            update_event(EPOLLIN | EPOLLERR | EPOLLHUP);
+        }
+
         void set_process(PROCESS *p)
         {
             _process.reset(p);
@@ -121,6 +137,21 @@ class listen_connect:public base_net_obj
 
 
     private:
+        // Stops polling for EPOLLIN briefly so the thread keeps serving other events.
+        void pause_accept()
+        {
+            if (_accept_paused) return;
+            constexpr uint32_t kAcceptRetryDelayMs = 100;
+            std::shared_ptr<timer_msg> t_msg(new timer_msg);
+            t_msg->_obj_id = get_id()._id;
+            t_msg->_timer_type = NONE_TIMER_TYPE;
+            t_msg->_time_length = kAcceptRetryDelayMs;
+            _accept_paused = true;
+            update_event(EPOLLERR | EPOLLHUP);
+            add_timer(t_msg);
+        }
+
+        bool _accept_paused{false};
         std::string _ip;
         unsigned short _port;
         std::unique_ptr<PROCESS> _process;

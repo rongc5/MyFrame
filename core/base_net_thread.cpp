@@ -26,6 +26,9 @@ base_net_thread::~base_net_thread(){
         _fast_slots[idx].store(nullptr, std::memory_order_release);
     }
     clear_user_data();
+    // Drop these references first so each channel connection is destroyed by the
+    // container while its epoll is valid, instead of later via a dangling pointer.
+    _channel_msg_vec.clear();
     if (_base_container){
         delete _base_container;
     }
@@ -232,7 +235,7 @@ void base_net_thread::add_worker_thread(uint32_t thread_index)
 uint32_t base_net_thread::next_worker_rr()
 {
     if (_worker_pool.empty()) return get_thread_index();
-    unsigned long idx = _rr_hint++;
+    unsigned long idx = _rr_hint.fetch_add(1, std::memory_order_relaxed);
     return _worker_pool[idx % _worker_pool.size()];
 }
 

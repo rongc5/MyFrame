@@ -2,6 +2,9 @@
 #define __BASE_THREAD_H__
 
 #include "common_def.h"
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 
 class base_thread
 {
@@ -47,7 +50,13 @@ class base_thread
         uint32_t _thread_index;
 
         pthread_t _thread_id;
-        bool _run_flag;
+        std::atomic<bool> _run_flag;
+
+        // Guards _thread_id, _started and _joining. Never held across pthread_join.
+        std::mutex _lifecycle_mutex;
+        std::condition_variable _join_cv;
+        bool _started{false};  // Keeps start() single-shot after _thread_id is cleared.
+        bool _joining{false};
 
         static std::vector<base_thread*>	_thread_vec;
 

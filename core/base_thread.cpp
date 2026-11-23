@@ -25,14 +25,21 @@ base_thread::~base_thread()
 
 bool base_thread::start()
 {
-    if (_thread_id) {
-        return false;
-    }
-
-    int ret = pthread_create(&_thread_id, NULL, base_thread_proc, this);
-    if (ret != 0)
     {
-        return false;
+        // Held across pthread_create so the new thread observes a published id.
+        std::lock_guard<std::mutex> lifecycle(_lifecycle_mutex);
+        if (_started) {
+            return false;
+        }
+
+        pthread_t tid;
+        int ret = pthread_create(&tid, NULL, base_thread_proc, this);
+        if (ret != 0)
+        {
+            return false;
+        }
+        _thread_id = tid;
+        _started = true;
     }
     {
         std::lock_guard<std::mutex> lck(_mutex);
@@ -43,12 +50,32 @@ bool base_thread::start()
 
 void base_thread::join_thread()
 {
-    pthread_join(_thread_id, NULL);
+    std::unique_lock<std::mutex> lifecycle(_lifecycle_mutex);
+    if (!_thread_id || pthread_equal(_thread_id, pthread_self())) {
+        // Never started, already joined, or a self-join that would deadlock.
+        return;
+    }
+    if (_joining) {
+        // Another caller owns the join; return only once the thread has exited.
+        _join_cv.wait(lifecycle, [this] { return !_joining; });
+        return;
+    }
+
+    _joining = true;
+    pthread_t tid = _thread_id;
+    lifecycle.unlock();
+    int ret = pthread_join(tid, NULL);
+    lifecycle.lock();
+    if (ret == 0) {
+        _thread_id = 0;
+    }
+    _joining = false;
+    _join_cv.notify_all();
 }
 
 bool base_thread::stop() 
 {
-    _run_flag = false;
+    _run_flag.store(false);
     return true;
 }
 
@@ -104,16 +131,17 @@ void base_thread::join_all_thread()
 
 bool base_thread::get_run_flag()
 {
-    return _run_flag;
+    return _run_flag.load();
 }
 
 void base_thread::set_run_flag(bool flag)
 {
-    _run_flag = flag;
+    _run_flag.store(flag);
 }
 
 pthread_t base_thread::get_thread_id()
 {
+    std::lock_guard<std::mutex> lifecycle(_lifecycle_mutex);
     return _thread_id;
 }
 
