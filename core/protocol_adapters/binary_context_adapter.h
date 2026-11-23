@@ -10,6 +10,8 @@
 #include <queue>
 #include <cstring>
 #include <functional>
+#include <mutex>
+#include <atomic>
 
 namespace myframe {
 
@@ -54,7 +56,13 @@ public:
 
     // 内部接口
     void set_message(uint32_t proto_id, const std::string& payload);
-    bool has_pending_send() const { return !_pending_queue.empty(); }
+    bool has_pending_send() const {
+        std::lock_guard<std::mutex> lk(_pending_mutex);
+        return !_pending_queue.empty();
+    }
+    // Outbound bytes queued in _pending_queue (thread-safe).
+    size_t pending_bytes() const { return _pending_bytes.load(std::memory_order_relaxed); }
+    bool is_slow_consumer() const { return _slow_consumer.load(std::memory_order_acquire); }
     bool get_pending_message(uint32_t& proto_id, std::string& data);
 
 private:
@@ -71,6 +79,9 @@ private:
         std::string data;
     };
     std::queue<PendingMessage> _pending_queue;
+    mutable std::mutex _pending_mutex;   // send() may be called from any thread
+    std::atomic<size_t> _pending_bytes{0};
+    std::atomic<bool> _slow_consumer{false};
 };
 
 // ============================================================================

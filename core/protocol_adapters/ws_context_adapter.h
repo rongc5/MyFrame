@@ -9,6 +9,7 @@
 #include <memory>
 #include <map>
 #include <queue>
+#include <atomic>
 
 namespace myframe {
 
@@ -65,7 +66,7 @@ private:
     std::weak_ptr<base_net_obj> _conn;
     WsFrame _frame;
     std::map<std::string, void*> _user_data;
-    bool _is_closing;
+    std::atomic<bool> _is_closing;
     std::queue<WsFrame> _pending_frames;
 };
 

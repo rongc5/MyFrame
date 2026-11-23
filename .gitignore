@@ -1,6 +1,7 @@
 # Build directories
 build/
 build_asan/
+build_tsan/
 lib/
 # include 目录需要纳入版本控制，勿忽略
 
@@ -27,6 +28,10 @@ test/test_*
 !test/test_http_middleware.cpp
 !test/test_http_json.cpp
 !test/test_http_routing.cpp
+!test/test_fd_sentinel.cpp
+!test/test_ws_broadcast_churn.cpp
+!test/test_ws_slow_consumer.cpp
+!test/test_p1_core.cpp
 build_test/
 test/simple_*
 test/https_*

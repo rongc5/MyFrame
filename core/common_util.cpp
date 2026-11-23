@@ -1,4 +1,5 @@
 #include "common_util.h"
+#include <chrono>
 
 time_t get_timestr(char dest[], size_t dest_len, const char * format)
 {
@@ -38,13 +39,19 @@ time_t get_timestr_millSecond(char dest[], size_t dest_len, const char * format)
     return now;
 }
 
+namespace {
+// strerror_r has two incompatible signatures (XSI returns int and fills the
+// buffer, GNU returns a pointer that may not be the buffer); handle both.
+inline const char * strerror_result(int ret, const char * buf) { return ret == 0 ? buf : ""; }
+inline const char * strerror_result(const char * ret, const char *) { return ret ? ret : ""; }
+}
+
 std::string strError(int errnum)
 {
     char err_buf[SIZE_LEN_1024];
     err_buf[0] = '\0';
 
-    strerror_r(errnum, err_buf, sizeof(err_buf));
-    return std::string(err_buf);
+    return std::string(strerror_result(strerror_r(errnum, err_buf, sizeof(err_buf)), err_buf));
 }
 
 uint64_t GetMilliSecond()
@@ -53,6 +60,12 @@ uint64_t GetMilliSecond()
     gettimeofday(&tm, NULL);
     uint64_t now = tm.tv_sec * 1000 + tm.tv_usec/1000;
     return now;
+}
+
+uint64_t GetMonotonicMilliSecond()
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
 

@@ -62,11 +62,16 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/client_conn_rout
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/http2_client.cpp")
 list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/connection_manager.cpp")
 
-## Ensure utils/encode is built
-add_custom_target(build_encode ALL
-    COMMAND bash build.sh all
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/utils/encode
-)
+## Ensure utils/encode is built (fall back to the pre-built archive when the
+## helper script is not shipped with the checkout).
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/utils/encode/build.sh")
+    add_custom_target(build_encode ALL
+        COMMAND bash build.sh all
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/utils/encode
+    )
+elseif (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/utils/encode/lib/libencode.a")
+    message(FATAL_ERROR "utils/encode/build.sh and utils/encode/lib/libencode.a are both missing")
+endif()
 
 ## Auto-build utils/str2sign if source exists
 set(STR2SIGN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/utils/str2sign)
@@ -91,7 +96,9 @@ endif()
 
 # Create library
 add_library(myframe STATIC ${CORE_SOURCES})
-add_dependencies(myframe build_encode)
+if (TARGET build_encode)
+    add_dependencies(myframe build_encode)
+endif()
 if (TARGET build_str2sign)
     add_dependencies(myframe build_str2sign)
 endif()

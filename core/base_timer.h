@@ -20,12 +20,12 @@ class base_timer
         uint32_t gen_timerid();
 
 	protected:
-        std::multimap<uint64_t, std::shared_ptr<timer_msg> > _timer_list[2];
+        // Keyed by absolute expiry on the monotonic clock.
+        std::multimap<uint64_t, std::shared_ptr<timer_msg> > _timer_list;
         std::set<uint32_t> _timerid_set;
 
         common_obj_container * _net_container;
         uint32_t _timerid;
-        uint32_t _current;
 };
 #endif
 

@@ -28,6 +28,17 @@ class common_obj_container
 
         void handle_msg(uint32_t obj_id, std::shared_ptr<normal_msg> & p_msg);
 
+        // Tear down a connection that failed outside of the epoll/timer paths
+        // (e.g. while handling a channel message). The fd is closed right away;
+        // removal from the maps is deferred to flush_deferred_close(), which
+        // runs at points where no container map is being iterated.
+        void defer_close(const std::shared_ptr<base_net_obj> & p_obj);
+        void flush_deferred_close();
+
+        // Owner thread only: push queued outbound data to the sockets. Returns
+        // true while any connection still has data it could not write.
+        bool flush_outbound();
+
         void obj_process();
 
         common_epoll *get_epoll();
@@ -56,6 +67,7 @@ class common_obj_container
         common_domain * _domain;
         ObjId _id_str;
         base_net_thread* _owner_thread{nullptr};
+        std::vector<std::shared_ptr<base_net_obj> > _deferred_close;
 };
 
 #endif

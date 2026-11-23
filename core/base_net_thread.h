@@ -7,6 +7,7 @@
 #include "base_connect.h"
 #include "channel_data_process.h"
 #include "thread_plugin.h"
+#include "net_thread_context.h"
 #ifndef __LISTEN_FWD__
 #define __LISTEN_FWD__
 template <class PROCESS> class listen_connect;
@@ -33,13 +34,28 @@ class base_net_thread:public base_thread
 
         virtual void *run();
 
+        // Clears the run flag and wakes the event loop immediately.
+        virtual bool stop() override;
+
         virtual void run_process();
 
         virtual void net_thread_init();
 
         virtual void put_msg(uint32_t obj_id, std::shared_ptr<normal_msg> & p_msg);
 
-        static void put_obj_msg(ObjId & id, std::shared_ptr<normal_msg> & p_msg);
+        // Returns true when the message was queued to a live thread. A true
+        // result is processed by the target, subject to the bounded shutdown
+        // drain; false means it was not queued and the caller keeps ownership
+        // of any resource it references (for example an accepted fd).
+        static bool put_obj_msg(ObjId & id, std::shared_ptr<normal_msg> & p_msg);
+
+        // Same as put_obj_msg() for const ids and by-value messages.
+        static bool post_obj_msg(const ObjId & id, std::shared_ptr<normal_msg> p_msg);
+
+        // True while run() is executing the event loop of this thread.
+        bool loop_active() const { return _loop_active.load(std::memory_order_acquire); }
+        static bool is_loop_running(uint32_t thread_index);
+        static myframe::detail::NetThreadState thread_state(uint32_t thread_index);
 
         virtual void handle_msg(std::shared_ptr<normal_msg> & p_msg);
 
@@ -74,10 +90,30 @@ class base_net_thread:public base_thread
         static constexpr uint32_t FAST_SLOT_COUNT = 256;
         static std::atomic<base_net_thread *> _fast_slots[FAST_SLOT_COUNT];
 
+        // Posters currently using _fast_slots[i]. Protocol (all seq_cst):
+        // poster: ++inflight, load slot, use thread, --inflight.
+        // teardown: clear slot, then wait for inflight == 0.
+        struct InflightSlot { alignas(64) std::atomic<uint32_t> count; };
+        static InflightSlot _inflight[FAST_SLOT_COUNT];
+
+        static bool dispatch(const ObjId & id, std::shared_ptr<normal_msg> & p_msg);
+        bool enqueue_if_open(uint32_t obj_id, std::shared_ptr<normal_msg> & p_msg);
+
+        // Stop routing messages here and wait for in-flight posters. Idempotent.
+        // A subclass overriding put_msg() or sharing state with it should call
+        // this first in its destructor, before its vtable and members go away.
+        void unpublish_thread();
+
+        // Bounded shutdown drain, run on this thread after the loop exits.
+        void drain_on_exit();
+        bool drain_channels();
+
         static std::unordered_map<uint32_t, base_net_thread *> _base_net_thread_map;
         static std::mutex _thread_map_mutex;
 
         std::vector<std::shared_ptr<IThreadPlugin> > _plugins;
+        std::atomic<bool> _loop_active{false};
+        std::atomic<bool> _loop_exited{false};
     public:
         void add_plugin(std::shared_ptr<IThreadPlugin> p) { _plugins.push_back(p); }
         void set_factory_for_thread(IFactory* f) { _factory_for_thread = f; }

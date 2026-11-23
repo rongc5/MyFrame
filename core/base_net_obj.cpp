@@ -6,6 +6,9 @@
 
 #include "base_data_process.h"
 #include "common_util.h"
+#include "net_thread_context.h"
+#include "obj_task_msg.h"
+#include "common_obj_container.h"
 
 #include <atomic>
 
@@ -17,7 +20,7 @@ static std::atomic<uint32_t> g_obj_generation_counter{0};
 
 base_net_obj::base_net_obj()
 {
-    _fd = 0;
+    _fd = kInvalidFd;
     // Monitor read, hangups, and remote half-close by default
     _epoll_event = EPOLLIN | EPOLLERR | EPOLLHUP
 #ifdef EPOLLRDHUP
@@ -26,7 +29,7 @@ base_net_obj::base_net_obj()
         ;
     _p_net_container = NULL;
     _real_net = false;
-    _last_active_ms = GetMilliSecond();
+    _last_active_ms = GetMonotonicMilliSecond();
     _generation = ++g_obj_generation_counter;  // 1-based, 永不为 0
 }
 
@@ -45,16 +48,17 @@ base_net_obj::~base_net_obj()
 
     _epoll_event = 0;
 
-    if (_fd != 0) {
+    if (_fd >= 0) {
         ::close(_fd);
         PDEBUG("close %d", _fd);
-        _fd = 0;
+        _fd = kInvalidFd;
     }
 }
 
 void base_net_obj::set_net_container(common_obj_container *p_net_container)
 {
     _p_net_container = p_net_container;
+    _owner_bound = (p_net_container && p_net_container->get_owner_thread() != NULL);
     common_epoll * p_epoll = _p_net_container->get_epoll();
 
     std::shared_ptr<base_net_obj> p=std::dynamic_pointer_cast<base_net_obj>(shared_from_this());
@@ -66,7 +70,7 @@ void base_net_obj::set_net_container(common_obj_container *p_net_container)
         // 副作用红利: 如果 add_to_epoll 失败, obj 还在 container 里, 析构时正常
         // 走 ~base_net_obj 清理 — 不会留 "在 epoll 里但不在 container 里" 的孤儿。
         _p_net_container->insert(p);
-        if (_fd > 0) {
+        if (_fd >= 0) {
             p_epoll->add_to_epoll(p.get());
         }
         add_timer();
@@ -111,6 +115,18 @@ void base_net_obj::update_event(int event)
         return;
     }
 
+    if (!on_owner_thread()) {
+        // _epoll_event and the epoll registration belong to the owner thread.
+        post_to_owner([event](base_net_obj & o) { o.update_event(event); });
+        return;
+    }
+
+    if (_fd < 0) {
+        // Closed socket: remember the mask but never touch epoll with it.
+        _epoll_event = event;
+        return;
+    }
+
     common_epoll * p_epoll = _p_net_container->get_epoll();
     if (_epoll_event != event && p_epoll) {
         _epoll_event = event;
@@ -126,6 +142,58 @@ int base_net_obj::get_event()
 int base_net_obj::get_sfd()
 {
     return _fd;
+}
+
+bool base_net_obj::on_owner_thread() const
+{
+    if (!_p_net_container) {
+        return true;
+    }
+    const uint32_t owner = _id_str._thread_index;
+    const uint32_t cur = myframe::detail::current_net_thread_index();
+    if (cur == owner) {
+        return true;
+    }
+    if (cur != 0) {
+        // Another network thread.
+        return false;
+    }
+    if (!_owner_bound) {
+        // Stand-alone container driven by the caller (unit tests).
+        return true;
+    }
+    // Idle: setup before the loop starts, no concurrent owner. Stopped/Gone:
+    // the container may be in teardown, so the caller must post (and the post
+    // is dropped with the channel queue).
+    return myframe::detail::net_thread_state(owner) == myframe::detail::NetThreadState::Idle;
+}
+
+bool base_net_obj::post_to_owner(std::function<void(base_net_obj &)> fn)
+{
+    return post_obj_task(_id_str, _generation, std::move(fn));
+}
+
+bool base_net_obj::post_notice_send_to_owner()
+{
+    if (_foreign_notice_pending.exchange(true, std::memory_order_acq_rel)) {
+        return true;  // already queued
+    }
+    bool ok = post_to_owner([](base_net_obj & o) {
+        o._foreign_notice_pending.store(false, std::memory_order_release);
+        o.notice_send();
+    });
+    if (!ok) {
+        _foreign_notice_pending.store(false, std::memory_order_release);
+    }
+    return ok;
+}
+
+bool base_net_obj::post_close_to_owner(const char * reason)
+{
+    std::string why = reason ? reason : "close requested";
+    return post_to_owner([why](base_net_obj &) {
+        THROW_COMMON_EXCEPT(why.c_str());
+    });
 }
 
 void base_net_obj::set_id(const ObjId & id_str)

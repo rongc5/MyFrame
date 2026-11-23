@@ -135,6 +135,10 @@ void set_unblock(int fd);
 
 uint64_t GetMilliSecond();
 
+// Milliseconds from std::chrono::steady_clock. Unaffected by wall-clock jumps;
+// use it for timers and durations. The epoch is arbitrary.
+uint64_t GetMonotonicMilliSecond();
+
 time_t get_timestr(char dest[], size_t dest_len, const char * format);
 
 time_t get_timestr_millSecond(char dest[], size_t dest_len, const char * format);

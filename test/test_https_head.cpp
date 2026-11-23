@@ -74,6 +74,26 @@ static std::string body_of(const std::string& response) {
     return pos == std::string::npos ? std::string() : response.substr(pos + 4);
 }
 
+// Pick a currently free loopback port so the test does not collide with other
+// local services (a fixed port such as 18080 may already be taken).
+static unsigned short pick_free_port() {
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    unsigned short port = 18080;
+    if (fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
+        socklen_t len = sizeof(addr);
+        if (::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0) {
+            port = ntohs(addr.sin_port);
+        }
+    }
+    if (fd >= 0) ::close(fd);
+    return port;
+}
+
 int main() {
     ssl_config conf;
     conf._cert_file = MYFRAME_TEST_CERT;
@@ -82,7 +102,7 @@ int main() {
     conf._alpn = "http/1.1";
     tls_set_server_config(conf);
 
-    const unsigned short port = 18080;
+    const unsigned short port = pick_free_port();
     HttpsHeadHandler handler;
     std::shared_ptr<myframe::UnifiedProtocolFactory> factory(new myframe::UnifiedProtocolFactory());
     factory->register_http_handler(&handler);

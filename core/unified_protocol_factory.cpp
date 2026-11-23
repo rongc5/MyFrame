@@ -407,7 +407,10 @@ void UnifiedProtocolFactory::on_accept(base_net_thread* listen_th, int fd) {
     id._id = OBJ_ID_THREAD;
     id._thread_index = target_index;
 
-    base_net_thread::put_obj_msg(id, ng);
+    if (!base_net_thread::put_obj_msg(id, ng)) {
+        ::close(fd);  // target gone: do not leak the accepted socket
+        return;
+    }
 
     PDEBUG("[UnifiedFactory] Accepted fd=%d, dispatched to thread %u",
            fd, target_index);

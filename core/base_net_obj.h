@@ -2,7 +2,9 @@
 #define __BASE_NET_OBJ_H__
 
 #include "common_util.h"
+#include <atomic>
 #include <string>
+#include <functional>
 
 class base_data_process;
 class common_obj_container;
@@ -37,6 +39,30 @@ class base_net_obj: public std::enable_shared_from_this<base_net_obj>
 
         int get_sfd();
 
+        // Closed / not-yet-connected sentinel for _fd. fd 0 is a valid
+        // descriptor and must never be mistaken for "no socket".
+        static constexpr int kInvalidFd = -1;
+        bool has_valid_fd() const { return _fd >= 0; }
+
+        // True when the calling thread may touch this connection's socket and
+        // send state directly: it is the connection's owner network thread,
+        // the connection is not attached to a running event loop (setup /
+        // teardown), or it has no container yet. Any other caller must post
+        // the work to the owner thread (see obj_task_msg.h).
+        bool on_owner_thread() const;
+
+        // Post fn to this connection's owner thread. The closure only runs if
+        // this exact connection (same generation) is still registered.
+        bool post_to_owner(std::function<void(base_net_obj &)> fn);
+
+        // Ask the owner thread to run notice_send(); repeated foreign requests
+        // are coalesced until the owner has processed the pending one.
+        bool post_notice_send_to_owner();
+
+        // Ask the owner thread to tear this connection down through the
+        // standard container path (destroy + erase).
+        bool post_close_to_owner(const char * reason);
+
         void set_id(const ObjId & id_str);
         const ObjId & get_id();
 
@@ -55,6 +81,9 @@ class base_net_obj: public std::enable_shared_from_this<base_net_obj>
         // epoll events (e.g., TLS handshake progress or pending writes).
         // Default: when EPOLLOUT is armed.
         virtual bool wants_tick() const { return (_epoll_event & EPOLLOUT) == EPOLLOUT; }
+        // Owner thread only: try to write queued data without reading. Returns
+        // true while outbound data remains. Used by the shutdown drain.
+        virtual bool flush_outbound() { return false; }
 
         net_addr & get_peer_addr();
 
@@ -82,6 +111,11 @@ class base_net_obj: public std::enable_shared_from_this<base_net_obj>
         std::string _protocol_tag;
         bool _protocol_locked{false};
         uint32_t _generation{0};
+        // Coalesces notice_send() requests posted from foreign threads.
+        std::atomic<bool> _foreign_notice_pending{false};
+        // Whether the container this object lives in belongs to a network
+        // thread (captured once in set_net_container on the setup thread).
+        bool _owner_bound{false};
 };
 
 

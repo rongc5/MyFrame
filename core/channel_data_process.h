@@ -43,6 +43,12 @@ class channel_data_process:public base_data_process
 
         void put_msg(uint32_t obj_id, std::shared_ptr<normal_msg> & p_msg);
 
+        // True while messages are queued on this channel.
+        bool has_pending();
+
+        // Write one non-blocking byte so a sleeping event loop returns at once.
+        void wake();
+
         void add_event_timer(uint64_t time_out = MAX_CHANNEL_EVENT_TIMEOUT);
 
         virtual void handle_timeout(std::shared_ptr<timer_msg> & t_msg);

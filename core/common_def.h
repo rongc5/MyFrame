@@ -37,7 +37,7 @@ class content_msg: public normal_msg
         content_msg()
         {
             _msg_op = NORMAL_MSG_CONNECT;
-            fd = 0;
+            fd = -1;
         }
 
         virtual ~content_msg(){}

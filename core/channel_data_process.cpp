@@ -85,7 +85,7 @@ size_t channel_data_process::process_recv_buf(const char *buf, size_t len)
     {
         add_event_timer();
     }
-    _last_time = GetMilliSecond();
+    _last_time = GetMonotonicMilliSecond();
 
     // 唤醒字节是纯信号; 已排空队列, 把收到的 wake 字节全部消费掉。
     // (调用方按返回值 erase recv_buf, 见 base_connect::real_recv)
@@ -99,6 +99,25 @@ size_t channel_data_process::process_recv_buf(const char *buf, size_t len)
 void channel_data_process::on_tick()
 {
     drain_queue();
+    // The watchdog parks this channel in the real-net map. Leave it once the
+    // backlog is gone, otherwise the zero-wait tick would spin the loop.
+    auto sp = _p_connect.lock();
+    if (sp && sp->get_real_net() && !has_pending()) {
+        sp->set_real_net(false);
+    }
+}
+
+bool channel_data_process::has_pending()
+{
+    std::lock_guard<std::mutex> lck(_mutex);
+    return !_queue[0].empty() || !_queue[1].empty();
+}
+
+void channel_data_process::wake()
+{
+    static const char kWakeByte = 'c';
+    // EAGAIN means unread wake bytes exist, so the loop will wake anyway.
+    (void)::send(_channelid, &kWakeByte, 1, MSG_DONTWAIT | MSG_NOSIGNAL);
 }
 
 
@@ -149,7 +168,7 @@ void channel_data_process::put_msg(uint32_t obj_id, std::shared_ptr<normal_msg> 
     }
 
     static std::atomic<uint64_t> s_last_warn_ms{0};
-    uint64_t now_ms = GetMilliSecond();
+    uint64_t now_ms = GetMonotonicMilliSecond();
     uint64_t prev = s_last_warn_ms.load(std::memory_order_relaxed);
     if (now_ms - prev > 1000 &&
         s_last_warn_ms.compare_exchange_strong(prev, now_ms)) {
@@ -190,7 +209,7 @@ void channel_data_process::handle_timeout(std::shared_ptr<timer_msg> & t_msg)
 
     PDEBUG("handle_timeout: timer_id:%u timer_type:%u, len:%d", t_msg->_timer_id, t_msg->_timer_type, len);
 
-    uint64_t now =  GetMilliSecond();
+    uint64_t now =  GetMonotonicMilliSecond();
    if (t_msg->_timer_type == NONE_CHANNEL_EVENT_TIMER_TYPE)
    {
        if (llabs(now - _last_time) > t_msg->_time_length && len)

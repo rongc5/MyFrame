@@ -27,7 +27,7 @@ class listen_process
                 auto ng = std::static_pointer_cast<normal_msg>(msg);
                 ng->_msg_op = NORMAL_MSG_CONNECT;
                 ObjId id; id._id = OBJ_ID_THREAD; id._thread_index = _listen_thread->next_worker_rr();
-                base_net_thread::put_obj_msg(id, ng);
+                if (!base_net_thread::put_obj_msg(id, ng)) ::close(fd);  // worker gone: do not leak
                 return;
             }
             // 其次使用内部维护的 worker 列表（兼容旧接口）
@@ -38,7 +38,7 @@ class listen_process
                 ng->_msg_op = NORMAL_MSG_CONNECT;
                 size_t idx = _next.fetch_add(1) % _worker_thd_vec.size();
                 ObjId id; id._id = OBJ_ID_THREAD; id._thread_index = _worker_thd_vec[idx];
-                base_net_thread::put_obj_msg(id, ng);
+                if (!base_net_thread::put_obj_msg(id, ng)) ::close(fd);  // worker gone: do not leak
                 return;
             }
 
@@ -59,7 +59,7 @@ class listen_process
                 id._thread_index = _listen_thread->get_thread_index(); 
             }
             std::shared_ptr<normal_msg> ng = std::static_pointer_cast<normal_msg>(net_obj);
-            base_net_thread::put_obj_msg(id, ng);
+            if (!base_net_thread::put_obj_msg(id, ng)) ::close(fd);  // target gone: do not leak
         }
 
         void add_worker_thread(uint32_t thread_index)

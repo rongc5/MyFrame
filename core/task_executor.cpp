@@ -30,10 +30,10 @@ void TaskExecutor::shutdown() {
         std::lock_guard<std::mutex> lk(_mu);
         if (_stop) return;
         _stop = true;
-        _q.clear();   // 取消尚未开始的排队任务（不排空执行），保证及时停机
     }
     _cv.notify_all();
-    // 等待正在执行的任务自然结束（无法强制中断线程；故要求任务本身有界、不长期阻塞）。
+    // Workers exit once the queue is empty: already-queued tasks still run.
+    // Tasks must be bounded, since threads cannot be interrupted.
     for (std::thread& t : _workers) if (t.joinable()) t.join();
     _workers.clear();
 }

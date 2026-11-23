@@ -13,13 +13,18 @@ static inline uint64_t pack_epoll_payload(base_net_obj * obj) {
 static inline bool is_expected_disconnect(const char* message) {
     if (!message) return false;
     return strstr(message, "peer closed") != NULL ||
-           strstr(message, "client close the socket") != NULL;
+           strstr(message, "client close the socket") != NULL ||
+           strstr(message, "Connection reset by peer") != NULL ||
+           strstr(message, "Broken pipe") != NULL;
 }
 
 
 
 void common_epoll::add_to_epoll(base_net_obj * p_obj)
-{		
+{
+    if (p_obj == NULL || p_obj->get_sfd() < 0) {
+        return;  // closed / not yet connected: nothing registered on epoll
+    }		
     int tmpOprate = EPOLL_CTL_ADD;
     struct epoll_event tmpEvent;
     memset(&tmpEvent, 0, sizeof(epoll_event));
@@ -45,6 +50,9 @@ void common_epoll::add_to_epoll(base_net_obj * p_obj)
 
 void common_epoll::del_from_epoll(base_net_obj * p_obj)
 {
+    if (p_obj == NULL || p_obj->get_sfd() < 0) {
+        return;  // closed / not yet connected: nothing registered on epoll
+    }
     int tmpOprate = EPOLL_CTL_DEL;
     struct epoll_event tmpEvent;
     memset(&tmpEvent, 0, sizeof(epoll_event));
@@ -62,6 +70,9 @@ void common_epoll::del_from_epoll(base_net_obj * p_obj)
 
 void common_epoll::mod_from_epoll(base_net_obj * p_obj)
 {
+    if (p_obj == NULL || p_obj->get_sfd() < 0) {
+        return;  // closed / not yet connected: nothing registered on epoll
+    }
     int tmpOprate = EPOLL_CTL_MOD;
     struct epoll_event tmpEvent;
     tmpEvent.events =  p_obj->get_event();  
@@ -80,7 +91,9 @@ void common_epoll::mod_from_epoll(base_net_obj * p_obj)
 
 int common_epoll::epoll_wait(std::map<ObjId, std::shared_ptr<base_net_obj> > &expect_list, std::map<ObjId, std::shared_ptr<base_net_obj> > &remove_list, uint32_t num)
 {
-    int  nfds = ::epoll_wait(_epoll_fd, _epoll_events, _epoll_size, _epoll_wait_time);
+    // num = connections with pending tick work: poll without sleeping.
+    const int wait_ms = num > 0 ? 0 : _epoll_wait_time;
+    int  nfds = ::epoll_wait(_epoll_fd, _epoll_events, _epoll_size, wait_ms);
     if (nfds == -1)
     {
         std::string err = strError(errno);
@@ -114,6 +127,11 @@ int common_epoll::epoll_wait(std::map<ObjId, std::shared_ptr<base_net_obj> > &ex
         std::shared_ptr<base_net_obj> p_obj = _owner_container->find(obj_id);
         if (!p_obj) {
             // obj 已死, 还没从 epoll 摘掉; 静默丢弃。
+            continue;
+        }
+        if (p_obj->get_sfd() < 0) {
+            // Already torn down (e.g. a send failed while draining a channel
+            // message earlier in this batch); erase is pending, skip the event.
             continue;
         }
         if (p_obj->generation() != gen) {

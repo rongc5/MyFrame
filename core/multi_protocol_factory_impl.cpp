@@ -76,5 +76,5 @@ void MultiProtocolFactory::on_accept(base_net_thread* listen_th, int fd)
     cm->fd = fd;
     std::shared_ptr<normal_msg> ng = std::static_pointer_cast<normal_msg>(cm);
     ObjId id; id._id = OBJ_ID_THREAD; id._thread_index = target_index;
-    base_net_thread::put_obj_msg(id, ng);
+    if (!base_net_thread::put_obj_msg(id, ng)) ::close(fd);  // target gone: do not leak
 }

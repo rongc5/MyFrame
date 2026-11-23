@@ -8,13 +8,11 @@ base_timer::base_timer(common_obj_container * net_container)
 {
     _net_container = net_container;
     _timerid = TIMER_ID_BEGIN;
-    _current = 0;
 }
 
 base_timer::~base_timer()
 {
-    _timer_list[_current].clear();
-    _timer_list[1 - _current].clear();
+    _timer_list.clear();
 }
 
 uint32_t base_timer::gen_timerid()
@@ -41,71 +39,50 @@ uint32_t base_timer::add_timer(std::shared_ptr<timer_msg> & t_msg)
         return 0;
     }
 
-    uint64_t reach_time = GetMilliSecond() + t_msg->_time_length;
+    uint64_t reach_time = GetMonotonicMilliSecond() + t_msg->_time_length;
     t_msg->_timer_id = gen_timerid();
 
     //PDEBUG("time_length:%u reach_time:%llu timer_id:%u _timer_type:%u", t_msg->_time_length, reach_time, t_msg->_timer_id, t_msg->_timer_type);
 
-    _timer_list[_current].insert(make_pair(reach_time, t_msg));
+    _timer_list.insert(make_pair(reach_time, t_msg));
 
     return t_msg->_timer_id;
 }
 
 void base_timer::check_timer(std::vector<uint32_t> &expect_list)
 {
-    uint64_t now = 	GetMilliSecond();
+    const uint64_t now = GetMonotonicMilliSecond();
 
-    typedef std::multimap<uint64_t, std::shared_ptr<timer_msg> >::iterator MITER;
-    MITER it;
-    std::pair<MITER, MITER> range;
-
-    std::multimap<uint64_t, std::shared_ptr<timer_msg> > & timer_list = _timer_list[_current];
-    it = timer_list.begin();
-
-    std::vector<uint64_t> tmp_vec;
-    std::vector<uint64_t>::iterator ii;
-
-    _current = 1 - _current;
-
-    for (it = timer_list.begin(); it != timer_list.end(); it++) 
+    // Detach every expired entry before running callbacks, so a callback can
+    // safely add timers (including re-arming the same timer_msg).
+    std::vector<std::shared_ptr<timer_msg> > expired;
+    auto end = _timer_list.upper_bound(now);
+    for (auto it = _timer_list.begin(); it != end; ++it)
     {
+        _timerid_set.erase(it->second->_timer_id);
+        expired.push_back(it->second);
+    }
+    _timer_list.erase(_timer_list.begin(), end);
+
+    for (auto & t_msg : expired)
+    {
+        const uint32_t obj_id = t_msg->_obj_id;
         try
         {
-            if (it->first > now)
-                break;
-
-            //PDEBUG("time_length:%u timer_id:%u _timer_type:%u", it->second->_time_length, it->second->_timer_id, it->second->_timer_type);
-
-            tmp_vec.push_back(it->first);
-
-            _net_container->handle_timeout(it->second);
+            _net_container->handle_timeout(t_msg);
         }
-        catch(CMyCommonException &e) 
+        catch(CMyCommonException &e)
         {
-            expect_list.push_back(it->second->_obj_id);
+            expect_list.push_back(obj_id);
         }
-        catch(std::exception &e) 
-        {   
-            expect_list.push_back(it->second->_obj_id);
-        } 
-    }
-
-    for (ii = tmp_vec.begin(); ii != tmp_vec.end(); ii++)
-    {
-
-        range = timer_list.equal_range(*ii);
-        for (it = range.first; it != range.second; ++it)
+        catch(std::exception &e)
         {
-            _timerid_set.erase(it->second->_timer_id);
+            expect_list.push_back(obj_id);
         }
-        timer_list.erase(*ii);
     }
-
-    //PDEBUG("_current: size:%u idle: size:%u, _timerid_set:%u", _timer_list[_current].size(), _timer_list[1 - _current].size(), _timerid_set.size());
 }
 
 bool base_timer::is_empty()
 {
-    std::multimap<uint64_t, std::shared_ptr<timer_msg> > & timer_list = _timer_list[_current];
-    return timer_list.begin() == timer_list.end();
+    return _timer_list.empty();
 }

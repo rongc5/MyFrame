@@ -2,7 +2,10 @@
 #define _BASE_DATA_PROCESS_H_
 
 #include "common_util.h"
+#include "outbound_guard.h"
 #include <deque>
+#include <functional>
+#include <memory>
 
 class base_net_obj;
 class base_data_process
@@ -70,11 +73,37 @@ class base_data_process
         // Virtual function for getting process name (for debugging/logging)
         virtual const char* name() const { return "base_data_process"; }
 
+        // ===== Owner-thread helpers =====
+        // True when the caller may touch this process' send state directly
+        // (see base_net_obj::on_owner_thread()).
+        bool on_owner_thread() const;
+        // Post fn to the connection owner thread. fn runs only if this process
+        // object is still alive (not replaced/destroyed) when it is executed.
+        bool post_to_owner_thread(std::function<void()> fn);
+        // Run fn inline on the owner thread, otherwise post it.
+        bool run_on_owner_thread(std::function<void()> fn);
+
+        // ===== Outbound backpressure =====
+        // Per-connection high-water mark in bytes; 0 = global default
+        // (myframe::outbound_high_water_mark()).
+        void set_outbound_high_water_mark(size_t bytes);
+        size_t outbound_high_water_mark() const;
+        // Bytes accepted for sending that the socket layer has not pulled yet.
+        size_t outbound_queued_bytes() const;
+        bool is_slow_consumer() const;
+        // Thread-safe handle to the counters (never to the process itself).
+        std::weak_ptr<myframe::detail::OutboundState> outbound_state() const { return _outbound; }
+
     protected:
         void clear_send_list();
 
+        // Latch the slow-consumer state, count it, and ask the owner thread to
+        // close the connection. Safe from any thread.
+        void trigger_slow_consumer_close(myframe::OutboundKind kind);
+
     protected:
         std::weak_ptr<base_net_obj> _p_connect;
+        std::shared_ptr<myframe::detail::OutboundState> _outbound;
         std::deque<std::string*> _send_list;
         bool _closing{false};
         bool _peer_close_notified{false};

@@ -6,12 +6,16 @@
 
 #include "common_util.h"
 #include "common_domain.h"
+#include "net_thread_context.h"
+#include "obj_task_msg.h"
 
 namespace {
 bool is_expected_disconnect(const char* message) {
     if (!message) return false;
     return strstr(message, "peer closed") != NULL ||
-           strstr(message, "client close the socket") != NULL;
+           strstr(message, "client close the socket") != NULL ||
+           strstr(message, "Connection reset by peer") != NULL ||
+           strstr(message, "Broken pipe") != NULL;
 }
 }
 
@@ -32,6 +36,8 @@ common_obj_container::common_obj_container(uint32_t thread_index, uint32_t epoll
 
 common_obj_container::~common_obj_container()
 {
+    myframe::detail::NetThreadScope owner_scope(_id_str._thread_index);
+    _deferred_close.clear();
     for (const auto & k :_obj_map)
     {
         k.second->destroy();
@@ -188,30 +194,111 @@ void common_obj_container::erase(uint32_t obj_id)
 
 void common_obj_container::handle_msg(uint32_t obj_id, std::shared_ptr<normal_msg> & p_msg)
 {
+    if (!p_msg) {
+        return;
+    }
     switch (obj_id)
     {
         case OBJ_ID_THREAD:
             {
                 if (_owner_thread)
                 {
-                    _owner_thread->handle_msg(p_msg);
+                    try {
+                        _owner_thread->handle_msg(p_msg);
+                    } catch (std::exception &e) {
+                        fprintf(stderr, "[handle_msg] thread message handler threw: %s\n", e.what());
+                    } catch (...) {
+                        fprintf(stderr, "[handle_msg] thread message handler threw\n");
+                    }
                 }
             }
             break;
         default:
             {
-
                 std::shared_ptr<base_net_obj>  net_obj = find(obj_id);
-                if (net_obj)
+                if (!net_obj) {
+                    // Connection already closed: drop the message.
+                    return;
+                }
+                try {
+                    if (p_msg->_msg_op == NORMAL_MSG_OBJ_TASK) {
+                        obj_task_msg * task = dynamic_cast<obj_task_msg *>(p_msg.get());
+                        if (task) {
+                            // A recycled obj_id must never receive a task that
+                            // was addressed to an earlier connection.
+                            if (task->_generation != 0 && task->_generation != net_obj->generation()) {
+                                return;
+                            }
+                            if (task->_fn) task->_fn(*net_obj);
+                            return;
+                        }
+                    }
                     net_obj->handle_msg(p_msg);
+                } catch (CMyCommonException &e) {
+                    if (!is_expected_disconnect(e.what())) {
+                        PDEBUG("[handle_msg] obj_id=%u: %s", obj_id, e.what());
+                    }
+                    defer_close(net_obj);
+                } catch (std::exception &e) {
+                    fprintf(stderr, "[handle_msg] std::exception obj_id=%u: %s\n", obj_id, e.what());
+                    defer_close(net_obj);
+                }
             }
     }
 }
 
+void common_obj_container::defer_close(const std::shared_ptr<base_net_obj> & p_obj)
+{
+    if (!p_obj) return;
+    for (const auto & o : _deferred_close) {
+        if (o == p_obj) return;
+    }
+    if (_p_epoll) {
+        try { _p_epoll->del_from_epoll(p_obj.get()); } catch (...) {}
+    }
+    try { p_obj->destroy(); } catch (...) {}
+    _deferred_close.push_back(p_obj);
+}
+
+void common_obj_container::flush_deferred_close()
+{
+    if (_deferred_close.empty()) return;
+    std::vector<std::shared_ptr<base_net_obj> > pending;
+    pending.swap(_deferred_close);
+    for (auto & obj : pending) {
+        uint32_t id = obj->get_id()._id;
+        auto it = _obj_map.find(id);
+        // Only erase the exact object that failed; the id may have been reused.
+        if (it != _obj_map.end() && it->second == obj) {
+            erase(id);
+        }
+    }
+}
+
+bool common_obj_container::flush_outbound()
+{
+    std::vector<std::shared_ptr<base_net_obj> > targets;
+    for (const auto & kv : _obj_map) {
+        if (kv.second && kv.second->wants_tick()) targets.push_back(kv.second);
+    }
+    bool pending = false;
+    for (auto & obj : targets) {
+        try {
+            if (obj->flush_outbound()) pending = true;
+        } catch (CMyCommonException &) {
+            defer_close(obj);
+        } catch (std::exception &) {
+            defer_close(obj);
+        }
+    }
+    flush_deferred_close();
+    return pending;
+}
+
 void common_obj_container::obj_process()
 {   
-    uint32_t tmp_num = 0;
-
+    myframe::detail::NetThreadScope owner_scope(_id_str._thread_index);
+    flush_deferred_close();
     std::vector<std::shared_ptr<base_net_obj> > exception_vec;
     std::vector<std::shared_ptr<base_net_obj> > real_net_vec;
 
@@ -223,8 +310,6 @@ void common_obj_container::obj_process()
             if (!u.second->get_real_net()) {
                 real_net_vec.push_back(u.second);
             }
-
-            tmp_num++;
         }
         catch(CMyCommonException &e)
         {
@@ -272,7 +357,7 @@ void common_obj_container::obj_process()
     std::map<ObjId, std::shared_ptr<base_net_obj> > exp_list;
     std::map<ObjId, std::shared_ptr<base_net_obj> > remove_list;
 
-    _p_epoll->epoll_wait(exp_list, remove_list, tmp_num);
+    _p_epoll->epoll_wait(exp_list, remove_list, static_cast<uint32_t>(_obj_net_map.size()));
     for (std::map<ObjId, std::shared_ptr<base_net_obj> >::iterator itr = exp_list.begin(); itr != exp_list.end(); ++itr)
     {         	
         PDEBUG("step2: _id:%d, _thread_index:%d", itr->second->get_id()._id, itr->second->get_id()._thread_index);            
@@ -301,4 +386,6 @@ void common_obj_container::obj_process()
             erase(*it);
         }
     }
+
+    flush_deferred_close();
 }

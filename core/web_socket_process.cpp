@@ -133,6 +133,12 @@ void web_socket_process::destroy()
 
 void web_socket_process::send_ping(const char op_code, const std::string &ping_data)
 {
+    if (!on_owner_thread()) {
+        // _p_tmp_str and the frame state belong to the owner thread.
+        std::string data = ping_data;
+        post_to_owner_thread([this, op_code, data]() { send_ping(op_code, data); });
+        return;
+    }
     if (ping_data.length() <= 125) //125ֽڵping÷ȥ
     {
         std::string *p_str = new std::string;
@@ -144,6 +150,11 @@ void web_socket_process::send_ping(const char op_code, const std::string &ping_d
 
 void web_socket_process::send_close(const std::string &close_data)
 {
+    if (!on_owner_thread()) {
+        std::string data = close_data;
+        post_to_owner_thread([this, data]() { send_close(data); });
+        return;
+    }
     std::string payload = close_data;
     if (payload.length() > 125)
     {
@@ -191,7 +202,13 @@ web_socket_frame_header &web_socket_process::get_recent_send_frame_header()
 void web_socket_process::notice_send()
 {
     auto sp = _p_connect.lock();
-    if (_wb_status == WB_HANDSHAKE_OK && sp)
+    if (!sp) return;
+    if (!sp->on_owner_thread()) {
+        // _wb_status is owner-thread state; re-check it there.
+        post_to_owner_thread([this]() { notice_send(); });
+        return;
+    }
+    if (_wb_status == WB_HANDSHAKE_OK)
         sp->notice_send();
 }
 

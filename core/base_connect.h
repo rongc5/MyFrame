@@ -15,6 +15,7 @@
 #include <deque>
 #include <mutex>
 #include <sys/uio.h>
+#include <fcntl.h>
 
 template<class PROCESS>
 class base_connect:public base_net_obj
@@ -25,6 +26,15 @@ class base_connect:public base_net_obj
             : _peek_drain_backlog(0)
         {
             _fd = sock;
+            // The event loop requires non-blocking sockets: accept() does not
+            // inherit O_NONBLOCK from the listener, and a blocking writev() to a
+            // stalled peer would freeze the whole network thread.
+            if (_fd >= 0) {
+                int fl = ::fcntl(_fd, F_GETFL, 0);
+                if (fl >= 0 && (fl & O_NONBLOCK) == 0) {
+                    ::fcntl(_fd, F_SETFL, fl | O_NONBLOCK);
+                }
+            }
             int bReuseAddr = 1;
             setsockopt(_fd, IPPROTO_TCP, TCP_NODELAY, &bReuseAddr, sizeof(bReuseAddr));
             _p_send_buf.reset();
@@ -64,14 +74,14 @@ class base_connect:public base_net_obj
 
             if ((event & EPOLLIN) == EPOLLIN) //读
             {
-                touch_active(GetMilliSecond());
+                touch_active(GetMonotonicMilliSecond());
                 real_recv();
             }
 
             if ((event & EPOLLOUT) == EPOLLOUT ) //写
             {
                 if (_codec) { _codec->on_writable_event(); }
-                touch_active(GetMilliSecond());
+                touch_active(GetMonotonicMilliSecond());
                 real_send();
             }
 
@@ -86,6 +96,9 @@ class base_connect:public base_net_obj
         virtual int real_net_process()
         {
             int32_t ret = 0;
+            if (_fd < 0) {
+                return ret;
+            }
 
             if ((get_event() & EPOLLIN) == EPOLLIN) {
                 PDEBUG("real_net_process real_recv");
@@ -104,6 +117,16 @@ class base_connect:public base_net_obj
 
         virtual void destroy()
         {
+            if (!on_owner_thread()) {
+                // Teardown touches epoll and the fd: run it on the owner thread
+                // through the standard container path.
+                post_close_to_owner("destroy requested from foreign thread");
+                return;
+            }
+            if (_destroyed) {
+                return;
+            }
+            _destroyed = true;
             if (_process)
             {
                 _process->destroy();
@@ -112,12 +135,12 @@ class base_connect:public base_net_obj
             // shared_ptr refs can outlive this teardown and delay ~base_net_obj,
             // leaving the fd stuck in CLOSE_WAIT (fd exhaustion -> crash). Detach
             // from epoll + close now; ~base_net_obj's close becomes a no-op.
-            if (_p_net_container) {
+            if (_p_net_container && _fd >= 0) {
                 if (auto* ep = _p_net_container->get_epoll()) {
                     try { ep->del_from_epoll(this); } catch (...) {}
                 }
             }
-            if (_fd != 0) { ::close(_fd); _fd = 0; }
+            if (_fd >= 0) { ::close(_fd); _fd = kInvalidFd; }
         }
 
         PROCESS * process()
@@ -138,6 +161,14 @@ class base_connect:public base_net_obj
 
         virtual void notice_send()
         {
+            if (!on_owner_thread()) {
+                // Socket writes and _epoll_event belong to the owner thread.
+                post_notice_send_to_owner();
+                return;
+            }
+            if (_fd < 0) {
+                return;  // closed: never write to a stale descriptor
+            }
             std::lock_guard<std::recursive_mutex> lock(_send_mutex);
             update_event(_epoll_event | EPOLLOUT);
 
@@ -170,6 +201,12 @@ class base_connect:public base_net_obj
         virtual bool wants_tick() const override {
             if (_codec && _codec->poll_events_hint() != 0) return true;
             return (_epoll_event & EPOLLOUT) == EPOLLOUT;
+        }
+
+        virtual bool flush_outbound() override {
+            if (_fd < 0 || !_process || (_epoll_event & EPOLLOUT) == 0) return false;
+            real_send();
+            return _fd >= 0 && (_epoll_event & EPOLLOUT) != 0;
         }
 
     protected:
@@ -257,6 +294,9 @@ class base_connect:public base_net_obj
 
         void real_recv(int flag = false)
         {
+            if (_fd < 0) {
+                return;
+            }
             if (_peek_drain_backlog > 0) {
                 size_t flushed = drain_peek_bytes(_peek_drain_backlog);
                 _peek_drain_backlog -= std::min(_peek_drain_backlog, flushed);
@@ -310,7 +350,7 @@ class base_connect:public base_net_obj
                 if (ret > 0){
                     _recv_buf.append(t_buf, ret);
                     _recv_buf_len += ret;
-                    touch_active(GetMilliSecond());
+                    touch_active(GetMonotonicMilliSecond());
                     if (did_peek) {
                         _peek_drain_backlog += peek_len;
                     }
@@ -353,6 +393,9 @@ class base_connect:public base_net_obj
             // whole frame-header/body state machine so two writers cannot
             // splice WebSocket frames or consume the same queued payload.
             std::lock_guard<std::recursive_mutex> lock(_send_mutex);
+            if (_fd < 0 || !_process) {
+                return;  // closed: never write to a stale descriptor
+            }
             // If SSL or custom codec is installed, fall back to single-buffer SEND path
             if (_codec) {
                 int i = 0;
@@ -421,7 +464,7 @@ class base_connect:public base_net_obj
                 THROW_COMMON_EXCEPT("sendv error " << strError(errno).c_str());
             }
             size_t left = (size_t)wr;
-            if (left > 0) touch_active(GetMilliSecond());
+            if (left > 0) touch_active(GetMonotonicMilliSecond());
             // Consume from _p_send_buf then pending
             if (_p_send_buf && left > 0) {
                 size_t blen = _p_send_buf->size();
@@ -478,6 +521,7 @@ class base_connect:public base_net_obj
         std::deque<send_buf_ptr> _pending_send;
         std::recursive_mutex _send_mutex;
         size_t _peek_drain_backlog;
+        bool _destroyed{false};
 
     public:
         void set_codec(std::unique_ptr<ICodec> codec) { _codec = std::move(codec); }

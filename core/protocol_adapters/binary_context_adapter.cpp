@@ -4,6 +4,7 @@
 #include "../common_def.h"
 #include "../common_obj_container.h"
 #include "../base_net_thread.h"
+#include "../outbound_guard.h"
 #include <algorithm>
 #include <limits>
 
@@ -42,11 +43,33 @@ size_t BinaryContextImpl::payload_size() const {
 }
 
 void BinaryContextImpl::send(uint32_t proto_id, const void* data, size_t len) {
-    PendingMessage msg;
-    msg.proto_id = proto_id;
-    msg.data.assign(static_cast<const char*>(data), len);
-    _pending_queue.push(msg);
-    if (auto c = _conn.lock()) {
+    auto c = _conn.lock();
+    if (_slow_consumer.load(std::memory_order_acquire)) {
+        myframe::detail::note_dropped(OutboundKind::Stream, len);
+        return;
+    }
+    const size_t limit = outbound_high_water_mark();
+    {
+        std::lock_guard<std::mutex> lk(_pending_mutex);
+        size_t queued = _pending_bytes.load(std::memory_order_relaxed);
+        if (queued != 0 && queued + len > limit) {
+            // Slow consumer: drop and close cleanly on the owner thread.
+            myframe::detail::note_dropped(OutboundKind::Stream, len);
+            if (!_slow_consumer.exchange(true, std::memory_order_acq_rel)) {
+                myframe::detail::note_slow_consumer_closed(OutboundKind::Stream);
+                if (c) c->post_close_to_owner("slow consumer: outbound high-water mark exceeded");
+            }
+            return;
+        }
+        PendingMessage msg;
+        msg.proto_id = proto_id;
+        msg.data.assign(static_cast<const char*>(data), len);
+        _pending_queue.push(std::move(msg));
+        _pending_bytes.fetch_add(len, std::memory_order_relaxed);
+    }
+    if (c) {
+        // notice_send() itself posts to the owner thread when called from a
+        // foreign thread.
         c->notice_send();
     }
 }
@@ -99,14 +122,18 @@ void BinaryContextImpl::set_message(uint32_t proto_id, const std::string& payloa
 }
 
 bool BinaryContextImpl::get_pending_message(uint32_t& proto_id, std::string& data) {
+    std::lock_guard<std::mutex> lk(_pending_mutex);
     if (_pending_queue.empty()) {
         return false;
     }
 
-    auto msg = _pending_queue.front();
-    _pending_queue.pop();
+    PendingMessage& msg = _pending_queue.front();
     proto_id = msg.proto_id;
-    data = msg.data;
+    data.swap(msg.data);
+    _pending_queue.pop();
+    size_t n = data.size();
+    size_t cur = _pending_bytes.load(std::memory_order_relaxed);
+    _pending_bytes.store(cur >= n ? cur - n : 0, std::memory_order_relaxed);
     return true;
 }
 

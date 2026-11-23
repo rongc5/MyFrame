@@ -29,7 +29,10 @@ const WsFrame& WsContextImpl::frame() const {
 }
 
 void WsContextImpl::send_text(const std::string& text) {
-    if (_process) {
+    // Keep the connection (and with it the process chain) alive while we hand
+    // the frame over; put_send_msg() routes foreign-thread sends to the owner.
+    auto conn = _conn.lock();
+    if (conn && _process) {
         auto* data_process = _process->_p_data_process;
         if (data_process) {
             ws_msg_type msg;
@@ -37,13 +40,13 @@ void WsContextImpl::send_text(const std::string& text) {
             *msg._p_msg = text;
             msg._con_type = 0x1; // TEXT
             data_process->put_send_msg(msg);
-            _process->notice_send();
         }
     }
 }
 
 void WsContextImpl::send_binary(const void* data, size_t len) {
-    if (_process) {
+    auto conn = _conn.lock();
+    if (conn && _process) {
         auto* data_process = _process->_p_data_process;
         if (data_process) {
             ws_msg_type msg;
@@ -51,26 +54,28 @@ void WsContextImpl::send_binary(const void* data, size_t len) {
             msg._p_msg->assign(static_cast<const char*>(data), len);
             msg._con_type = 0x2; // BINARY
             data_process->put_send_msg(msg);
-            _process->notice_send();
         }
     }
 }
 
 void WsContextImpl::send_ping() {
-    if (_process) {
+    auto conn = _conn.lock();
+    if (conn && _process) {
         _process->send_ping(0x9, "");
     }
 }
 
 void WsContextImpl::send_pong() {
-    if (_process) {
+    auto conn = _conn.lock();
+    if (conn && _process) {
         _process->send_ping(0xA, "");
     }
 }
 
 void WsContextImpl::close(uint16_t code, const std::string& reason) {
     _is_closing = true;
-    if (!_process) return;
+    auto conn = _conn.lock();
+    if (!conn || !_process) return;
 
     // Build the close payload: 2-byte network-order status code + optional
     // reason. Pass code == 0 to send an empty close payload (no status code).
