@@ -14,6 +14,7 @@ bool is_expected_disconnect(const char* message) {
     if (!message) return false;
     return strstr(message, "peer closed") != NULL ||
            strstr(message, "client close the socket") != NULL ||
+           strstr(message, "delay close") != NULL ||
            strstr(message, "Connection reset by peer") != NULL ||
            strstr(message, "Broken pipe") != NULL;
 }

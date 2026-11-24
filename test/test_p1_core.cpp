@@ -323,6 +323,58 @@ void test_drain_flushes_outbound() {
     std::cout << "[ OK ] drain_flushes_outbound" << std::endl;
 }
 
+void test_delay_close_waits_for_outbound_drain() {
+    // Reproduces large HTTP Connection: close responses (> SO_SNDBUF) on
+    // O_NONBLOCK sockets where send_finish() schedules request_close_now()
+    // before writev() finishes draining the response body.
+    const size_t kPayload = 2u * 1024u * 1024u + 12345u;
+    std::string payload(kPayload, '\0');
+    for (size_t i = 0; i < kPayload; ++i) payload[i] = static_cast<char>((i * 131 + 17) & 0xff);
+
+    int fds[2];
+    int rc = ::socketpair(AF_UNIX, SOCK_STREAM, 0, fds);
+    assert(rc == 0);
+    int sndbuf = 16 * 1024;
+    ::setsockopt(fds[0], SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+
+    base_net_thread* t = new base_net_thread(1);
+    {
+        std::shared_ptr<base_connect<SinkProcess>> conn(new base_connect<SinkProcess>(fds[0]));
+        SinkProcess* proc = new SinkProcess(conn);
+        conn->set_process(proc);
+        conn->set_net_container(t->get_net_container());
+        proc->put_send_copy(payload);
+        // Schedule 1ms DELAY_CLOSE_TIMER_TYPE immediately while >2 MiB is still queued.
+        proc->request_close_now();
+    }
+
+    t->start();
+    // Wait long enough (30ms) that DELAY_CLOSE_TIMER_TYPE definitely fires BEFORE reading starts.
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    std::string received;
+    received.reserve(kPayload);
+    char buf[32 * 1024];
+    for (;;) {
+        ssize_t n = ::read(fds[1], buf, sizeof(buf));
+        if (n <= 0) break;
+        received.append(buf, static_cast<size_t>(n));
+        // Throttle reads slightly so multiple EPOLLOUT cycles are exercised.
+        if ((received.size() % (256 * 1024)) < sizeof(buf)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    ::close(fds[1]);
+    t->stop();
+    t->join_thread();
+    delete t;
+
+    std::cout << "  delay_close_drained_bytes=" << received.size() << "/" << kPayload << std::endl;
+    assert(received.size() == kPayload);
+    assert(received == payload);
+    std::cout << "[ OK ] delay_close_waits_for_outbound_drain" << std::endl;
+}
+
 }  // namespace
 
 int main() {
@@ -331,6 +383,7 @@ int main() {
     test_stop_wakes_sleeping_loop();
     test_drain_queued_messages();
     test_drain_flushes_outbound();
+    test_delay_close_waits_for_outbound_drain();
     test_producer_stress();
     test_concurrent_teardown();
     std::cout << "ALL P1 CORE TESTS PASSED!" << std::endl;

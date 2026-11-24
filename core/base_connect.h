@@ -183,6 +183,24 @@ class base_connect:public base_net_obj
         {
             if (t_msg->_timer_type == DELAY_CLOSE_TIMER_TYPE) 
             {
+                if (has_unsent_outbound()) {
+                    const uint64_t now = GetMonotonicMilliSecond();
+                    if (!_close_when_drained) {
+                        _close_when_drained = true;
+                        _close_drain_start_ms = now;
+                    }
+                    // Allow queued outbound bytes (e.g. large HTTP Connection: close responses
+                    // on non-blocking sockets) to drain while write progress continues.
+                    if (now >= _last_active_ms && (now - _last_active_ms) < kMaxCloseDrainIdleMs &&
+                        now >= _close_drain_start_ms && (now - _close_drain_start_ms) < (kMaxCloseDrainIdleMs * 4)) {
+                        std::shared_ptr<timer_msg> retry(new timer_msg);
+                        retry->_obj_id = get_id()._id;
+                        retry->_timer_type = DELAY_CLOSE_TIMER_TYPE;
+                        retry->_time_length = 50;
+                        add_timer(retry);
+                        return;
+                    }
+                }
                 THROW_COMMON_EXCEPT("the connect obj delay close, delete it");
             }
             else if (t_msg->_timer_type == NONE_DATA_TIMER_TYPE) 
@@ -405,7 +423,13 @@ class base_connect:public base_net_obj
                         std::string* next = _process->get_send_buf();
                         if (next) _p_send_buf.reset(next);
                     }
-                    if (!_p_send_buf) { update_event(get_event() & ~EPOLLOUT); break; }
+                    if (!_p_send_buf) {
+                        update_event(get_event() & ~EPOLLOUT);
+                        if (_close_when_drained) {
+                            THROW_COMMON_EXCEPT("the connect obj delay close after drain");
+                        }
+                        break;
+                    }
                     i++;
                     size_t len = _p_send_buf->length();
                     if (len) {
@@ -429,6 +453,9 @@ class base_connect:public base_net_obj
             }
             if (!_p_send_buf && _pending_send.empty()) {
                 update_event(get_event() & ~EPOLLOUT);
+                if (_close_when_drained) {
+                    THROW_COMMON_EXCEPT("the connect obj delay close after drain");
+                }
                 return;
             }
 
@@ -485,13 +512,26 @@ class base_connect:public base_net_obj
                 }
                 _pending_send.pop_front();
             }
-            // If nothing left, clear EPOLLOUT
+            // If nothing left in local buffers, probe process once more before clearing EPOLLOUT
+            if (!_p_send_buf && _pending_send.empty()) {
+                if (std::string* more = _process->get_send_buf()) {
+                    _p_send_buf.reset(more);
+                }
+            }
             if (!_p_send_buf && _pending_send.empty()) {
                 update_event(get_event() & ~EPOLLOUT);
+                if (_close_when_drained) {
+                    THROW_COMMON_EXCEPT("the connect obj delay close after drain");
+                }
             }
         }
 
     protected:
+        bool has_unsent_outbound() const {
+            return (_p_send_buf && !_p_send_buf->empty()) ||
+                   !_pending_send.empty() ||
+                   ((_epoll_event & EPOLLOUT) == EPOLLOUT);
+        }
         size_t drain_peek_bytes(size_t need) {
             if (need == 0) return 0;
             char drop_buf[SIZE_LEN_32768];
@@ -522,6 +562,9 @@ class base_connect:public base_net_obj
         std::recursive_mutex _send_mutex;
         size_t _peek_drain_backlog;
         bool _destroyed{false};
+        bool _close_when_drained{false};
+        uint64_t _close_drain_start_ms{0};
+        static constexpr uint64_t kMaxCloseDrainIdleMs = 15000;
 
     public:
         void set_codec(std::unique_ptr<ICodec> codec) { _codec = std::move(codec); }
