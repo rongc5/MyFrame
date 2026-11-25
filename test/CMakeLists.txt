@@ -188,3 +188,13 @@ if(TARGET test_utils_containers)
     add_test(NAME utils_containers COMMAND test_utils_containers)
     set_tests_properties(utils_containers PROPERTIES TIMEOUT 120)
 endif()
+
+# Ads & search backend data structures suite (RadixTree, SuffixMatcher,
+# AhoCorasick, BloomFilter, InvertedIndex, TopK, ShardedTtlCache,
+# ConsistentHash, TokenBucket/ShardedRateLimiter, DoubleBuffer).
+maybe_add_exe(test_search_and_ads_utils ${CMAKE_CURRENT_SOURCE_DIR}/test_search_and_ads_utils.cpp)
+if(TARGET test_search_and_ads_utils)
+    target_compile_options(test_search_and_ads_utils PRIVATE -Wall -Wextra -Werror -Wpedantic -Wshadow)
+    add_test(NAME search_and_ads_utils COMMAND test_search_and_ads_utils)
+    set_tests_properties(search_and_ads_utils PROPERTIES TIMEOUT 180)
+endif()

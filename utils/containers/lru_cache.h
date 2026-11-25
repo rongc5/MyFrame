@@ -141,6 +141,24 @@ public:
         return true;
     }
 
+    // Removes all entries for which `pred(const Key&, const Value&)` returns true.
+    // Returns number of removed entries.
+    template <typename Pred>
+    std::size_t erase_if(Pred&& pred) {
+        std::size_t removed = 0;
+        for (typename ListType::iterator it = list_.begin(); it != list_.end(); ) {
+            if (pred(it->first, it->second)) {
+                typename ListType::iterator victim = it++;
+                map_.erase(&victim->first);
+                list_.erase(victim);
+                ++removed;
+            } else {
+                ++it;
+            }
+        }
+        return removed;
+    }
+
     void clear() noexcept {
         map_.clear();
         list_.clear();
