@@ -77,6 +77,21 @@ bool TlsUnifiedEntryProcess::init_server_ssl(SSL*& out_ssl) {
         return false;
     }
 
+    // Only allow ALPN h2 when this UnifiedProtocolFactory actually registered
+    // an HTTP/2 handler; otherwise restrict ALPN to http/1.1 so h2-capable
+    // clients fall back cleanly instead of hanging (N23).
+    bool has_h2 = false;
+    for (size_t i = 0; i < _protocols.size(); ++i) {
+        if (strcasecmp(_protocols[i].name.c_str(), "h2") == 0 ||
+            strcasecmp(_protocols[i].name.c_str(), "http2") == 0) {
+            has_h2 = true;
+            break;
+        }
+    }
+    if (!has_h2) {
+        SSL_set_ex_data(ssl, myframe_alpn_no_h2_index(), reinterpret_cast<void*>(1));
+    }
+
     int fd = get_base_net()->get_sfd();
     if (SSL_set_fd(ssl, fd) != 1) {
         PDEBUG("[TlsUnified] SSL_set_fd failed");

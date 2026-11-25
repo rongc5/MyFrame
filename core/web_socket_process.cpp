@@ -8,11 +8,64 @@
 #include "common_util.h"
 
 
+namespace {
+// RFC 3629 / Unicode Table 3-7 strict UTF-8 validation.
+static bool ws_is_valid_utf8(const char* data, size_t len) {
+    const unsigned char* s = reinterpret_cast<const unsigned char*>(data);
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = s[i];
+        if (c <= 0x7Fu) {
+            ++i;
+        } else if (c >= 0xC2u && c <= 0xDFu) {
+            if (i + 1 >= len || (s[i + 1] & 0xC0u) != 0x80u) return false;
+            i += 2;
+        } else if (c == 0xE0u) {
+            if (i + 2 >= len || s[i + 1] < 0xA0u || s[i + 1] > 0xBFu ||
+                (s[i + 2] & 0xC0u) != 0x80u) return false;
+            i += 3;
+        } else if ((c >= 0xE1u && c <= 0xECu) || (c >= 0xEEu && c <= 0xEFu)) {
+            if (i + 2 >= len || (s[i + 1] & 0xC0u) != 0x80u ||
+                (s[i + 2] & 0xC0u) != 0x80u) return false;
+            i += 3;
+        } else if (c == 0xEDu) {
+            if (i + 2 >= len || s[i + 1] < 0x80u || s[i + 1] > 0x9Fu ||
+                (s[i + 2] & 0xC0u) != 0x80u) return false;
+            i += 3;
+        } else if (c == 0xF0u) {
+            if (i + 3 >= len || s[i + 1] < 0x90u || s[i + 1] > 0xBFu ||
+                (s[i + 2] & 0xC0u) != 0x80u || (s[i + 3] & 0xC0u) != 0x80u) return false;
+            i += 4;
+        } else if (c >= 0xF1u && c <= 0xF3u) {
+            if (i + 3 >= len || (s[i + 1] & 0xC0u) != 0x80u ||
+                (s[i + 2] & 0xC0u) != 0x80u || (s[i + 3] & 0xC0u) != 0x80u) return false;
+            i += 4;
+        } else if (c == 0xF4u) {
+            if (i + 3 >= len || s[i + 1] < 0x80u || s[i + 1] > 0x8Fu ||
+                (s[i + 2] & 0xC0u) != 0x80u || (s[i + 3] & 0xC0u) != 0x80u) return false;
+            i += 4;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+// RFC 6455 7.4.1 valid status codes allowed on the wire in a Close frame.
+static bool ws_is_valid_close_code(uint16_t code) {
+    if (code >= 1000 && code <= 1003) return true;
+    if (code >= 1007 && code <= 1014) return true;
+    if (code >= 3000 && code <= 4999) return true;
+    return false;
+}
+} // namespace
+
 web_socket_process::web_socket_process(std::shared_ptr<base_net_obj> p):base_data_process(p)
 {
     _wb_status = WB_INIT_STAUTS;
     _if_send_mask = true;
     _require_recv_mask = false;
+    _close_received = false;
     _p_data_process = NULL;
 }
 
@@ -362,7 +415,16 @@ size_t web_socket_process::RECV_WB_HANDSHAKE_OK_PROCESS(const char *buf, const s
 
                 if (_recent_recv_web_header.if_finish())
                 {
-                    _p_data_process->msg_recv_finish();
+                    if (!_close_received)
+                    {
+                        if (_recent_recv_web_header._completed_op_code == 0x1 &&
+                            !ws_is_valid_utf8(_p_data_process->recent_msg().data(),
+                                              _p_data_process->recent_msg().size()))
+                        {
+                            THROW_COMMON_EXCEPT("websocket invalid UTF-8 in text message");
+                        }
+                        _p_data_process->msg_recv_finish();
+                    }
                 }
             }
             else //control frames
@@ -382,11 +444,26 @@ size_t web_socket_process::RECV_WB_HANDSHAKE_OK_PROCESS(const char *buf, const s
                 {
                     if (tmp_code == 0x08)
                     {
+                        if (_ping_data.size() >= 2)
+                        {
+                            uint16_t code = (static_cast<uint16_t>(static_cast<unsigned char>(_ping_data[0])) << 8)
+                                          | static_cast<uint16_t>(static_cast<unsigned char>(_ping_data[1]));
+                            if (!ws_is_valid_close_code(code))
+                            {
+                                THROW_COMMON_EXCEPT("websocket invalid close code " << code);
+                            }
+                            if (_ping_data.size() > 2 &&
+                                !ws_is_valid_utf8(_ping_data.data() + 2, _ping_data.size() - 2))
+                            {
+                                THROW_COMMON_EXCEPT("websocket invalid UTF-8 in close reason");
+                            }
+                        }
+                        _close_received = true;
                         send_close(_ping_data);
                         _p_data_process->notify_peer_close();
                         request_close_after(50);
                     }
-                    else
+                    else if (!_close_received)
                     {
                         _p_data_process->on_ping(tmp_code, _ping_data);
                     }

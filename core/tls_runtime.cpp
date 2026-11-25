@@ -125,3 +125,8 @@ void tls_reset_runtime() {
     std::atomic_store_explicit(&g_tls_snapshot, blank, std::memory_order_release);
 #endif
 }
+
+int myframe_alpn_no_h2_index() {
+    static int idx = SSL_get_ex_new_index(0, nullptr, nullptr, nullptr, nullptr);
+    return idx;
+}

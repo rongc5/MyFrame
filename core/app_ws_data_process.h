@@ -76,10 +76,10 @@ public:
     }
 
     virtual void msg_recv_finish() override {
-        // 构造接收帧
+        // 构造接收帧（if_finish() 已清零 _op_code，应读取 _completed_op_code）
         myframe::WsFrame recv;
-        int8_t op = _process->get_recent_recv_frame_header()._op_code;
-        if (op == 0x1) recv.opcode = myframe::WsFrame::TEXT; else recv.opcode = myframe::WsFrame::BINARY;
+        int8_t op = _process->get_recent_recv_frame_header()._completed_op_code;
+        if (op == 0x2) recv.opcode = myframe::WsFrame::BINARY; else recv.opcode = myframe::WsFrame::TEXT;
         recv.payload = _recent_msg;
         _recent_msg.clear();
 

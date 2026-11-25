@@ -60,6 +60,8 @@ class web_socket_data_process:public base_data_process
 
         virtual size_t process_recv_buf(const char *buf, size_t len);
 
+        const std::string& recent_msg() const { return _recent_msg; }
+
         // Handle for cross-thread delivery (call on the owner thread, e.g.
         // from on_handshake_ok()).
         ws_send_handle send_handle();

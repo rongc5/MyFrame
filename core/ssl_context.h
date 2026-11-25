@@ -27,6 +27,11 @@ class ssl_context;
 // forward declaration of ALPN callback
 static int myframe_alpn_select_cb(SSL*, const unsigned char**, unsigned char*, const unsigned char*, unsigned int, void*);
 
+// Per-SSL* ex_data index: when set to non-null, ALPN callback disables h2
+// for that connection (e.g., UnifiedProtocolFactory with no h2 handler).
+// Defined in tls_runtime.cpp so every translation unit shares one ex_data slot.
+int myframe_alpn_no_h2_index();
+
 struct ssl_config {
     std::string _cert_file;
     std::string _key_file;
@@ -415,8 +420,8 @@ struct ssl_client_context_singleton {
     static ssl_context* get_instance_ex() { static ssl_context g; return &g; }
 };
 
-// ALPN选择回调：优先选择 h2，否则回退 http/1.1（允许受 ssl_context 配置限制）
-static inline int myframe_alpn_select_cb(SSL* /*ssl*/, const unsigned char** out,
+// ALPN选择回调：优先选择 h2，否则回退 http/1.1（允许受 ssl_context 配置及单连接标记限制）
+static inline int myframe_alpn_select_cb(SSL* ssl, const unsigned char** out,
                                          unsigned char* outlen,
                                          const unsigned char* in,
                                          unsigned int inlen,
@@ -429,6 +434,9 @@ static inline int myframe_alpn_select_cb(SSL* /*ssl*/, const unsigned char** out
         ssl_context* self = reinterpret_cast<ssl_context*>(arg);
         allow_h2  = self->_allow_h2;
         allow_h11 = self->_allow_h11;
+    }
+    if (ssl && SSL_get_ex_data(ssl, myframe_alpn_no_h2_index()) != nullptr) {
+        allow_h2 = false;
     }
 
     auto find_proto = [&](const unsigned char* want, unsigned int want_len) -> bool {

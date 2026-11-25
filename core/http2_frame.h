@@ -45,7 +45,8 @@ enum ErrorCode : uint32_t {
     STREAM_CLOSED       = 0x5,
     FRAME_SIZE_ERROR    = 0x6,
     REFUSED_STREAM      = 0x7,
-    CANCEL              = 0x8
+    CANCEL              = 0x8,
+    COMPRESSION_ERROR   = 0x9
 };
 
 inline void write24(std::string& out, uint32_t v) {

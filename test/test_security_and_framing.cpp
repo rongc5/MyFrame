@@ -27,6 +27,7 @@
 #include "http2_frame.h"
 #include "http2_process.h"
 #include "http2_client_process.h"
+#include "hpack.h"
 #include "app_handler_v2.h"
 #include "protocol_context.h"
 #include "protocol_adapters/binary_application_adapter.h"
@@ -1124,6 +1125,31 @@ static void test_tls_protocol_range(unsigned short port) {
     CHECK(tls_handshake(port, 0, true, &status, true));
     CHECK(status == "HTTP/1.1 200 OK");
     CHECK(tls_handshake(port, TLS1_3_VERSION, false, NULL));
+
+    // N23: UnifiedProtocolFactory without an h2 handler must negotiate http/1.1
+    // even when conf._alpn was left empty and the client offers h2,http/1.1.
+    {
+        SSL_CTX* cctx = SSL_CTX_new(TLS_client_method());
+        CHECK(cctx != NULL);
+        SSL_CTX_set_verify(cctx, SSL_VERIFY_NONE, NULL);
+        int fd = tcp_connect(port, 3000);
+        CHECK(fd >= 0);
+        SSL* ssl = SSL_new(cctx);
+        const unsigned char alpn[] = { 2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        SSL_set_alpn_protos(ssl, alpn, sizeof(alpn));
+        SSL_set_fd(ssl, fd);
+        bool connected = (SSL_connect(ssl) == 1);
+        CHECK(connected);
+        const unsigned char* sel = NULL;
+        unsigned int slen = 0;
+        SSL_get0_alpn_selected(ssl, &sel, &slen);
+        std::string selected(sel ? reinterpret_cast<const char*>(sel) : "", slen);
+        CHECK(selected == "http/1.1");
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        ::close(fd);
+        SSL_CTX_free(cctx);
+    }
 }
 
 // ===========================================================================
@@ -1406,6 +1432,202 @@ static void test_http2_and_container() {
     CHECK(h2_status_for_index(13) == 404);
     CHECK(h2_status_for_index(14) == 500);
 
+    // H2-c: HPACK Huffman full 256-byte round-trip + invalid padding / EOS rejection.
+    {
+        bool all_ok = true;
+        for (int b = 0; b < 256; ++b) {
+            std::string raw(1, static_cast<char>(b));
+            std::string enc;
+            hpack::encode_string(enc, raw, true);
+            const unsigned char* p = reinterpret_cast<const unsigned char*>(enc.data());
+            const unsigned char* e = p + enc.size();
+            std::string dec;
+            if (!hpack::decode_string(p, e, dec) || p != e || dec != raw) {
+                all_ok = false;
+                break;
+            }
+        }
+        CHECK(all_ok);
+        // Reject non-all-ones padding (e.g. '0' = 00000 (5 bits) + 000 invalid padding -> 0x00)
+        {
+            const unsigned char bad_pad[] = { 0x81, 0x00 };
+            const unsigned char* p = bad_pad;
+            std::string dec;
+            CHECK(!hpack::decode_string(p, bad_pad + sizeof(bad_pad), dec));
+        }
+        // Reject >7 bits of EOS padding (0xff alone = 8 bits of 1s)
+        {
+            const unsigned char over_pad[] = { 0x81, 0xff };
+            const unsigned char* p = over_pad;
+            std::string dec;
+            CHECK(!hpack::decode_string(p, over_pad + sizeof(over_pad), dec));
+        }
+        // Reject explicit EOS symbol (30 bits of 1s + 2 pad 1s = 4 bytes of 0xff)
+        {
+            const unsigned char eos_in_stream[] = { 0x84, 0xff, 0xff, 0xff, 0xff };
+            const unsigned char* p = eos_in_stream;
+            std::string dec;
+            CHECK(!hpack::decode_string(p, eos_in_stream + sizeof(eos_in_stream), dec));
+        }
+        // Integer decode overflow protection
+        {
+            const unsigned char huge_int[] = { 0x7f, 0xff, 0xff, 0xff, 0xff, 0x7f };
+            const unsigned char* p = huge_int;
+            uint32_t out = 0;
+            CHECK(!hpack::decode_integer(p, huge_int + sizeof(huge_int), 7, out));
+        }
+    }
+
+    // N4 + N4b + N5: HTTP/2 server HPACK dynamic table decoding across 2 requests,
+    // clean literal-without-indexing responses (no static-index corruption), and
+    // zero leaked streams after responses finish.
+    {
+        struct H2TestApp : public myframe::IApplicationHandler {
+            int calls{0};
+            std::string last_custom;
+            void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& res) override {
+                ++calls;
+                auto it = req.headers.find("x-dyn");
+                last_custom = (it != req.headers.end()) ? it->second : "";
+                res.status = (req.url == "/second") ? 201 : 200;
+                res.set_header("Content-Type", "text/plain");
+                res.set_header("Server", "MyFrame-H2/1.0");
+                res.set_header("X-Custom", "ok-value");
+                res.body = req.url + ":" + last_custom;
+            }
+        } app;
+
+        std::shared_ptr<base_net_obj> no_conn;
+        http2_process srv(no_conn, &app);
+        std::string wire(h2::CONNECTION_PREFACE, h2::CONNECTION_PREFACE_LEN);
+        wire += h2_frame(0x4, 0, 0, "");
+        // Stream 1: :method=GET (0x82), :scheme=http (0x86), :path=/first,
+        //           incremental indexing (0x40) "x-dyn"="alpha" -> becomes dynamic index 62!
+        std::string b1;
+        b1.push_back(static_cast<char>(0x82));
+        b1.push_back(static_cast<char>(0x86));
+        b1.push_back(static_cast<char>(0x04));
+        hpack::encode_string(b1, "/first", false);
+        b1.push_back(static_cast<char>(0x40)); // literal with incremental indexing, new name
+        hpack::encode_string(b1, "x-dyn", false);
+        hpack::encode_string(b1, "alpha", false);
+        wire += h2_frame(0x1, 0x5, 1, b1);
+
+        // Stream 3: :method=GET (0x82), :scheme=http (0x86), :path=/second,
+        //           indexed dynamic header 62 (0x80 | 62 = 0xbe) -> "x-dyn"="alpha"!
+        std::string b3;
+        b3.push_back(static_cast<char>(0x82));
+        b3.push_back(static_cast<char>(0x86));
+        b3.push_back(static_cast<char>(0x04));
+        hpack::encode_string(b3, "/second", false);
+        b3.push_back(static_cast<char>(0x80 | 62));
+        // Split Stream 3 across HEADERS(END_STREAM) + CONTINUATION(END_HEADERS) to verify
+        // END_STREAM preservation across CONTINUATION as well.
+        wire += h2_frame(0x1, 0x1, 3, b3.substr(0, 4));
+        wire += h2_frame(0x9, 0x4, 3, b3.substr(4));
+
+        CHECK(srv.process_recv_buf(wire.data(), wire.size()) == wire.size());
+        CHECK(app.calls == 2);
+        CHECK(app.last_custom == "alpha");
+        CHECK(srv.active_stream_count() == 0); // N5: no leaked completed streams!
+
+        // Inspect Stream 3 response HEADERS: must NOT contain corrupt static indices 0x81/0x82!
+        std::string out;
+        for (;;) {
+            std::string* s = srv.get_send_buf();
+            if (!s) break;
+            out += *s;
+            delete s;
+        }
+        std::string s3_hdrs, s3_data;
+        size_t o = 0;
+        while (out.size() - o >= 9) {
+            const unsigned char* f = reinterpret_cast<const unsigned char*>(out.data() + o);
+            uint32_t flen = (static_cast<uint32_t>(f[0]) << 16) | (static_cast<uint32_t>(f[1]) << 8) | f[2];
+            uint32_t fsid = ((static_cast<uint32_t>(f[5]) << 24) | (static_cast<uint32_t>(f[6]) << 16) |
+                             (static_cast<uint32_t>(f[7]) << 8) | f[8]) & 0x7fffffffu;
+            if (out.size() - o < 9 + flen) break;
+            if (f[3] == 0x1 && fsid == 3) s3_hdrs.append(out.data() + o + 9, flen);
+            if (f[3] == 0x0 && fsid == 3) s3_data.append(out.data() + o + 9, flen);
+            o += 9 + flen;
+        }
+        CHECK(o == out.size());
+        CHECK(!s3_hdrs.empty());
+        CHECK(s3_hdrs.find(static_cast<char>(0x81)) == std::string::npos);
+        CHECK(s3_hdrs.find(static_cast<char>(0x82)) == std::string::npos);
+        CHECK(s3_hdrs.find("MyFrame-H2/1.0") != std::string::npos);
+        CHECK(s3_hdrs.find("ok-value") != std::string::npos);
+        CHECK(s3_data == "/second:alpha");
+
+        // N5: bare DATA(END_STREAM) on an idle stream must be rejected (PROTOCOL_ERROR).
+        bool idle_data_rejected = false;
+        std::string bad_data = h2_frame(0x0, 0x1, 5, "phantom");
+        try { srv.process_recv_buf(bad_data.data(), bad_data.size()); }
+        catch (const std::exception&) { idle_data_rejected = true; }
+        CHECK(idle_data_rejected);
+    }
+
+    // W-d: WebSocket fragmentation state machine unit checks.
+    auto make_ws_masked = [](uint8_t fin_op, const std::string& pl) -> std::string {
+        std::string f;
+        f.push_back(static_cast<char>(fin_op));
+        f.push_back(static_cast<char>(0x80u | (pl.size() & 0x7fu)));
+        const unsigned char mask[4] = {0x12, 0x34, 0x56, 0x78};
+        f.append(reinterpret_cast<const char*>(mask), 4);
+        for (size_t i = 0; i < pl.size(); ++i) {
+            f.push_back(static_cast<char>(static_cast<unsigned char>(pl[i]) ^ mask[i % 4]));
+        }
+        return f;
+    };
+    {
+        // Reject orphan CONTINUATION when no fragmented message is active.
+        web_socket_frame_header hdr;
+        std::string orphan = make_ws_masked(0x80, "bad");
+        char* p = &orphan[0];
+        uint32_t l = static_cast<uint32_t>(orphan.size());
+        bool rejected = false;
+        try { hdr.process(p, l); }
+        catch (const std::exception&) { rejected = true; }
+        CHECK(rejected);
+    }
+    {
+        // Reject TEXT(FIN=0) followed by BINARY(FIN=1).
+        web_socket_frame_header hdr;
+        std::string f1 = make_ws_masked(0x01, "abc");
+        char* p = &f1[0];
+        uint32_t l = static_cast<uint32_t>(f1.size());
+        hdr.process(p, l);
+        CHECK(hdr.update(l) == 0);
+        CHECK(!hdr.if_finish()); // FIN=0: fragment open
+        std::string f2 = make_ws_masked(0x82, "def");
+        char* p2 = &f2[0];
+        uint32_t l2 = static_cast<uint32_t>(f2.size());
+        bool rejected = false;
+        try { hdr.process(p2, l2); }
+        catch (const std::exception&) { rejected = true; }
+        CHECK(rejected);
+    }
+    {
+        // Allow control PING interleaved between TEXT(FIN=0) and CONT(FIN=1).
+        web_socket_frame_header hdr;
+        std::string f1 = make_ws_masked(0x01, "ab");
+        char* p = &f1[0];
+        uint32_t l = static_cast<uint32_t>(f1.size());
+        hdr.process(p, l);
+        CHECK(hdr.update(l) == 0);
+        CHECK(!hdr.if_finish());
+        std::string ping = make_ws_masked(0x89, "hi");
+        p = &ping[0]; l = static_cast<uint32_t>(ping.size());
+        hdr.process(p, l);
+        CHECK(hdr.update(l) == 0);
+        CHECK(hdr.if_finish() && hdr._completed_op_code == 0x9);
+        std::string f2 = make_ws_masked(0x80, "cd");
+        p = &f2[0]; l = static_cast<uint32_t>(f2.size());
+        hdr.process(p, l);
+        CHECK(hdr.update(l) == 0);
+        CHECK(hdr.if_finish() && hdr._completed_op_code == 0x1);
+    }
+
     // Container: objects inserted / erased during real_net_process().
     {
         common_obj_container container(77);
@@ -1463,13 +1685,12 @@ int main() {
     test_ws_upgrade_tail();
     test_http2_and_container();
 
-    // TLS configured as exactly TLS 1.3. Because TLS is configured, the
-    // unified factory always runs ProtocolDetector, even for plain HTTP.
+    // TLS configured as exactly TLS 1.3 (leave _alpn empty so N23 verifies
+    // UnifiedProtocolFactory restricts ALPN to http/1.1 when no h2 handler exists).
     ssl_config conf;
     conf._cert_file = MYFRAME_TEST_CERT;
     conf._key_file = MYFRAME_TEST_KEY;
     conf._protocols = "TLSv1.3";
-    conf._alpn = "http/1.1";
     tls_set_server_config(conf);
 
     CtxHandler ctx_handler;

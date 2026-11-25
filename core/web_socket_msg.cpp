@@ -109,6 +109,18 @@ void web_socket_frame_header::process(char* &buf,   uint32_t &len)
             {
                 THROW_COMMON_EXCEPT("websocket reserved opcode " << (int)_op_code);
             }
+            // RFC 6455 5.4 fragmentation state machine:
+            // - CONTINUATION (0x0) requires an active fragmented data message.
+            // - A new data frame (TEXT/BINARY) cannot start while a fragmented
+            //   data message is still open. Control frames may interleave freely.
+            if (_op_code == 0x0 && _message_op_code == 0)
+            {
+                THROW_COMMON_EXCEPT("unexpected websocket continuation frame");
+            }
+            if ((_op_code == 0x1 || _op_code == 0x2) && _message_op_code != 0)
+            {
+                THROW_COMMON_EXCEPT("websocket data frame received mid-fragmentation");
+            }
             _mask_flag = (_s_header[1] >> 7) & 0x01;
             uint8_t tmp_len = (_s_header[1] & 0x7F);
             if (_op_code >= 0x08 && (_more_flag == 0 || tmp_len > 125))

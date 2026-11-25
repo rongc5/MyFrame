@@ -77,6 +77,7 @@ class web_socket_process: public base_data_process
 		bool _if_send_mask;		
 		// Server side: every received frame must be masked (RFC 6455 5.1).
 		bool _require_recv_mask;
+		bool _close_received;
 
 	public:
 		// Upper bound of queued control frames (PONG/CLOSE) waiting to be
