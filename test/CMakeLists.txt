@@ -171,3 +171,20 @@ if(TARGET test_crypto)
     add_test(NAME crypto COMMAND test_crypto)
     set_tests_properties(crypto PROPERTIES TIMEOUT 60)
 endif()
+
+# Lock-free queues suite (SpscQueue + Vyukov MpmcQueue: unit, lifetime,
+# exception injection, SIZE_MAX wrap-around, and exact-accounting concurrency).
+maybe_add_exe(test_lockfree_queue ${CMAKE_CURRENT_SOURCE_DIR}/test_lockfree_queue.cpp)
+if(TARGET test_lockfree_queue)
+    target_compile_options(test_lockfree_queue PRIVATE -Wall -Wextra -Werror -Wpedantic -Wshadow)
+    add_test(NAME lockfree_queue COMMAND test_lockfree_queue)
+    set_tests_properties(lockfree_queue PROPERTIES TIMEOUT 180)
+endif()
+
+# Utility containers suite (STX B+ Tree include fix, LruCache, ShardedMap).
+maybe_add_exe(test_utils_containers ${CMAKE_CURRENT_SOURCE_DIR}/test_utils_containers.cpp)
+if(TARGET test_utils_containers)
+    target_compile_options(test_utils_containers PRIVATE -Wall -Wextra -Werror -Wpedantic -Wshadow)
+    add_test(NAME utils_containers COMMAND test_utils_containers)
+    set_tests_properties(utils_containers PROPERTIES TIMEOUT 120)
+endif()

@@ -33,7 +33,8 @@ endif()
 
 ## Include directories
 include_directories(include)
-include_directories(utils/btree)
+include_directories(utils)
+include_directories(SYSTEM utils/btree)
 include_directories(utils/encode)
 include_directories(utils/rapidjson)
 
@@ -99,7 +100,11 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/connection_manag
 
 # Create library
 add_library(myframe STATIC ${CORE_SOURCES})
-target_include_directories(myframe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(myframe PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/utils
+)
+target_include_directories(myframe SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/utils/btree)
 target_link_libraries(myframe
     myframe_encode
     ${CMAKE_THREAD_LIBS_INIT}
@@ -143,10 +148,18 @@ endif()
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/protocol_adapters)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/crypto)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/lockfree)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/containers)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/stx)
 file(COPY core/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include
      FILES_MATCHING PATTERN "*.h")
 file(COPY crypto/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include/crypto
      FILES_MATCHING PATTERN "*.h")
+file(COPY utils/lockfree/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include/lockfree
+     FILES_MATCHING PATTERN "*.h")
+file(COPY utils/containers/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include/containers
+     FILES_MATCHING PATTERN "*.h")
+file(COPY utils/btree/stx/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include/stx)
 file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/include/app_handler.h")
 if (HAVE_SIGN_LIB)
     file(COPY ${STR2SIGN_DIR}/core/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include

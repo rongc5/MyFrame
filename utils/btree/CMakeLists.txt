@@ -1,12 +1,10 @@
-# Btree - Header-only library
+# STX B+ Tree - Header-only library
 
-# Collect all header files
-file(GLOB BTREE_HEADERS "*.h" "btree*")
+file(GLOB BTREE_SHIM_HEADERS "*.h" "btree" "btree_map" "btree_multimap" "btree_set" "btree_multiset")
+file(GLOB BTREE_STX_HEADERS "stx/*")
 
-# Create interface library for header-only library
 add_library(btree INTERFACE)
+target_include_directories(btree SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_include_directories(btree INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-
-# Install headers
-install(FILES ${BTREE_HEADERS} DESTINATION include/btree)
+install(FILES ${BTREE_SHIM_HEADERS} DESTINATION include/btree)
+install(FILES ${BTREE_STX_HEADERS} DESTINATION include/btree/stx)

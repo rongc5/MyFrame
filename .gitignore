@@ -36,6 +36,8 @@ test/test_*
 !test/test_large_transfer_and_stress.cpp
 !test/test_security_and_framing.cpp
 !test/test_crypto.cpp
+!test/test_lockfree_queue.cpp
+!test/test_utils_containers.cpp
 build_test/
 test/simple_*
 test/https_*
