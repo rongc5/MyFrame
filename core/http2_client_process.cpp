@@ -188,6 +188,8 @@ bool http2_client_process::parse_frames() {
         const uint8_t type = p[3], flags = p[4];
         const uint32_t sid = read32u(p + 5) & 0x7fffffffu;
         if (type == PING && (len != 8 || sid != 0)) return false;
+        if (type == GOAWAY && (len < 8 || sid != 0)) return false;
+        if (type == SETTINGS && (sid != 0 || ((flags & FLAGS_ACK) ? len != 0 : (len % 6) != 0))) return false;
         if (n - off - 9 < len) break;
         if (_trace) {
             PDEBUG("[h2] frame: len=%u type=0x%02x flags=0x%02x sid=%u", len, (unsigned)type, (unsigned)flags, sid);
@@ -196,46 +198,56 @@ bool http2_client_process::parse_frames() {
         if (_awaiting_continuation && (type != CONTINUATION || sid != 1)) return false;
         if (type == SETTINGS) { if ((flags & FLAGS_ACK) == 0) { put_send_copy(make_settings_ack()); } }
         else if ((type == HEADERS || type == CONTINUATION) && sid == 1) {
-            const unsigned char* fragment = payload;
-            size_t size = len;
-            if (type == HEADERS) {
-                _headers_end_stream = (flags & 0x1) != 0;
-                if (flags & 0x08) {
-                    if (!size || fragment[0] >= size) return false;
-                    size -= 1 + fragment[0];
-                    ++fragment;
+            if (!_response_done) {
+                const unsigned char* fragment = payload;
+                size_t size = len;
+                if (type == HEADERS) {
+                    _headers_end_stream = (flags & 0x1) != 0;
+                    if (flags & 0x08) {
+                        if (!size || fragment[0] >= size) return false;
+                        size -= 1 + fragment[0];
+                        ++fragment;
+                    }
+                    if (flags & 0x20) {
+                        if (size < 5) return false;
+                        fragment += 5;
+                        size -= 5;
+                    }
+                } else if (!_awaiting_continuation) {
+                    return false;
                 }
-                if (flags & 0x20) {
-                    if (size < 5) return false;
-                    fragment += 5;
-                    size -= 5;
+                if (size > MAX_HTTP_HEAD_LEN - _header_block.size()) return false;
+                _header_block.append(reinterpret_cast<const char*>(fragment), size);
+                _awaiting_continuation = (flags & 0x4) == 0;
+                if (!_awaiting_continuation) {
+                    {
+                        std::lock_guard<std::mutex> lk(_m);
+                        if (!decode_response_headers()) return false;
+                    }
+                    _header_block.clear();
+                    if (_headers_end_stream) _response_done = true;
                 }
-            } else if (!_awaiting_continuation) {
-                return false;
-            }
-            if (size > MAX_HTTP_HEAD_LEN - _header_block.size()) return false;
-            _header_block.append(reinterpret_cast<const char*>(fragment), size);
-            _awaiting_continuation = (flags & 0x4) == 0;
-            if (!_awaiting_continuation) {
-                if (!decode_response_headers()) return false;
-                _header_block.clear();
-                if (_headers_end_stream) _response_done = true;
             }
         }
         else if (type == DATA && sid == 1) {
-            PDEBUG("[h2] DATA len=%u flags=0x%x sid=%u", len, flags, sid);
-            // handle padding
-            const unsigned char* pp = payload; uint32_t remain = len; if (flags & 0x08) { if (remain<1) return false; uint8_t pad=*pp++; remain-=1; if (pad>remain) return false; remain -= pad; }
-            if (remain) {
-                _resp_body.append((const char*)pp, remain);
-                PDEBUG("[h2] DATA appended %u bytes, total=%zu", remain, _resp_body.size());
-                // Accumulate credits and send WINDOW_UPDATE in batches
-                _conn_win_credits += remain;
-                _strm1_win_credits += remain;
-                if (_conn_win_credits >= _winupdate_threshold) { put_send_copy(make_window_update(0, _conn_win_credits)); _conn_win_credits = 0; }
-                if (_strm1_win_credits >= _winupdate_threshold) { put_send_copy(make_window_update(1, _strm1_win_credits)); _strm1_win_credits = 0; }
+            if (!_response_done) {
+                PDEBUG("[h2] DATA len=%u flags=0x%x sid=%u", len, flags, sid);
+                // handle padding
+                const unsigned char* pp = payload; uint32_t remain = len; if (flags & 0x08) { if (remain<1) return false; uint8_t pad=*pp++; remain-=1; if (pad>remain) return false; remain -= pad; }
+                if (remain) {
+                    {
+                        std::lock_guard<std::mutex> lk(_m);
+                        _resp_body.append((const char*)pp, remain);
+                    }
+                    PDEBUG("[h2] DATA appended %u bytes, total=%zu", remain, _resp_body.size());
+                    // Accumulate credits and send WINDOW_UPDATE in batches
+                    _conn_win_credits += remain;
+                    _strm1_win_credits += remain;
+                    if (_conn_win_credits >= _winupdate_threshold) { put_send_copy(make_window_update(0, _conn_win_credits)); _conn_win_credits = 0; }
+                    if (_strm1_win_credits >= _winupdate_threshold) { put_send_copy(make_window_update(1, _strm1_win_credits)); _strm1_win_credits = 0; }
+                }
+                if (flags & 0x1) { _response_done = true; }
             }
-            if (flags & 0x1) { _response_done = true; }
         }
         else if (type == PING) {
             if ((flags & FLAGS_ACK) == 0) {
@@ -246,12 +258,14 @@ bool http2_client_process::parse_frames() {
             }
         }
         else if (type == GOAWAY) {
-            if (len >= 8) {
-                uint32_t last_sid = read32u(payload) & 0x7fffffffu;
-                uint32_t err = read32u(payload+4);
-                PDEBUG("[h2] GOAWAY last_stream_id=%u error=0x%x", last_sid, (unsigned)err);
-            } else { PDEBUG("[h2] GOAWAY len=%u", len); }
-            _response_done = true;
+            uint32_t last_sid = read32u(payload) & 0x7fffffffu;
+            uint32_t err = read32u(payload+4);
+            PDEBUG("[h2] GOAWAY last_stream_id=%u error=0x%x", last_sid, (unsigned)err);
+            // RFC 9113 §6.8: on graceful shutdown (NO_ERROR) where stream 1 was accepted
+            // (last_stream_id >= 1), keep waiting for stream 1's END_STREAM response.
+            if (!_response_done && (err != NO_ERROR || last_sid < 1)) {
+                _response_done = true;
+            }
         }
         off += 9 + len;
     }
@@ -260,9 +274,6 @@ bool http2_client_process::parse_frames() {
 }
 
 size_t http2_client_process::process_recv_buf(const char* buf, size_t len) {
-    if (_response_done) {
-        return len;
-    }
     if (len) {
         if (_trace) {
             PDEBUG("[h2] recv bytes: %zu", len);
@@ -279,9 +290,15 @@ size_t http2_client_process::process_recv_buf(const char* buf, size_t len) {
         _in.insert(_in.end(), (const unsigned char*)buf, (const unsigned char*)buf + len);
     }
     if (!parse_frames()) THROW_COMMON_EXCEPT("invalid HTTP/2 response frame or header block");
-    if (_response_done) {
-        if (_status == 0) _status = 200;
-        PDEBUG("H2 Response Status: %d", _status);
+    if (_response_done && !_response_published) {
+        _response_published = true;
+        int final_status = 0;
+        {
+            std::lock_guard<std::mutex> lk(_m);
+            if (_status == 0) _status = 200;
+            final_status = _status;
+        }
+        PDEBUG("H2 Response Status: %d", final_status);
         PDEBUG("Response Body Length: %zu", _resp_body.size());
 #ifdef HAVE_ZLIB
         // Auto-decompress gzip if detected (magic 0x1f8b)

@@ -52,6 +52,7 @@ private:
     int _status{0};
     std::string _resp_body;
     bool _response_done{false};
+    bool _response_published{false};
     bool _headers_end_stream{false};
     bool _awaiting_continuation{false};
     std::string _header_block;

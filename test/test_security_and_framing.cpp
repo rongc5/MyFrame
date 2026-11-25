@@ -1261,7 +1261,8 @@ static void test_http2_and_container() {
         CHECK(settings_acks == 1);
         CHECK(goaways == 0);
     }
-    // END_STREAM takes effect once the final header fragment is decoded.
+    // END_STREAM takes effect once the final header fragment is decoded, and
+    // trailing stream-1 frames in the SAME or a LATER read cannot mutate result.
     {
         std::shared_ptr<base_net_obj> conn(new DetachedConn());
         http2_client_process c(conn, "GET", "http", "t", "/", {}, "");
@@ -1269,14 +1270,123 @@ static void test_http2_and_container() {
         const std::string first = h2_frame(0x1, 0x1, 1, block.substr(0, 3));
         CHECK(c.process_recv_buf(first.data(), first.size()) == first.size());
         CHECK(!c.is_response_done());
-        const std::string tail = h2_frame(0x9, 0x4, 1, block.substr(3));
-        CHECK(c.process_recv_buf(tail.data(), tail.size()) == tail.size());
+        // Same-read trailing DATA + HEADERS right after completion frame.
+        const std::string same_chunk =
+            h2_frame(0x9, 0x4, 1, block.substr(3)) +
+            h2_frame(0x0, 0x1, 1, "late-same") +
+            h2_frame(0x1, 0x5, 1, std::string(1, static_cast<char>(0x88)));
+        CHECK(c.process_recv_buf(same_chunk.data(), same_chunk.size()) == same_chunk.size());
         CHECK(c.is_response_done() && c.status() == 201 && c.response_body().empty());
-        // Trailing frames after completion must not mutate published status/body.
+        // Subsequent-read trailing frames must also leave published status/body frozen.
         const std::string extra = h2_frame(0x0, 0x1, 1, "late-data") +
             h2_frame(0x1, 0x5, 1, std::string(1, static_cast<char>(0x88)));
         CHECK(c.process_recv_buf(extra.data(), extra.size()) == extra.size());
         CHECK(c.is_response_done() && c.status() == 201 && c.response_body().empty());
+    }
+    // Same-read trailing DATA + HEADERS after DATA(END_STREAM) must not mutate body/status.
+    {
+        std::shared_ptr<base_net_obj> conn(new DetachedConn());
+        http2_client_process c(conn, "GET", "http", "t", "/", {}, "");
+        const std::string batch =
+            h2_frame(0x1, 0x4, 1, std::string(1, static_cast<char>(0x88))) + // :status 200
+            h2_frame(0x0, 0x1, 1, "ok") +                                     // DATA END_STREAM
+            h2_frame(0x0, 0x1, 1, "extra") +                                  // trailing DATA
+            h2_frame(0x1, 0x5, 1, std::string(1, static_cast<char>(0x8e)));  // trailing :status 500
+        CHECK(c.process_recv_buf(batch.data(), batch.size()) == batch.size());
+        CHECK(c.is_response_done() && c.status() == 200 && c.response_body() == "ok");
+    }
+    // RFC 9113 §6.8: graceful GOAWAY(NO_ERROR, last_stream_id >= 1) lets accepted stream 1 finish.
+    {
+        std::shared_ptr<base_net_obj> conn(new DetachedConn());
+        http2_client_process c(conn, "GET", "http", "t", "/", {}, "");
+        const std::string goaway = h2::make_goaway(1, h2::NO_ERROR);
+        CHECK(c.process_recv_buf(goaway.data(), goaway.size()) == goaway.size());
+        CHECK(!c.is_response_done());
+        const std::string resp404 = h2_frame(0x1, 0x5, 1, std::string(1, static_cast<char>(0x8d))); // idx 13 = 404
+        CHECK(c.process_recv_buf(resp404.data(), resp404.size()) == resp404.size());
+        CHECK(c.is_response_done() && c.status() == 404 && c.response_body().empty());
+    }
+    // Graceful GOAWAY + 404 HEADERS + DATA in a single read also preserves status and body.
+    {
+        std::shared_ptr<base_net_obj> conn(new DetachedConn());
+        http2_client_process c(conn, "GET", "http", "t", "/", {}, "");
+        const std::string batch =
+            h2::make_goaway(1, h2::NO_ERROR) +
+            h2_frame(0x1, 0x4, 1, std::string(1, static_cast<char>(0x8d))) +
+            h2_frame(0x0, 0x1, 1, "not-found");
+        CHECK(c.process_recv_buf(batch.data(), batch.size()) == batch.size());
+        CHECK(c.is_response_done() && c.status() == 404 && c.response_body() == "not-found");
+    }
+    // GOAWAY refusing stream 1 (last_stream_id=0) or with error finishes immediately.
+    {
+        std::shared_ptr<base_net_obj> conn(new DetachedConn());
+        http2_client_process c(conn, "GET", "http", "t", "/", {}, "");
+        const std::string refused = h2::make_goaway(0, h2::NO_ERROR);
+        CHECK(c.process_recv_buf(refused.data(), refused.size()) == refused.size());
+        CHECK(c.is_response_done());
+    }
+    {
+        std::shared_ptr<base_net_obj> conn(new DetachedConn());
+        http2_client_process c(conn, "GET", "http", "t", "/", {}, "");
+        const std::string fatal = h2::make_goaway(1, h2::PROTOCOL_ERROR);
+        CHECK(c.process_recv_buf(fatal.data(), fatal.size()) == fatal.size());
+        CHECK(c.is_response_done());
+    }
+    // Malformed GOAWAY (len < 8 or non-zero stream id) is rejected.
+    for (const std::string& bad_goaway : {h2_frame(0x7, 0, 0, "1234567"), h2_frame(0x7, 0, 1, "12345678")}) {
+        std::shared_ptr<base_net_obj> conn(new DetachedConn());
+        http2_client_process c(conn, "GET", "http", "t", "/", {}, "");
+        bool rejected = false;
+        try { c.process_recv_buf(bad_goaway.data(), bad_goaway.size()); }
+        catch (const std::exception&) { rejected = true; }
+        CHECK(rejected);
+    }
+    // RFC 9113 §6.7: connection-level PING and SETTINGS are still ACKed after stream 1 finishes.
+    {
+        std::shared_ptr<base_net_obj> conn(new DetachedConn());
+        http2_client_process c(conn, "GET", "http", "t", "/", {}, "");
+        // Drain initial client preface + SETTINGS + HEADERS before checking control ACKs.
+        for (;;) {
+            std::string* s = c.get_send_buf();
+            if (!s) break;
+            delete s;
+        }
+        const std::string done_plus_ping =
+            h2_frame(0x1, 0x5, 1, std::string(1, static_cast<char>(0x8d))) + // :status 404 END_STREAM
+            h2_frame(0x6, 0, 0, "samebuff");                                  // PING in same read
+        CHECK(c.process_recv_buf(done_plus_ping.data(), done_plus_ping.size()) == done_plus_ping.size());
+        CHECK(c.is_response_done() && c.status() == 404 && c.response_body().empty());
+        const std::string post_ctrl =
+            h2_frame(0x6, 0, 0, "afterok!") +                                 // PING after completion
+            h2_frame(0x4, 0, 0, "") +                                         // SETTINGS after completion
+            h2_frame(0x0, 0x1, 1, "late-ignored");                            // trailing DATA ignored
+        CHECK(c.process_recv_buf(post_ctrl.data(), post_ctrl.size()) == post_ctrl.size());
+        CHECK(c.is_response_done() && c.status() == 404 && c.response_body().empty());
+        std::string out;
+        for (;;) {
+            std::string* s = c.get_send_buf();
+            if (!s) break;
+            out += *s;
+            delete s;
+        }
+        int ping_acks = 0, settings_acks = 0;
+        std::vector<std::string> ping_payloads;
+        size_t o = 0;
+        while (out.size() - o >= 9) {
+            const unsigned char* f = reinterpret_cast<const unsigned char*>(out.data() + o);
+            uint32_t flen = (static_cast<uint32_t>(f[0]) << 16) | (static_cast<uint32_t>(f[1]) << 8) | f[2];
+            if (out.size() - o < 9 + flen) break;
+            if (f[3] == 0x6 && (f[4] & 0x1)) {
+                ++ping_acks;
+                ping_payloads.push_back(out.substr(o + 9, flen));
+            }
+            if (f[3] == 0x4 && (f[4] & 0x1)) ++settings_acks;
+            o += 9 + flen;
+        }
+        CHECK(o == out.size());
+        CHECK(ping_acks == 2);
+        CHECK(ping_payloads.size() == 2 && ping_payloads[0] == "samebuff" && ping_payloads[1] == "afterok!");
+        CHECK(settings_acks == 1);
     }
     // Reject invalid PING metadata even when enough payload bytes are available.
     for (const std::string& frame : {h2_frame(0x6, 0, 0, "123456789"), h2_frame(0x6, 0, 1, "12345678")}) {

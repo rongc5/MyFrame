@@ -232,6 +232,14 @@ public:
                 }
                 if (flags_in & 0x1 /*END_STREAM*/) done = true;
             } else if (type == h2::GOAWAY) {
+                if (payload.size() >= 8) {
+                    const unsigned char* gp = reinterpret_cast<const unsigned char*>(payload.data());
+                    uint32_t last_sid = h2::read32(gp) & 0x7fffffffu;
+                    uint32_t err = h2::read32(gp + 4);
+                    if (err == h2::NO_ERROR && last_sid >= 1) {
+                        continue; // RFC 9113 §6.8: wait for accepted stream 1 to finish
+                    }
+                }
                 done = true; break;
             }
         }
