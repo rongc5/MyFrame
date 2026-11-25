@@ -28,6 +28,17 @@ struct MpmcQueueTestAccess;
 //   - Also works efficiently for MPSC (consumer CAS is uncontended).
 //   - Destruction (~MpmcQueue) must not run concurrently with any operation.
 //
+// Progress guarantee (important):
+//   - Mutex-free / CAS-based: individual try_* calls never block on an OS mutex
+//     and return false immediately when the head/tail slot is not ready.
+//   - NOT formally lock-free in the strict theoretical progress sense: a producer
+//     preempted after reserving `enqueue_pos_` and before publishing `cell->seq`
+//     stalls logical dequeue progress at that reserved head slot (consumers see
+//     `seq != pos + 1` and return false, and producers eventually see a full ring
+//     on wrap-around) until that producer finishes publishing. Symmetrically, a
+//     consumer preempted between reserving `dequeue_pos_` and releasing `cell->seq`
+//     prevents reuse of that slot on wrap-around until it completes.
+//
 // Properties:
 //   - Strict C++11, zero dynamic allocation after construction, no ABA problem,
 //     no hazard pointers / epoch reclamation required, no C++17 aligned new.

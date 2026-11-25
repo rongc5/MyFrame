@@ -11,6 +11,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <new>
 #include <random>
 #include <set>
 #include <stdexcept>
@@ -18,6 +19,110 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+namespace {
+
+thread_local bool g_alloc_tracking = false;
+thread_local bool g_alloc_fail_armed = false;
+thread_local std::size_t g_alloc_fail_after = 0;
+thread_local std::size_t g_alloc_calls = 0;
+
+void* test_alloc_checked(std::size_t size, bool allow_throw) {
+    if (g_alloc_tracking) {
+        ++g_alloc_calls;
+        if (g_alloc_fail_armed) {
+            if (g_alloc_fail_after == 0) {
+                if (allow_throw) {
+                    throw std::bad_alloc();
+                }
+                return nullptr;
+            }
+            --g_alloc_fail_after;
+        }
+    }
+    void* ptr = std::malloc(size == 0 ? 1 : size);
+    if (!ptr && allow_throw) {
+        throw std::bad_alloc();
+    }
+    return ptr;
+}
+
+struct AllocFaultScope {
+    bool prev_tracking;
+    bool prev_armed;
+    std::size_t prev_after;
+    std::size_t prev_calls;
+
+    // Pass SIZE_MAX to count allocations without injecting failures.
+    explicit AllocFaultScope(std::size_t fail_after) noexcept
+        : prev_tracking(g_alloc_tracking),
+          prev_armed(g_alloc_fail_armed),
+          prev_after(g_alloc_fail_after),
+          prev_calls(g_alloc_calls) {
+        g_alloc_calls = 0;
+        g_alloc_tracking = true;
+        if (fail_after == std::numeric_limits<std::size_t>::max()) {
+            g_alloc_fail_armed = false;
+            g_alloc_fail_after = 0;
+        } else {
+            g_alloc_fail_armed = true;
+            g_alloc_fail_after = fail_after;
+        }
+    }
+
+    ~AllocFaultScope() noexcept {
+        g_alloc_tracking = prev_tracking;
+        g_alloc_fail_armed = prev_armed;
+        g_alloc_fail_after = prev_after;
+        g_alloc_calls = prev_calls;
+    }
+
+    std::size_t calls() const noexcept { return g_alloc_calls; }
+};
+
+} // namespace
+
+void* operator new(std::size_t size) {
+    return test_alloc_checked(size, true);
+}
+
+void* operator new[](std::size_t size) {
+    return test_alloc_checked(size, true);
+}
+
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+    return test_alloc_checked(size, false);
+}
+
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+    return test_alloc_checked(size, false);
+}
+
+void operator delete(void* ptr) noexcept {
+    std::free(ptr);
+}
+
+void operator delete[](void* ptr) noexcept {
+    std::free(ptr);
+}
+
+void operator delete(void* ptr, const std::nothrow_t&) noexcept {
+    std::free(ptr);
+}
+
+void operator delete[](void* ptr, const std::nothrow_t&) noexcept {
+    std::free(ptr);
+}
+
+#if defined(__cpp_sized_deallocation) && __cpp_sized_deallocation >= 201309
+void operator delete(void* ptr, std::size_t) noexcept {
+    std::free(ptr);
+}
+
+void operator delete[](void* ptr, std::size_t) noexcept {
+    std::free(ptr);
+}
+#endif
 
 namespace {
 
@@ -964,6 +1069,978 @@ void test_double_buffer() {
     CHECK(TrackedSnapshot::live.load() == 0);
 }
 
+// ---------------------------------------------------------------------------
+// 10. Regression tests: RadixTree alloc safety, AhoCorasick failure states,
+//     ShardedTtlCache TTL extremes, ConsistentHash overflow/transactional/order
+// ---------------------------------------------------------------------------
+
+struct FakeNanoClock {
+    typedef std::chrono::nanoseconds duration;
+    typedef duration::rep rep;
+    typedef duration::period period;
+    typedef std::chrono::time_point<FakeNanoClock, duration> time_point;
+    static const bool is_steady = true;
+
+    static std::atomic<std::int64_t> now_ns;
+
+    static time_point now() noexcept {
+        return time_point(duration(now_ns.load(std::memory_order_acquire)));
+    }
+    static void set_ns(std::int64_t ns) noexcept {
+        now_ns.store(ns, std::memory_order_release);
+    }
+};
+std::atomic<std::int64_t> FakeNanoClock::now_ns(0);
+
+std::uint64_t ref_mix64(std::uint64_t x) noexcept {
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+
+std::uint64_t ref_fnv1a_mix64(const std::string& s) noexcept {
+    std::uint64_t h = 14695981039346656037ULL;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        h ^= static_cast<std::uint64_t>(static_cast<unsigned char>(s[i]));
+        h *= 1099511628211ULL;
+    }
+    return ref_mix64(h ^ static_cast<std::uint64_t>(s.size()));
+}
+
+struct ConstantNodeHash {
+    std::size_t operator()(const std::string&) const noexcept { return 42; }
+};
+
+struct PartialCollisionNodeHash {
+    std::size_t operator()(const std::string& s) const noexcept {
+        if (s == "alpha" || s == "beta") {
+            return 777;
+        }
+        return static_cast<std::size_t>(ref_fnv1a_mix64(s));
+    }
+};
+
+struct UnorderedNode {
+    int id;
+    int hash_bucket;
+};
+
+struct UnorderedNodeHash {
+    std::size_t operator()(const UnorderedNode& n) const noexcept {
+        return static_cast<std::size_t>(n.hash_bucket);
+    }
+};
+
+struct UnorderedNodeEq {
+    bool operator()(const UnorderedNode& a, const UnorderedNode& b) const noexcept {
+        return a.id == b.id;
+    }
+};
+
+void verify_radix_exact(const RadixTree<int>& tree,
+                        const std::vector<std::pair<std::string, int> >& expected) {
+    CHECK(tree.size() == expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        const int* v = tree.find(expected[i].first);
+        CHECK(v != nullptr && *v == expected[i].second);
+    }
+    std::vector<std::pair<std::string, int> > scanned;
+    tree.prefix_scan("", [&scanned](const std::string& k, const int& v) {
+        scanned.push_back(std::make_pair(k, v));
+    });
+    CHECK(scanned == expected);
+}
+
+void test_radix_alloc_safety() {
+    // 1) Zero-allocation noexcept move constructor, move assignment, and reusable moved-from object
+    {
+        const std::string kEmpty;
+        const std::string kApple = "apple";
+        const std::string kApplication = "application";
+        const std::string kApply = "apply";
+        const std::string kBanana = "banana";
+        const std::string kOldOne = "old_entry_one_01234567890123456789";
+        const std::string kOldTwo = "old_entry_two_01234567890123456789";
+
+        RadixTree<int> t1;
+        CHECK(t1.insert(kEmpty, 0));
+        CHECK(t1.insert(kApple, 1));
+        CHECK(t1.insert(kApplication, 2));
+        CHECK(t1.insert(kApply, 3));
+        CHECK(t1.insert(kBanana, 4));
+
+        RadixTree<int> t4;
+        CHECK(t4.insert(kOldOne, 10));
+        CHECK(t4.insert(kOldTwo, 20));
+
+        RadixTree<int> t3;
+        {
+            AllocFaultScope no_alloc(0);
+            RadixTree<int> t2(std::move(t1));
+            CHECK(t1.empty() && t1.size() == 0);
+            CHECK(t1.find(kEmpty) == nullptr && t1.find(kApple) == nullptr);
+            CHECK(t1.longest_prefix_match(kApplication) == nullptr);
+            t1.clear();
+
+            CHECK(t2.size() == 5 && *t2.find(kApplication) == 2 && *t2.find(kEmpty) == 0);
+
+            t3 = std::move(t2);
+            CHECK(t2.empty() && t2.size() == 0 && t2.find(kApple) == nullptr);
+            CHECK(t3.size() == 5 && *t3.find(kBanana) == 4);
+
+            // Move-assign over non-empty tree tears down existing nodes with zero allocations
+            t4 = std::move(t3);
+            CHECK(t3.empty() && t4.size() == 5);
+            CHECK(t4.find(kOldOne) == nullptr);
+            CHECK(*t4.find(kApply) == 3);
+            CHECK(no_alloc.calls() == 0);
+        }
+
+        // Reuse moved-from trees t1 (move-constructed from) and t3 (move-assigned from)
+        CHECK(t1.insert("reused_key", 77));
+        CHECK(t1.size() == 1 && *t1.find("reused_key") == 77);
+        CHECK(t1.erase("reused_key") && t1.empty());
+
+        CHECK(t3.insert("another_key", 88));
+        CHECK(t3.size() == 1 && *t3.find("another_key") == 88);
+    }
+
+    // 2) Zero-allocation iterative clear() and ~RadixTree() on deep (5000-level) and wide trees
+    {
+        RadixTree<int> deep_for_clear;
+        std::string chain;
+        chain.reserve(5000);
+        for (int i = 1; i <= 5000; ++i) {
+            chain.push_back(static_cast<char>('a' + (i % 2)));
+            CHECK(deep_for_clear.insert(chain, i));
+        }
+        CHECK(deep_for_clear.size() == 5000);
+
+        {
+            AllocFaultScope no_alloc(0);
+            deep_for_clear.clear();
+            CHECK(deep_for_clear.empty() && deep_for_clear.size() == 0);
+            CHECK(no_alloc.calls() == 0);
+        }
+
+        std::unique_ptr<RadixTree<int> > deep_for_dtor(new RadixTree<int>());
+        std::string chain2;
+        chain2.reserve(5000);
+        for (int i = 1; i <= 5000; ++i) {
+            chain2.push_back('z');
+            CHECK(deep_for_dtor->insert(chain2, i));
+        }
+        for (int b = 0; b < 128; ++b) {
+            std::string wide_key(1, static_cast<char>(b + 1));
+            wide_key.append(36, 'w');
+            CHECK(deep_for_dtor->insert(wide_key, b));
+        }
+        {
+            AllocFaultScope no_alloc(0);
+            deep_for_dtor.reset(); // Exercises ~RadixTree() iteratively
+            CHECK(no_alloc.calls() == 0);
+        }
+    }
+
+    // 3) Zero-allocation SuffixMatcher::find / contains / longest_suffix_match on long keys
+    {
+        SuffixMatcher<int> sm;
+        const std::string long_suf1 = ".very-long-suffix-domain-alpha-0123456789.example.com";
+        const std::string long_suf2 = ".example.com";
+        CHECK(sm.insert(long_suf1, 101));
+        CHECK(sm.insert(long_suf2, 102));
+
+        const std::string probe = "host01.sub" + long_suf1;
+        const std::string miss = "completely-unrelated-very-long-hostname-0123456789.org";
+        {
+            AllocFaultScope no_alloc(0);
+            std::size_t mlen = 0;
+            const int* r1 = sm.longest_suffix_match(probe, &mlen);
+            CHECK(r1 != nullptr && *r1 == 101 && mlen == long_suf1.size());
+            CHECK(sm.find(long_suf1) != nullptr && *sm.find(long_suf1) == 101);
+            CHECK(sm.contains(long_suf2));
+            CHECK(sm.longest_suffix_match(miss) == nullptr);
+            CHECK(!sm.contains(miss));
+            CHECK(no_alloc.calls() == 0);
+        }
+    }
+
+    // 4) Deterministic allocation-failure sweep on insert split (common < rem: diverging branch)
+    {
+        const std::string pfx(48, 'a');
+        const std::string k_exist1 = pfx + std::string(48, 'b');
+        const std::string k_exist2 = k_exist1 + "_descendant_012345678901234567890123";
+        const std::string k_new = pfx + std::string(48, 'c');
+
+        std::vector<std::pair<std::string, int> > baseline;
+        baseline.push_back(std::make_pair(k_exist1, 10));
+        baseline.push_back(std::make_pair(k_exist2, 20));
+
+        std::size_t failures = 0;
+        bool succeeded = false;
+        for (std::size_t fail_at = 0; fail_at < 64; ++fail_at) {
+            RadixTree<int> tree;
+            CHECK(tree.insert(k_exist1, 10));
+            CHECK(tree.insert(k_exist2, 20));
+
+            bool threw = false;
+            try {
+                AllocFaultScope fault(fail_at);
+                CHECK(tree.insert(k_new, 30));
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+
+            if (!threw) {
+                CHECK(tree.size() == 3);
+                CHECK(*tree.find(k_exist1) == 10);
+                CHECK(*tree.find(k_exist2) == 20);
+                CHECK(*tree.find(k_new) == 30);
+                succeeded = true;
+                break;
+            }
+            ++failures;
+            CHECK(tree.find(k_new) == nullptr);
+            verify_radix_exact(tree, baseline);
+
+            // Recovery: subsequent insert succeeds cleanly without corruption
+            CHECK(tree.insert(k_new, 30));
+            CHECK(tree.size() == 3 && *tree.find(k_new) == 30);
+        }
+        CHECK(succeeded && failures >= 3);
+    }
+
+    // 5) Deterministic allocation-failure sweep on insert split (common == rem: prefix key)
+    {
+        const std::string pfx(48, 'p');
+        const std::string k_exist = pfx + std::string(48, 'q');
+
+        std::vector<std::pair<std::string, int> > baseline;
+        baseline.push_back(std::make_pair(k_exist, 11));
+
+        std::size_t failures = 0;
+        bool succeeded = false;
+        for (std::size_t fail_at = 0; fail_at < 64; ++fail_at) {
+            RadixTree<int> tree;
+            CHECK(tree.insert(k_exist, 11));
+
+            bool threw = false;
+            try {
+                AllocFaultScope fault(fail_at);
+                CHECK(tree.insert(pfx, 22));
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+
+            if (!threw) {
+                CHECK(tree.size() == 2 && *tree.find(pfx) == 22 && *tree.find(k_exist) == 11);
+                succeeded = true;
+                break;
+            }
+            ++failures;
+            CHECK(tree.find(pfx) == nullptr);
+            verify_radix_exact(tree, baseline);
+
+            CHECK(tree.insert(pfx, 22));
+            CHECK(tree.size() == 2 && *tree.find(pfx) == 22 && *tree.find(k_exist) == 11);
+        }
+        CHECK(succeeded && failures >= 2);
+    }
+
+    // 6) Deterministic allocation-failure sweep on erase coalescing (self-coalesce: cur has 1 child)
+    {
+        const std::string k1(48, 'm');
+        const std::string k2 = k1 + std::string(48, 'n');
+        std::vector<std::pair<std::string, int> > baseline;
+        baseline.push_back(std::make_pair(k1, 1));
+        baseline.push_back(std::make_pair(k2, 2));
+
+        std::size_t failures = 0;
+        bool succeeded = false;
+        for (std::size_t fail_at = 0; fail_at < 64; ++fail_at) {
+            RadixTree<int> tree;
+            CHECK(tree.insert(k1, 1));
+            CHECK(tree.insert(k2, 2));
+
+            bool threw = false;
+            try {
+                AllocFaultScope fault(fail_at);
+                CHECK(tree.erase(k1));
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+
+            if (!threw) {
+                CHECK(tree.size() == 1 && tree.find(k1) == nullptr && *tree.find(k2) == 2);
+                succeeded = true;
+                break;
+            }
+            ++failures;
+            verify_radix_exact(tree, baseline);
+
+            // Recovery after allocation failure
+            CHECK(tree.erase(k1));
+            CHECK(tree.size() == 1 && tree.find(k1) == nullptr && *tree.find(k2) == 2);
+        }
+        CHECK(succeeded && failures >= 2);
+    }
+
+    // 7) Deterministic allocation-failure sweep on erase coalescing (parent has 2 children,
+    //    erasing child 1 and erasing child 0, with multi-leaf survivor subtree)
+    {
+        const std::string p(48, 'r');
+        const std::string s0(48, 's');
+        const std::string s1(48, 't');
+        const std::string k_a = p + s0 + "_leaf_a";
+        const std::string k_b = p + s0 + "_leaf_b";
+        const std::string k_victim = p + s1;
+
+        std::vector<std::pair<std::string, int> > baseline;
+        baseline.push_back(std::make_pair(k_a, 1));
+        baseline.push_back(std::make_pair(k_b, 2));
+        baseline.push_back(std::make_pair(k_victim, 3));
+
+        std::size_t failures = 0;
+        bool succeeded = false;
+        for (std::size_t fail_at = 0; fail_at < 64; ++fail_at) {
+            RadixTree<int> tree;
+            CHECK(tree.insert(k_a, 1));
+            CHECK(tree.insert(k_b, 2));
+            CHECK(tree.insert(k_victim, 3));
+
+            bool threw = false;
+            try {
+                AllocFaultScope fault(fail_at);
+                CHECK(tree.erase(k_victim));
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+
+            if (!threw) {
+                CHECK(tree.size() == 2 && tree.find(k_victim) == nullptr);
+                CHECK(*tree.find(k_a) == 1 && *tree.find(k_b) == 2);
+                succeeded = true;
+                break;
+            }
+            ++failures;
+            verify_radix_exact(tree, baseline);
+
+            CHECK(tree.erase(k_victim));
+            CHECK(tree.size() == 2 && *tree.find(k_a) == 1 && *tree.find(k_b) == 2);
+        }
+        CHECK(succeeded && failures >= 2);
+
+        // Also test erasing child index 0 (smaller byte) while child index 1 survives
+        const std::string k_first = p + std::string(48, 'a');
+        const std::string k_second = p + std::string(48, 'z');
+        std::vector<std::pair<std::string, int> > pair_base;
+        pair_base.push_back(std::make_pair(k_first, 10));
+        pair_base.push_back(std::make_pair(k_second, 20));
+
+        failures = 0;
+        succeeded = false;
+        for (std::size_t fail_at = 0; fail_at < 64; ++fail_at) {
+            RadixTree<int> tree;
+            CHECK(tree.insert(k_first, 10));
+            CHECK(tree.insert(k_second, 20));
+
+            bool threw = false;
+            try {
+                AllocFaultScope fault(fail_at);
+                CHECK(tree.erase(k_first));
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+
+            if (!threw) {
+                CHECK(tree.size() == 1 && tree.find(k_first) == nullptr && *tree.find(k_second) == 20);
+                succeeded = true;
+                break;
+            }
+            ++failures;
+            verify_radix_exact(tree, pair_base);
+        }
+        CHECK(succeeded && failures >= 2);
+    }
+}
+
+void test_aho_corasick_failure_states() {
+    // 1) Failed add_pattern (new branch) on an already-built automaton must invalidate
+    //    built_, roll back partial trie/pattern changes, reject scans, and recover via build().
+    {
+        const std::string long_new_pat = "unique_pattern_0123456789_abcdefghijklmnopqrstuvwxyz";
+        std::size_t failures = 0;
+        bool succeeded = false;
+
+        for (std::size_t fail_at = 0; fail_at < 128; ++fail_at) {
+            AhoCorasick ac;
+            ac.add_pattern("he", 10);
+            ac.add_pattern("she", 20);
+            ac.add_pattern("hers", 30);
+            ac.build();
+            CHECK(ac.built());
+            const std::size_t orig_patterns = ac.pattern_count();
+            const std::size_t orig_nodes = ac.node_count();
+            const std::vector<AhoCorasick::Match> baseline = ac.find_all("ushers");
+            CHECK(baseline.size() == 3);
+
+            bool threw = false;
+            try {
+                AllocFaultScope fault(fail_at);
+                (void)ac.add_pattern(long_new_pat, 999);
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+
+            if (!threw) {
+                CHECK(!ac.built());
+                CHECK(ac.pattern_count() == orig_patterns + 1);
+                ac.build();
+                CHECK(ac.built());
+                CHECK(ac.contains_any("xx_" + long_new_pat + "_yy"));
+                CHECK(ac.find_all("ushers").size() == 3);
+                succeeded = true;
+                break;
+            }
+
+            ++failures;
+            CHECK(!ac.built());
+            CHECK(ac.pattern_count() == orig_patterns);
+            CHECK(ac.node_count() == orig_nodes);
+
+            bool scan_threw = false;
+            try {
+                (void)ac.contains_any("ushers");
+            } catch (const std::logic_error&) {
+                scan_threw = true;
+            }
+            CHECK(scan_threw);
+
+            // Recovery: build() succeeds and restores exact prior matches with zero corruption
+            ac.build();
+            CHECK(ac.built());
+            const std::vector<AhoCorasick::Match> recovered = ac.find_all("ushers");
+            CHECK(recovered.size() == baseline.size());
+            for (std::size_t i = 0; i < baseline.size(); ++i) {
+                CHECK(recovered[i].pattern_id == baseline[i].pattern_id);
+                CHECK(recovered[i].tag == baseline[i].tag);
+                CHECK(recovered[i].start == baseline[i].start);
+                CHECK(recovered[i].length == baseline[i].length);
+            }
+            CHECK(!ac.contains_any(long_new_pat));
+        }
+        CHECK(succeeded && failures >= 2);
+    }
+
+    // 2) Failed add_pattern on an existing terminal node (new_nodes_needed == 0)
+    {
+        std::size_t failures = 0;
+        bool succeeded = false;
+        for (std::size_t fail_at = 0; fail_at < 32; ++fail_at) {
+            AhoCorasick ac;
+            ac.add_pattern("he", 10);
+            ac.build();
+            const std::size_t orig_patterns = ac.pattern_count();
+            const std::size_t orig_nodes = ac.node_count();
+
+            bool threw = false;
+            try {
+                AllocFaultScope fault(fail_at);
+                // outputs has size 1, capacity 1 (and patterns_ has size 1, capacity 1),
+                // so adding a duplicate pattern deterministically triggers reallocation.
+                (void)ac.add_pattern("he", 20);
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+
+            if (!threw) {
+                CHECK(!ac.built() && ac.pattern_count() == orig_patterns + 1);
+                ac.build();
+                CHECK(ac.find_all("he").size() == 2);
+                succeeded = true;
+                break;
+            }
+
+            ++failures;
+            CHECK(!ac.built());
+            CHECK(ac.pattern_count() == orig_patterns);
+            CHECK(ac.node_count() == orig_nodes);
+            bool scan_threw = false;
+            try {
+                (void)ac.find_all("he");
+            } catch (const std::logic_error&) {
+                scan_threw = true;
+            }
+            CHECK(scan_threw);
+
+            ac.build();
+            CHECK(ac.built());
+            CHECK(ac.find_all("he").size() == 1);
+        }
+        CHECK(succeeded && failures >= 1);
+    }
+
+    // 3) Failed build() on both already-built and unbuilt automatons must leave built() == false
+    //    and recover cleanly once allocations succeed again.
+    {
+        AhoCorasick ac;
+        ac.add_pattern("he", 1);
+        ac.add_pattern("she", 2);
+        ac.add_pattern("hers", 3);
+        ac.build();
+        CHECK(ac.built());
+
+        bool threw = false;
+        try {
+            AllocFaultScope fault(0);
+            ac.build();
+        } catch (const std::bad_alloc&) {
+            threw = true;
+        }
+        CHECK(threw);
+        CHECK(!ac.built());
+
+        bool scan_threw = false;
+        try {
+            (void)ac.contains_any("ushers");
+        } catch (const std::logic_error&) {
+            scan_threw = true;
+        }
+        CHECK(scan_threw);
+
+        // Recover via subsequent build()
+        ac.build();
+        CHECK(ac.built());
+        CHECK(ac.find_all("ushers").size() == 3);
+
+        // Also fail build() right after adding a new pattern (unbuilt state)
+        ac.add_pattern("us", 4);
+        CHECK(!ac.built());
+        threw = false;
+        try {
+            AllocFaultScope fault(0);
+            ac.build();
+        } catch (const std::bad_alloc&) {
+            threw = true;
+        }
+        CHECK(threw && !ac.built());
+        ac.build();
+        CHECK(ac.built() && ac.find_all("ushers").size() == 4);
+    }
+}
+
+void test_sharded_ttl_cache_extremes() {
+    // 1) Real steady_clock: max uint64, INT64_MAX, INT64_MAX+1 must not wrap/expire immediately
+    {
+        ShardedTtlCache<int, std::string> cache(8, 4);
+        const std::uint64_t u64_max = std::numeric_limits<std::uint64_t>::max();
+        const std::uint64_t i64_max =
+            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+
+        CHECK(cache.put(1, std::string("u64max"), u64_max));
+        std::string lval = "i64max";
+        CHECK(cache.put(2, lval, i64_max));
+        CHECK(cache.put(3, std::string("i64max_plus1"), i64_max + 1ULL));
+        CHECK(cache.put(4, std::string("no_expiry"), 0));
+
+        std::string out;
+        CHECK(cache.get(1, out) && out == "u64max");
+        CHECK(cache.get(2, out) && out == "i64max");
+        CHECK(cache.get(3, out) && out == "i64max_plus1");
+        CHECK(cache.get(4, out) && out == "no_expiry");
+        CHECK(cache.purge_expired() == 0);
+        CHECK(cache.get(1, out) && out == "u64max");
+    }
+
+    // 2) FakeClock (milliseconds) boundary now + ttl near INT64_MAX and negative now
+    {
+        const std::int64_t kMax = std::numeric_limits<std::int64_t>::max();
+        const std::uint64_t u64_max = std::numeric_limits<std::uint64_t>::max();
+
+        ShardedTtlCache<std::string, int, std::hash<std::string>,
+                        std::equal_to<std::string>, FakeClock>
+            cache(32, 4);
+
+        FakeClock::set_ms(kMax - 100);
+        CHECK(cache.put("exact_99", 1, 99));        // expires at kMax - 1
+        CHECK(cache.put("exact_100", 2, 100));      // expires at kMax
+        CHECK(cache.put("over_101", 3, 101));       // saturates to kMax
+        CHECK(cache.put("over_u64max", 4, u64_max));// saturates to kMax
+        CHECK(cache.put("forever", 5, 0));          // no expiry
+
+        int v = 0;
+        FakeClock::set_ms(kMax - 2);
+        CHECK(cache.get("exact_99", v) && v == 1);
+        CHECK(cache.get("exact_100", v) && v == 2);
+        CHECK(cache.get("over_101", v) && v == 3);
+        CHECK(cache.get("over_u64max", v) && v == 4);
+        CHECK(cache.get("forever", v) && v == 5);
+
+        FakeClock::set_ms(kMax - 1);
+        CHECK(!cache.get("exact_99", v));           // expired at kMax - 1
+        CHECK(cache.get("exact_100", v) && v == 2); // still valid before kMax
+        CHECK(cache.get("over_101", v) && v == 3);
+        CHECK(cache.get("over_u64max", v) && v == 4);
+        CHECK(cache.get("forever", v) && v == 5);
+
+        FakeClock::set_ms(kMax);
+        CHECK(!cache.get("exact_100", v));
+        CHECK(!cache.get("over_101", v));
+        CHECK(!cache.get("over_u64max", v));
+        CHECK(cache.get("forever", v) && v == 5);   // no-expiry still survives at kMax!
+
+        // Negative clock + TTL > INT64_MAX that fits in headroom vs saturating
+        FakeClock::set_ms(-1000);
+        const std::uint64_t fit_ttl = static_cast<std::uint64_t>(kMax) + 500ULL;
+        const std::uint64_t sat_ttl = static_cast<std::uint64_t>(kMax) + 1000ULL;
+        CHECK(cache.put("neg_fit", 10, fit_ttl));   // exact expiry at kMax - 500
+        CHECK(cache.put("neg_sat", 11, sat_ttl));   // saturates to kMax
+
+        FakeClock::set_ms(kMax - 501);
+        CHECK(cache.get("neg_fit", v) && v == 10);
+        CHECK(cache.get("neg_sat", v) && v == 11);
+
+        FakeClock::set_ms(kMax - 500);
+        CHECK(!cache.get("neg_fit", v));
+        CHECK(cache.get("neg_sat", v) && v == 11);
+
+        FakeClock::set_ms(kMax - 1);
+        CHECK(cache.get("neg_sat", v) && v == 11);
+        FakeClock::set_ms(kMax);
+        CHECK(!cache.get("neg_sat", v));
+    }
+
+    // 3) FakeNanoClock (nanoseconds, 1ms = 1,000,000 ticks) multiplication overflow boundaries
+    {
+        const std::int64_t kMax = std::numeric_limits<std::int64_t>::max();
+        const std::uint64_t u64_max = std::numeric_limits<std::uint64_t>::max();
+        const std::uint64_t kNsPerMs = 1000000ULL;
+
+        ShardedTtlCache<std::string, int, std::hash<std::string>,
+                        std::equal_to<std::string>, FakeNanoClock>
+            ncache(16, 4);
+
+        FakeNanoClock::set_ns(kMax - 10 * static_cast<std::int64_t>(kNsPerMs));
+        CHECK(ncache.put("ns_5ms", 1, 5));                        // expires at kMax - 5ms
+        CHECK(ncache.put("ns_10ms", 2, 10));                      // saturates to kMax
+        CHECK(ncache.put("ns_mul_edge", 3, u64_max / kNsPerMs));  // saturates to kMax
+        CHECK(ncache.put("ns_mul_over", 4, u64_max / kNsPerMs + 1ULL)); // saturates to kMax
+        CHECK(ncache.put("ns_u64max", 5, u64_max));               // saturates to kMax
+
+        int v = 0;
+        FakeNanoClock::set_ns(kMax - 5 * static_cast<std::int64_t>(kNsPerMs) - 1);
+        CHECK(ncache.get("ns_5ms", v) && v == 1);
+        FakeNanoClock::set_ns(kMax - 5 * static_cast<std::int64_t>(kNsPerMs));
+        CHECK(!ncache.get("ns_5ms", v));
+        CHECK(ncache.get("ns_10ms", v) && v == 2);
+        CHECK(ncache.get("ns_mul_edge", v) && v == 3);
+        CHECK(ncache.get("ns_mul_over", v) && v == 4);
+        CHECK(ncache.get("ns_u64max", v) && v == 5);
+
+        FakeNanoClock::set_ns(kMax - 1);
+        CHECK(ncache.get("ns_10ms", v) && v == 2);
+        CHECK(ncache.get("ns_mul_over", v) && v == 4);
+        CHECK(ncache.get("ns_u64max", v) && v == 5);
+
+        FakeNanoClock::set_ns(kMax);
+        CHECK(!ncache.get("ns_10ms", v));
+        CHECK(!ncache.get("ns_mul_edge", v));
+        CHECK(!ncache.get("ns_mul_over", v));
+        CHECK(!ncache.get("ns_u64max", v));
+    }
+}
+
+void test_consistent_hash_hardening() {
+    // 1) Overflow validation before mutation (empty ring and existing-node update)
+    {
+        ConsistentHash<> ring(2);
+        const std::size_t overflow_weight =
+            std::numeric_limits<std::size_t>::max() / 2 + 1;
+
+        bool threw = false;
+        try {
+            ring.add_node("node", overflow_weight);
+        } catch (const std::overflow_error&) {
+            threw = true;
+        }
+        CHECK(threw);
+        CHECK(ring.empty() && ring.node_count() == 0 && ring.vnode_count() == 0);
+
+        CHECK(ring.add_node("node", 1));
+        CHECK(ring.node_count() == 1 && ring.vnode_count() == 2);
+
+        // Updating existing node with overflow weight must NOT remove existing node
+        threw = false;
+        try {
+            ring.add_node("node", overflow_weight);
+        } catch (const std::overflow_error&) {
+            threw = true;
+        }
+        CHECK(threw);
+        CHECK(ring.node_count() == 1 && ring.vnode_count() == 2 && ring.contains_node("node"));
+        std::string picked;
+        CHECK(ring.get_node("any-key", picked) && picked == "node");
+
+        // Zero weight on existing node must reject without removing existing node
+        threw = false;
+        try {
+            ring.add_node("node", 0);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        CHECK(threw);
+        CHECK(ring.node_count() == 1 && ring.vnode_count() == 2 && ring.contains_node("node"));
+    }
+
+    // 2) Transactional add_node under deterministic allocation failures (new node + weight upgrade)
+    {
+        // New node insertion rollback: no orphan ring points left behind
+        std::size_t failures = 0;
+        bool succeeded = false;
+        for (std::size_t fail_at = 0; fail_at < 64; ++fail_at) {
+            ConsistentHash<> ring(8);
+            CHECK(ring.add_node("n1", 1));
+            CHECK(ring.node_count() == 1 && ring.vnode_count() == 8);
+
+            bool threw = false;
+            try {
+                AllocFaultScope fault(fail_at);
+                CHECK(ring.add_node("n2", 2));
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+
+            if (!threw) {
+                CHECK(ring.node_count() == 2 && ring.vnode_count() == 24);
+                CHECK(ring.contains_node("n1") && ring.contains_node("n2"));
+                succeeded = true;
+                break;
+            }
+
+            ++failures;
+            CHECK(ring.node_count() == 1 && ring.vnode_count() == 8);
+            CHECK(ring.contains_node("n1") && !ring.contains_node("n2"));
+            for (int k = 0; k < 20; ++k) {
+                std::string out;
+                CHECK(ring.get_node("probe_" + std::to_string(k), out) && out == "n1");
+            }
+        }
+        CHECK(succeeded && failures >= 2);
+
+        // Existing node weight upgrade rollback: old node & exact vnode count preserved
+        failures = 0;
+        succeeded = false;
+        for (std::size_t fail_at = 0; fail_at < 64; ++fail_at) {
+            ConsistentHash<> ring(8);
+            CHECK(ring.add_node("n1", 1));
+            CHECK(ring.add_node("n2", 1));
+            std::vector<std::string> baseline_route(40);
+            for (int k = 0; k < 40; ++k) {
+                CHECK(ring.get_node("rk_" + std::to_string(k), baseline_route[static_cast<std::size_t>(k)]));
+            }
+
+            bool threw = false;
+            try {
+                AllocFaultScope fault(fail_at);
+                CHECK(!ring.add_node("n1", 4));
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+
+            if (!threw) {
+                CHECK(ring.node_count() == 2 && ring.vnode_count() == 40);
+                // Shrink back to weight 1 also works cleanly
+                CHECK(!ring.add_node("n1", 1));
+                CHECK(ring.node_count() == 2 && ring.vnode_count() == 16);
+                for (int k = 0; k < 40; ++k) {
+                    std::string out;
+                    CHECK(ring.get_node("rk_" + std::to_string(k), out));
+                    CHECK(out == baseline_route[static_cast<std::size_t>(k)]);
+                }
+                succeeded = true;
+                break;
+            }
+
+            ++failures;
+            CHECK(ring.node_count() == 2 && ring.vnode_count() == 16);
+            CHECK(ring.contains_node("n1") && ring.contains_node("n2"));
+            for (int k = 0; k < 40; ++k) {
+                std::string out;
+                CHECK(ring.get_node("rk_" + std::to_string(k), out));
+                CHECK(out == baseline_route[static_cast<std::size_t>(k)]);
+            }
+        }
+        CHECK(succeeded && failures >= 2);
+    }
+
+    // 3) Portable deterministic default std::string node hashing (independent of std::hash<string>)
+    {
+        const std::size_t kVnodes = 16;
+        ConsistentHash<> ring(kVnodes);
+        const std::vector<std::string> nodes = {"node-alpha", "node-beta", "node-gamma"};
+        std::multimap<std::uint64_t, std::string> ref_ring;
+
+        for (std::size_t ni = 0; ni < nodes.size(); ++ni) {
+            CHECK(ring.add_node(nodes[ni], 1));
+            const std::uint64_t seed = ref_fnv1a_mix64(nodes[ni]);
+            for (std::size_t vi = 0; vi < kVnodes; ++vi) {
+                const std::uint64_t pt = ref_mix64(
+                    seed ^ ref_mix64(static_cast<std::uint64_t>(vi) + 0x517cc1b727220a95ULL));
+                ref_ring.emplace(pt, nodes[ni]);
+            }
+        }
+
+        for (int k = 0; k < 80; ++k) {
+            const std::string key = "portable_key_" + std::to_string(k);
+            const std::uint64_t kh = ref_fnv1a_mix64(key);
+            std::multimap<std::uint64_t, std::string>::const_iterator it =
+                ref_ring.lower_bound(kh);
+            if (it == ref_ring.end()) {
+                it = ref_ring.begin();
+            }
+            std::string got;
+            CHECK(ring.get_node(key, got) && got == it->second);
+        }
+    }
+
+    // 4) Collision & insertion-order stability (full collision, partial collision, default ring)
+    {
+        // Full collision via ConstantNodeHash across all 6 permutations of 3 nodes
+        std::vector<std::string> perm = {"node-a", "node-b", "node-c"};
+        std::sort(perm.begin(), perm.end());
+        do {
+            ConsistentHash<std::string, ConstantNodeHash> cring(10);
+            for (std::size_t i = 0; i < perm.size(); ++i) {
+                CHECK(cring.add_node(perm[i], 1));
+            }
+            CHECK(cring.node_count() == 3 && cring.vnode_count() == 30);
+
+            for (int k = 0; k < 50; ++k) {
+                const std::string key = "col_" + std::to_string(k);
+                std::string primary;
+                CHECK(cring.get_node(key, primary) && primary == "node-a");
+                std::vector<std::string> reps = cring.get_nodes(key, 3);
+                CHECK(reps.size() == 3);
+                CHECK(reps[0] == "node-a" && reps[1] == "node-b" && reps[2] == "node-c");
+            }
+
+            // Removing "node-a" leaves "node-b" and "node-c" completely intact
+            CHECK(cring.remove_node("node-a"));
+            CHECK(cring.node_count() == 2 && cring.vnode_count() == 20);
+            std::string primary;
+            CHECK(cring.get_node("col_0", primary) && primary == "node-b");
+            std::vector<std::string> reps2 = cring.get_nodes("col_0", 2);
+            CHECK(reps2.size() == 2 && reps2[0] == "node-b" && reps2[1] == "node-c");
+
+            // Re-adding "node-a" restores exact sorted tie-break
+            CHECK(cring.add_node("node-a", 1));
+            CHECK(cring.get_node("col_0", primary) && primary == "node-a");
+        } while (std::next_permutation(perm.begin(), perm.end()));
+
+        // Partial collision ("alpha" and "beta" collide; "gamma" and "delta" distinct)
+        ConsistentHash<std::string, PartialCollisionNodeHash> p1(12);
+        ConsistentHash<std::string, PartialCollisionNodeHash> p2(12);
+        CHECK(p1.add_node("alpha", 1));
+        CHECK(p1.add_node("beta", 1));
+        CHECK(p1.add_node("gamma", 2));
+        CHECK(p1.add_node("delta", 1));
+
+        CHECK(p2.add_node("delta", 1));
+        CHECK(p2.add_node("gamma", 2));
+        CHECK(p2.add_node("beta", 1));
+        CHECK(p2.add_node("alpha", 1));
+
+        CHECK(p1.vnode_count() == p2.vnode_count());
+        for (int k = 0; k < 200; ++k) {
+            const std::string key = "pcol_" + std::to_string(k);
+            std::string o1, o2;
+            CHECK(p1.get_node(key, o1) && p2.get_node(key, o2) && o1 == o2);
+            CHECK(p1.get_nodes(key, 4) == p2.get_nodes(key, 4));
+        }
+
+        // Default std::string ring insertion-order invariance
+        ConsistentHash<> d1(64);
+        ConsistentHash<> d2(64);
+        const std::vector<std::string> fwd = {"s0", "s1", "s2", "s3", "s4"};
+        const std::vector<std::string> rev = {"s4", "s2", "s0", "s3", "s1"};
+        for (std::size_t i = 0; i < fwd.size(); ++i) {
+            CHECK(d1.add_node(fwd[i], (i % 2) + 1));
+            const std::size_t orig_idx = static_cast<std::size_t>(rev[i][1] - '0');
+            CHECK(d2.add_node(rev[i], (orig_idx % 2) + 1));
+        }
+        for (int k = 0; k < 200; ++k) {
+            const std::string key = "inv_" + std::to_string(k);
+            std::string o1, o2;
+            CHECK(d1.get_node(key, o1) && d2.get_node(key, o2) && o1 == o2);
+            CHECK(d1.get_nodes(key, 3) == d2.get_nodes(key, 3));
+        }
+
+        // Custom Node type WITHOUT operator< (explicit custom Hash & KeyEqual)
+        ConsistentHash<UnorderedNode, UnorderedNodeHash, UnorderedNodeEq> ur(8);
+        CHECK(ur.add_node(UnorderedNode{1, 100}, 1));
+        CHECK(ur.add_node(UnorderedNode{2, 100}, 1)); // collides with id=1
+        CHECK(ur.add_node(UnorderedNode{3, 200}, 1));
+        CHECK(ur.node_count() == 3 && ur.vnode_count() == 24);
+        std::vector<UnorderedNode> u_reps = ur.get_nodes("ukey", 3);
+        CHECK(u_reps.size() == 3);
+        CHECK(ur.remove_node(UnorderedNode{1, 100}));
+        CHECK(ur.node_count() == 2 && ur.vnode_count() == 16);
+    }
+}
+
+
+void test_review_growth_and_remove_rollback() {
+    AhoCorasick matcher;
+    const std::string pattern = "duplicate-pattern";
+    std::size_t allocations = 0;
+    {
+        AllocFaultScope count_only(std::numeric_limits<std::size_t>::max());
+        for (int i = 0; i < 4096; ++i) {
+            matcher.add_pattern(pattern);
+        }
+        allocations = count_only.calls();
+    }
+    CHECK(allocations < 128);
+    matcher.build();
+    CHECK(matcher.find_all(pattern).size() == 4096);
+
+    struct CollisionHash {
+        std::size_t operator()(const std::string&) const { return 0; }
+    };
+    struct ThrowingEqual {
+        std::shared_ptr<int> remaining;
+        bool operator()(const std::string& a, const std::string& b) const {
+            if (*remaining == 0) throw std::runtime_error("injected equality failure");
+            if (*remaining > 0) --*remaining;
+            return a == b;
+        }
+    };
+    int failures = 0;
+    for (int fail_at = 0; fail_at < 16; ++fail_at) {
+        std::shared_ptr<int> remaining(new int(-1));
+        ConsistentHash<std::string, CollisionHash, ThrowingEqual> ring(
+            8, CollisionHash(), ThrowingEqual{remaining});
+        ring.add_node("a");
+        ring.add_node("b");
+        const std::vector<std::string> before = ring.get_nodes("lookup", 2);
+        *remaining = fail_at;
+        bool threw = false;
+        try { ring.remove_node("a"); }
+        catch (const std::runtime_error&) { threw = true; }
+        *remaining = -1;
+        if (threw) {
+            ++failures;
+            CHECK(ring.node_count() == 2 && ring.vnode_count() == 16);
+            CHECK(ring.get_nodes("lookup", 2) == before);
+            CHECK(ring.remove_node("a"));
+        }
+        CHECK(ring.node_count() == 1 && ring.vnode_count() == 8);
+        CHECK(!ring.contains_node("a") && ring.contains_node("b"));
+    }
+    CHECK(failures > 1);
+}
+
 } // namespace
 
 int main() {
@@ -976,6 +2053,11 @@ int main() {
     test_consistent_hash();
     test_token_bucket();
     test_double_buffer();
+    test_radix_alloc_safety();
+    test_aho_corasick_failure_states();
+    test_sharded_ttl_cache_extremes();
+    test_consistent_hash_hardening();
+    test_review_growth_and_remove_rollback();
     std::cout << "[PASS] test_search_and_ads_utils (" << g_checks.load()
               << " checks passed)" << std::endl;
     return 0;

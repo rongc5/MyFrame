@@ -92,6 +92,10 @@ bool aes_gcm_encrypt(const std::string& key,
                      std::string& out_tag,
                      const std::string& aad,
                      std::string* err) {
+    if (&out_ciphertext == &out_tag) {
+        return fail_out2(out_ciphertext, out_tag, err,
+                         "AES-GCM ciphertext and tag output references must be distinct");
+    }
     const EVP_CIPHER* cipher = aes_gcm_cipher(key.size());
     if (!cipher) {
         return fail_out2(out_ciphertext, out_tag, err, "AES key length must be 16, 24, or 32 bytes");

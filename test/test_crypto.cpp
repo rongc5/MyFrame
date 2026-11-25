@@ -109,13 +109,18 @@ void test_hash_and_hmac() {
     CHECK(!h.update("more")); // finalized until reset()
     CHECK(h.reset() && h.update("hello") && h.final_hex(hex) && hex == sha256_hex("hello"));
 
-    // File hashing
+    // File hashing (including in-place path/output aliasing)
     const std::string tmp_path = "/tmp/myframe_crypto_hash_test.bin";
     {
         std::ofstream ofs(tmp_path.c_str(), std::ios::binary);
         ofs << "abc";
     }
     CHECK(hash_file_hex(HashAlg::SHA256, tmp_path, hex) && hex == sha256_hex("abc"));
+    {
+        std::string alias_path = tmp_path;
+        CHECK(hash_file_hex(HashAlg::SHA256, alias_path, alias_path) &&
+              alias_path == sha256_hex("abc"));
+    }
     std::remove(tmp_path.c_str());
     CHECK(!hash_file_hex(HashAlg::SHA256, "/tmp/nonexistent_myframe_crypto_xyz", hex) && hex.empty());
 
@@ -128,6 +133,28 @@ void test_hash_and_hmac() {
         "9758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737";
     CHECK(hmac_sha256_hex(key, msg) == exp256);
     CHECK(hmac_sha512_hex(key, msg) == exp512);
+    // In-place aliasing for hmac_raw (&data == &out and &key == &out)
+    // and rejection of null pointers paired with positive lengths.
+    {
+        std::string alias_msg = msg;
+        CHECK(hmac_raw(HashAlg::SHA256, key, alias_msg, alias_msg) &&
+              hex_encode(alias_msg) == exp256);
+        std::string alias_key = key;
+        CHECK(hmac_raw(HashAlg::SHA256, alias_key, msg, alias_key) &&
+              hex_encode(alias_key) == exp256);
+
+        std::string stale = "stale-mac", hmac_err;
+        CHECK(!hmac_raw(HashAlg::SHA256, nullptr, 4, msg.data(), msg.size(), stale, &hmac_err));
+        CHECK(stale.empty() && !hmac_err.empty());
+        stale = "stale-mac";
+        hmac_err.clear();
+        CHECK(!hmac_raw(HashAlg::SHA256, key.data(), key.size(), nullptr, 4, stale, &hmac_err));
+        CHECK(stale.empty() && !hmac_err.empty());
+        // Zero-length null key/data remains allowed (matches empty key/data).
+        std::string empty_mac;
+        CHECK(hmac_raw(HashAlg::SHA256, nullptr, 0, nullptr, 0, empty_mac, &hmac_err) &&
+              hex_encode(empty_mac) == hmac_sha256_hex("", ""));
+    }
     CHECK(hmac_sha256_verify_hex(key, msg, exp256));
     CHECK(hmac_sha256_verify_hex(key, msg, hex_encode(from_hex(exp256), true))); // uppercase hex
     CHECK(!hmac_sha256_verify_hex(key, msg + "!", exp256));
@@ -242,11 +269,56 @@ void test_aes() {
         CHECK(aes_gcm_open_base64(key, b64, out, "empty-pt") && out.empty());
     }
 
-    // Reject bad key lengths & truncated sealed payloads
+    // Reject bad key lengths & truncated sealed payloads + two-output aliasing audit
     {
         std::string out, err;
         CHECK(!aes_gcm_seal("short-key", "hi", out, "", &err) && out.empty() && !err.empty());
         CHECK(!aes_gcm_open(std::string(32, 'K'), "too-short", out, "", &err) && out.empty());
+
+        std::string key(32, 'K'), nonce(12, 'N');
+        std::string pt = "explicit aes-gcm aliasing payload";
+        std::string aad = "explicit-aad";
+        std::string exp_ct, exp_tag;
+        CHECK(aes_gcm_encrypt(key, nonce, pt, exp_ct, exp_tag, aad, &err));
+
+        // Identical output references (&out_ciphertext == &out_tag) MUST fail explicitly
+        // and clear the output rather than succeeding with lost ciphertext.
+        std::string shared = "stale-output";
+        err.clear();
+        CHECK(!aes_gcm_encrypt(key, nonce, pt, shared, shared, aad, &err));
+        CHECK(shared.empty() && !err.empty());
+
+        // Failure with distinct pre-filled outputs clears both outputs.
+        std::string stale_ct = "stale-ct", stale_tag = "stale-tag";
+        CHECK(!aes_gcm_encrypt("bad-key", nonce, pt, stale_ct, stale_tag, aad, &err));
+        CHECK(stale_ct.empty() && stale_tag.empty());
+
+        // Input-output aliasing with distinct outputs remains supported.
+        std::string buf = pt, tag_out;
+        CHECK(aes_gcm_encrypt(key, nonce, buf, buf, tag_out, aad, &err));
+        CHECK(buf == exp_ct && tag_out == exp_tag);
+
+        std::string ct_out;
+        buf = pt;
+        CHECK(aes_gcm_encrypt(key, nonce, buf, ct_out, buf, aad, &err));
+        CHECK(ct_out == exp_ct && buf == exp_tag);
+
+        std::string k_alias = key, n_alias = nonce;
+        CHECK(aes_gcm_encrypt(k_alias, n_alias, pt, k_alias, n_alias, aad, &err));
+        CHECK(k_alias == exp_ct && n_alias == exp_tag);
+
+        std::string aad_alias = aad;
+        tag_out.clear();
+        CHECK(aes_gcm_encrypt(key, nonce, pt, aad_alias, tag_out, aad_alias, &err));
+        CHECK(aad_alias == exp_ct && tag_out == exp_tag);
+
+        // Decrypt input-output aliasing (&out_plaintext == &ciphertext / &tag / &key).
+        std::string dec = exp_ct;
+        CHECK(aes_gcm_decrypt(key, nonce, dec, exp_tag, dec, aad, &err) && dec == pt);
+        dec = exp_tag;
+        CHECK(aes_gcm_decrypt(key, nonce, exp_ct, dec, dec, aad, &err) && dec == pt);
+        dec = key;
+        CHECK(aes_gcm_decrypt(dec, nonce, exp_ct, exp_tag, dec, aad, &err) && dec == pt);
     }
 
     // AES-CBC (PKCS#7) round-trip + bad padding rejection + large 1 MiB payload
@@ -297,53 +369,149 @@ void test_aes() {
 void test_asym() {
     using namespace myframe::crypto;
 
-    // 1) RSA-2048 OAEP-SHA256 + PSS-SHA256
+    // 0) Identical output references (&out_private_pem == &out_public_pem) must fail
+    //    explicitly and clear the output rather than returning success with lost private key.
     {
-        std::string priv, pub, err;
-        CHECK(!generate_rsa_keypair(1024, priv, pub, &err)); // rejects weak key < 2048
-        CHECK(generate_rsa_keypair(2048, priv, pub, &err));
-        CHECK(priv.find("BEGIN PRIVATE KEY") != std::string::npos);
-        CHECK(pub.find("BEGIN PUBLIC KEY") != std::string::npos);
+        std::string shared = "stale-pem", err;
+        CHECK(!generate_rsa_keypair(2048, shared, shared, &err));
+        CHECK(shared.empty() && !err.empty());
 
+        shared = "stale-pem";
+        err.clear();
+        CHECK(!generate_ec_p256_keypair(shared, shared, &err));
+        CHECK(shared.empty() && !err.empty());
+
+        shared = "stale-pem";
+        err.clear();
+        CHECK(!generate_ed25519_keypair(shared, shared, &err));
+        CHECK(shared.empty() && !err.empty());
+    }
+
+    std::string rsa_priv, rsa_pub;
+    std::string ec_priv, ec_pub;
+    std::string ed_priv, ed_pub;
+
+    // 1) RSA-2048 OAEP-SHA256 + PSS-SHA256 (normal, in-place aliasing, failure clearing)
+    {
+        std::string err;
+        std::string stale_priv = "stale-priv", stale_pub = "stale-pub";
+        CHECK(!generate_rsa_keypair(1024, stale_priv, stale_pub, &err)); // rejects weak key < 2048
+        CHECK(stale_priv.empty() && stale_pub.empty() && !err.empty());
+
+        CHECK(generate_rsa_keypair(2048, rsa_priv, rsa_pub, &err));
+        CHECK(rsa_priv.find("BEGIN PRIVATE KEY") != std::string::npos);
+        CHECK(rsa_pub.find("BEGIN PUBLIC KEY") != std::string::npos);
+
+        // RSA-OAEP normal + tamper + in-place aliasing + empty plaintext
         std::string ct, pt;
-        CHECK(rsa_oaep_encrypt(pub, "top secret session key", ct, &err));
-        CHECK(rsa_oaep_decrypt(priv, ct, pt, &err) && pt == "top secret session key");
+        CHECK(rsa_oaep_encrypt(rsa_pub, "top secret session key", ct, &err));
+        CHECK(rsa_oaep_decrypt(rsa_priv, ct, pt, &err) && pt == "top secret session key");
+        std::string oaep_alias = "top secret session key";
+        CHECK(rsa_oaep_encrypt(rsa_pub, oaep_alias, oaep_alias, &err));
+        CHECK(rsa_oaep_decrypt(rsa_priv, oaep_alias, oaep_alias, &err) &&
+              oaep_alias == "top secret session key");
+        CHECK(rsa_oaep_encrypt(rsa_pub, "", ct, &err));
+        CHECK(rsa_oaep_decrypt(rsa_priv, ct, pt, &err) && pt.empty());
         ct[0] ^= 0xFF;
-        CHECK(!rsa_oaep_decrypt(priv, ct, pt, &err) && pt.empty());
+        pt = "stale-pt";
+        CHECK(!rsa_oaep_decrypt(rsa_priv, ct, pt, &err) && pt.empty());
 
+        // RSA-PSS normal vs in-place (&out_sig == &message and &out_sig == &private_pem)
+        const std::string msg = "signed rsa-pss payload";
         std::string sig;
-        CHECK(rsa_pss_sign(priv, "signed payload", sig, &err));
-        CHECK(rsa_pss_verify(pub, "signed payload", sig, &err));
-        CHECK(!rsa_pss_verify(pub, "tampered payload", sig, &err));
+        CHECK(rsa_pss_sign(rsa_priv, msg, sig, &err));
+        CHECK(rsa_pss_verify(rsa_pub, msg, sig, &err));
+        CHECK(!rsa_pss_verify(rsa_pub, "tampered payload", sig, &err));
+        CHECK(!rsa_pss_verify(rsa_pub, "", sig, &err));
         sig[0] ^= 0x01;
-        CHECK(!rsa_pss_verify(pub, "signed payload", sig, &err));
+        CHECK(!rsa_pss_verify(rsa_pub, msg, sig, &err));
+
+        std::string inplace_sig = msg;
+        CHECK(rsa_pss_sign(rsa_priv, inplace_sig, inplace_sig, &err));
+        CHECK(rsa_pss_verify(rsa_pub, msg, inplace_sig, &err));
+        CHECK(!rsa_pss_verify(rsa_pub, "", inplace_sig, &err));
+
+        std::string key_alias = rsa_priv;
+        CHECK(rsa_pss_sign(key_alias, msg, key_alias, &err));
+        CHECK(rsa_pss_verify(rsa_pub, msg, key_alias, &err));
+        CHECK(!rsa_pss_verify(rsa_pub, "", key_alias, &err));
+
+        // Failure clears pre-filled out_sig
+        std::string fail_sig = "stale-rsa-sig";
+        err.clear();
+        CHECK(!rsa_pss_sign("not-a-valid-pem", msg, fail_sig, &err));
+        CHECK(fail_sig.empty() && !err.empty());
     }
 
-    // 2) ECDSA P-256 (SHA-256)
+    // 2) ECDSA P-256 (SHA-256) (normal, in-place aliasing, failure clearing)
     {
-        std::string priv, pub, sig, err;
-        CHECK(generate_ec_p256_keypair(priv, pub, &err));
-        CHECK(ecdsa_sha256_sign(priv, "ecdsa message", sig, &err));
-        CHECK(ecdsa_sha256_verify(pub, "ecdsa message", sig, &err));
-        CHECK(!ecdsa_sha256_verify(pub, "ecdsa message!", sig, &err));
-        // Wrong key type rejected
-        std::string ct;
-        CHECK(!rsa_oaep_encrypt(pub, "x", ct, &err));
+        std::string sig, err;
+        CHECK(generate_ec_p256_keypair(ec_priv, ec_pub, &err));
+
+        const std::string msg = "ecdsa message";
+        CHECK(ecdsa_sha256_sign(ec_priv, msg, sig, &err));
+        CHECK(ecdsa_sha256_verify(ec_pub, msg, sig, &err));
+        CHECK(!ecdsa_sha256_verify(ec_pub, "ecdsa message!", sig, &err));
+        CHECK(!ecdsa_sha256_verify(ec_pub, "", sig, &err));
+
+        std::string inplace_sig = msg;
+        CHECK(ecdsa_sha256_sign(ec_priv, inplace_sig, inplace_sig, &err));
+        CHECK(ecdsa_sha256_verify(ec_pub, msg, inplace_sig, &err));
+        CHECK(!ecdsa_sha256_verify(ec_pub, "", inplace_sig, &err));
+
+        std::string key_alias = ec_priv;
+        CHECK(ecdsa_sha256_sign(key_alias, msg, key_alias, &err));
+        CHECK(ecdsa_sha256_verify(ec_pub, msg, key_alias, &err));
+        CHECK(!ecdsa_sha256_verify(ec_pub, "", key_alias, &err));
+
+        // Wrong key type rejected and clears pre-filled outputs
+        std::string ct = "stale-ct";
+        CHECK(!rsa_oaep_encrypt(ec_pub, "x", ct, &err) && ct.empty());
+        std::string fail_sig = "stale-ec-sig";
+        CHECK(!ecdsa_sha256_sign(rsa_priv, msg, fail_sig, &err) && fail_sig.empty());
+        fail_sig = "stale-ec-sig";
+        CHECK(!ecdsa_sha256_sign("bad-pem", msg, fail_sig, &err) && fail_sig.empty());
+        fail_sig = "stale-rsa-sig";
+        CHECK(!rsa_pss_sign(ec_priv, msg, fail_sig, &err) && fail_sig.empty());
     }
 
-    // 3) Ed25519
+    // 3) Ed25519 (normal, in-place aliasing, determinism, failure clearing)
     {
-        std::string priv, pub, sig, err;
-        CHECK(generate_ed25519_keypair(priv, pub, &err));
-        CHECK(ed25519_sign(priv, "ed25519 message", sig, &err));
+        std::string sig, err;
+        CHECK(generate_ed25519_keypair(ed_priv, ed_pub, &err));
+
+        const std::string msg = "ed25519 message";
+        CHECK(ed25519_sign(ed_priv, msg, sig, &err));
         CHECK(sig.size() == 64u);
-        CHECK(ed25519_verify(pub, "ed25519 message", sig, &err));
-        CHECK(!ed25519_verify(pub, "ed25519 message!", sig, &err));
+        CHECK(ed25519_verify(ed_pub, msg, sig, &err));
+        CHECK(!ed25519_verify(ed_pub, "ed25519 message!", sig, &err));
+        CHECK(!ed25519_verify(ed_pub, "", sig, &err));
+
+        // In-place &out_sig == &message produces the exact same deterministic Ed25519 signature
+        std::string inplace_sig = msg;
+        CHECK(ed25519_sign(ed_priv, inplace_sig, inplace_sig, &err));
+        CHECK(inplace_sig == sig);
+        CHECK(ed25519_verify(ed_pub, msg, inplace_sig, &err));
+        CHECK(!ed25519_verify(ed_pub, "", inplace_sig, &err));
+
+        // In-place &out_sig == &private_pem
+        std::string key_alias = ed_priv;
+        CHECK(ed25519_sign(key_alias, msg, key_alias, &err));
+        CHECK(key_alias == sig);
+        CHECK(ed25519_verify(ed_pub, msg, key_alias, &err));
+
         sig[63] ^= 0x80;
-        CHECK(!ed25519_verify(pub, "ed25519 message", sig, &err));
-        // Empty message supported
-        CHECK(ed25519_sign(priv, "", sig, &err));
-        CHECK(ed25519_verify(pub, "", sig, &err));
+        CHECK(!ed25519_verify(ed_pub, msg, sig, &err));
+
+        // Failure clears pre-filled out_sig
+        std::string fail_sig = "stale-ed-sig";
+        CHECK(!ed25519_sign(ec_priv, msg, fail_sig, &err) && fail_sig.empty());
+        fail_sig = "stale-ed-sig";
+        CHECK(!ed25519_sign("bad-pem", msg, fail_sig, &err) && fail_sig.empty());
+
+        // Empty message supported (including in-place empty string)
+        CHECK(ed25519_sign(ed_priv, "", sig, &err));
+        CHECK(ed25519_verify(ed_pub, "", sig, &err));
     }
 }
 

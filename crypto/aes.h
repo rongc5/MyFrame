@@ -44,6 +44,9 @@ bool aes_gcm_open_base64(const std::string& key,
 
 // ---------------------------------------------------------------------------
 // Explicit-parameter AES-GCM (for interop with external protocols & test vectors)
+// out_ciphertext and out_tag must be distinct references; passing identical
+// output references fails and clears the output. Input-output aliasing is
+// supported when output references are distinct.
 // ---------------------------------------------------------------------------
 bool aes_gcm_encrypt(const std::string& key,
                      const std::string& nonce,

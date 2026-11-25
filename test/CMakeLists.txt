@@ -172,8 +172,8 @@ if(TARGET test_crypto)
     set_tests_properties(crypto PROPERTIES TIMEOUT 60)
 endif()
 
-# Lock-free queues suite (SpscQueue + Vyukov MpmcQueue: unit, lifetime,
-# exception injection, SIZE_MAX wrap-around, and exact-accounting concurrency).
+# Concurrent ring queues suite (wait-free SpscQueue + mutex-free Vyukov MpmcQueue:
+# unit, lifetime, exception injection, SIZE_MAX wrap-around, exact-accounting concurrency).
 maybe_add_exe(test_lockfree_queue ${CMAKE_CURRENT_SOURCE_DIR}/test_lockfree_queue.cpp)
 if(TARGET test_lockfree_queue)
     target_compile_options(test_lockfree_queue PRIVATE -Wall -Wextra -Werror -Wpedantic -Wshadow)

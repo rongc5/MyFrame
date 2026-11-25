@@ -29,6 +29,22 @@ static void set_err(std::string* err, const std::string& msg) {
     if (err) *err = msg;
 }
 
+static bool fail_out(std::string& out, std::string* err, const std::string& msg) {
+    out.clear();
+    set_err(err, msg);
+    return false;
+}
+
+static bool fail_out2(std::string& out1,
+                      std::string& out2,
+                      std::string* err,
+                      const std::string& msg) {
+    out1.clear();
+    out2.clear();
+    set_err(err, msg);
+    return false;
+}
+
 static std::string last_openssl_error() {
     unsigned long code = ERR_get_error();
     if (code == 0) return "openssl asymmetric error";
@@ -80,22 +96,23 @@ static bool export_keypair_pem(EVP_PKEY* pkey,
                                std::string& out_private_pem,
                                std::string& out_public_pem,
                                std::string* err) {
-    out_private_pem.clear();
-    out_public_pem.clear();
+    if (&out_private_pem == &out_public_pem) {
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "output private and public PEM references must be distinct");
+    }
 
     BioPtr priv_bio(BIO_new(BIO_s_mem()));
     BioPtr pub_bio(BIO_new(BIO_s_mem()));
     if (!priv_bio || !pub_bio) {
-        set_err(err, "BIO_new failed");
-        return false;
+        return fail_out2(out_private_pem, out_public_pem, err, "BIO_new failed");
     }
     if (PEM_write_bio_PKCS8PrivateKey(priv_bio.get(), pkey, nullptr, nullptr, 0, nullptr, nullptr) != 1) {
-        set_err(err, "PEM_write_bio_PKCS8PrivateKey failed: " + last_openssl_error());
-        return false;
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "PEM_write_bio_PKCS8PrivateKey failed: " + last_openssl_error());
     }
     if (PEM_write_bio_PUBKEY(pub_bio.get(), pkey) != 1) {
-        set_err(err, "PEM_write_bio_PUBKEY failed: " + last_openssl_error());
-        return false;
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "PEM_write_bio_PUBKEY failed: " + last_openssl_error());
     }
 
     char* priv_data = nullptr;
@@ -103,12 +120,13 @@ static bool export_keypair_pem(EVP_PKEY* pkey,
     char* pub_data = nullptr;
     long pub_len = BIO_get_mem_data(pub_bio.get(), &pub_data);
     if (priv_len <= 0 || !priv_data || pub_len <= 0 || !pub_data) {
-        set_err(err, "failed to read exported PEM data");
-        return false;
+        return fail_out2(out_private_pem, out_public_pem, err, "failed to read exported PEM data");
     }
 
-    out_private_pem.assign(priv_data, static_cast<std::size_t>(priv_len));
-    out_public_pem.assign(pub_data, static_cast<std::size_t>(pub_len));
+    std::string priv_pem(priv_data, static_cast<std::size_t>(priv_len));
+    std::string pub_pem(pub_data, static_cast<std::size_t>(pub_len));
+    out_private_pem.swap(priv_pem);
+    out_public_pem.swap(pub_pem);
     return true;
 }
 
@@ -118,23 +136,25 @@ bool generate_rsa_keypair(int bits,
                           std::string& out_private_pem,
                           std::string& out_public_pem,
                           std::string* err) {
-    out_private_pem.clear();
-    out_public_pem.clear();
+    if (&out_private_pem == &out_public_pem) {
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "output private and public PEM references must be distinct");
+    }
     if (bits < 2048 || bits > 8192) {
-        set_err(err, "RSA key size must be in [2048, 8192] bits");
-        return false;
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "RSA key size must be in [2048, 8192] bits");
     }
     PkeyCtxPtr kctx(EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr));
     if (!kctx ||
         EVP_PKEY_keygen_init(kctx.get()) <= 0 ||
         EVP_PKEY_CTX_set_rsa_keygen_bits(kctx.get(), bits) <= 0) {
-        set_err(err, "RSA keygen init failed: " + last_openssl_error());
-        return false;
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "RSA keygen init failed: " + last_openssl_error());
     }
     EVP_PKEY* raw_key = nullptr;
     if (EVP_PKEY_keygen(kctx.get(), &raw_key) <= 0 || !raw_key) {
-        set_err(err, "RSA keygen failed: " + last_openssl_error());
-        return false;
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "RSA keygen failed: " + last_openssl_error());
     }
     PkeyPtr key(raw_key);
     return export_keypair_pem(key.get(), out_private_pem, out_public_pem, err);
@@ -143,19 +163,21 @@ bool generate_rsa_keypair(int bits,
 bool generate_ec_p256_keypair(std::string& out_private_pem,
                               std::string& out_public_pem,
                               std::string* err) {
-    out_private_pem.clear();
-    out_public_pem.clear();
+    if (&out_private_pem == &out_public_pem) {
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "output private and public PEM references must be distinct");
+    }
     PkeyCtxPtr kctx(EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr));
     if (!kctx ||
         EVP_PKEY_keygen_init(kctx.get()) <= 0 ||
         EVP_PKEY_CTX_set_ec_paramgen_curve_nid(kctx.get(), NID_X9_62_prime256v1) <= 0) {
-        set_err(err, "EC P-256 keygen init failed: " + last_openssl_error());
-        return false;
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "EC P-256 keygen init failed: " + last_openssl_error());
     }
     EVP_PKEY* raw_key = nullptr;
     if (EVP_PKEY_keygen(kctx.get(), &raw_key) <= 0 || !raw_key) {
-        set_err(err, "EC P-256 keygen failed: " + last_openssl_error());
-        return false;
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "EC P-256 keygen failed: " + last_openssl_error());
     }
     PkeyPtr key(raw_key);
     return export_keypair_pem(key.get(), out_private_pem, out_public_pem, err);
@@ -164,24 +186,26 @@ bool generate_ec_p256_keypair(std::string& out_private_pem,
 bool generate_ed25519_keypair(std::string& out_private_pem,
                               std::string& out_public_pem,
                               std::string* err) {
-    out_private_pem.clear();
-    out_public_pem.clear();
+    if (&out_private_pem == &out_public_pem) {
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "output private and public PEM references must be distinct");
+    }
 #ifdef EVP_PKEY_ED25519
     PkeyCtxPtr kctx(EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr));
     if (!kctx || EVP_PKEY_keygen_init(kctx.get()) <= 0) {
-        set_err(err, "Ed25519 keygen init failed: " + last_openssl_error());
-        return false;
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "Ed25519 keygen init failed: " + last_openssl_error());
     }
     EVP_PKEY* raw_key = nullptr;
     if (EVP_PKEY_keygen(kctx.get(), &raw_key) <= 0 || !raw_key) {
-        set_err(err, "Ed25519 keygen failed: " + last_openssl_error());
-        return false;
+        return fail_out2(out_private_pem, out_public_pem, err,
+                         "Ed25519 keygen failed: " + last_openssl_error());
     }
     PkeyPtr key(raw_key);
     return export_keypair_pem(key.get(), out_private_pem, out_public_pem, err);
 #else
-    set_err(err, "Ed25519 is not supported by this OpenSSL version");
-    return false;
+    return fail_out2(out_private_pem, out_public_pem, err,
+                     "Ed25519 is not supported by this OpenSSL version");
 #endif
 }
 
@@ -277,12 +301,13 @@ bool rsa_pss_sign(const std::string& private_pem,
                   const std::string& message,
                   std::string& out_sig,
                   std::string* err) {
-    out_sig.clear();
     PkeyPtr key = load_private_pem(private_pem, err);
-    if (!key) return false;
-    if (EVP_PKEY_base_id(key.get()) != EVP_PKEY_RSA) {
-        set_err(err, "expected an RSA private key");
+    if (!key) {
+        out_sig.clear();
         return false;
+    }
+    if (EVP_PKEY_base_id(key.get()) != EVP_PKEY_RSA) {
+        return fail_out(out_sig, err, "expected an RSA private key");
     }
     MdCtxPtr mctx(EVP_MD_CTX_new());
     EVP_PKEY_CTX* pctx = nullptr;
@@ -291,22 +316,18 @@ bool rsa_pss_sign(const std::string& private_pem,
         EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) <= 0 ||
         EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, RSA_PSS_SALTLEN_DIGEST) <= 0 ||
         EVP_PKEY_CTX_set_rsa_mgf1_md(pctx, EVP_sha256()) <= 0) {
-        set_err(err, "RSA-PSS sign init failed: " + last_openssl_error());
-        return false;
+        return fail_out(out_sig, err, "RSA-PSS sign init failed: " + last_openssl_error());
     }
     if (!message.empty() && EVP_DigestSignUpdate(mctx.get(), message.data(), message.size()) != 1) {
-        set_err(err, "RSA-PSS sign update failed: " + last_openssl_error());
-        return false;
+        return fail_out(out_sig, err, "RSA-PSS sign update failed: " + last_openssl_error());
     }
     std::size_t sig_len = 0;
-    if (EVP_DigestSignFinal(mctx.get(), nullptr, &sig_len) != 1) {
-        set_err(err, "RSA-PSS sign size query failed: " + last_openssl_error());
-        return false;
+    if (EVP_DigestSignFinal(mctx.get(), nullptr, &sig_len) != 1 || sig_len == 0) {
+        return fail_out(out_sig, err, "RSA-PSS sign size query failed: " + last_openssl_error());
     }
     std::string sig(sig_len, '\0');
     if (EVP_DigestSignFinal(mctx.get(), reinterpret_cast<unsigned char*>(&sig[0]), &sig_len) != 1) {
-        set_err(err, "RSA-PSS sign final failed: " + last_openssl_error());
-        return false;
+        return fail_out(out_sig, err, "RSA-PSS sign final failed: " + last_openssl_error());
     }
     sig.resize(sig_len);
     out_sig.swap(sig);
@@ -355,31 +376,28 @@ bool ecdsa_sha256_sign(const std::string& private_pem,
                        const std::string& message,
                        std::string& out_sig,
                        std::string* err) {
-    out_sig.clear();
     PkeyPtr key = load_private_pem(private_pem, err);
-    if (!key) return false;
-    if (EVP_PKEY_base_id(key.get()) != EVP_PKEY_EC) {
-        set_err(err, "expected an EC private key");
+    if (!key) {
+        out_sig.clear();
         return false;
+    }
+    if (EVP_PKEY_base_id(key.get()) != EVP_PKEY_EC) {
+        return fail_out(out_sig, err, "expected an EC private key");
     }
     MdCtxPtr mctx(EVP_MD_CTX_new());
     if (!mctx || EVP_DigestSignInit(mctx.get(), nullptr, EVP_sha256(), nullptr, key.get()) != 1) {
-        set_err(err, "ECDSA sign init failed: " + last_openssl_error());
-        return false;
+        return fail_out(out_sig, err, "ECDSA sign init failed: " + last_openssl_error());
     }
     if (!message.empty() && EVP_DigestSignUpdate(mctx.get(), message.data(), message.size()) != 1) {
-        set_err(err, "ECDSA sign update failed: " + last_openssl_error());
-        return false;
+        return fail_out(out_sig, err, "ECDSA sign update failed: " + last_openssl_error());
     }
     std::size_t sig_len = 0;
-    if (EVP_DigestSignFinal(mctx.get(), nullptr, &sig_len) != 1) {
-        set_err(err, "ECDSA sign size query failed: " + last_openssl_error());
-        return false;
+    if (EVP_DigestSignFinal(mctx.get(), nullptr, &sig_len) != 1 || sig_len == 0) {
+        return fail_out(out_sig, err, "ECDSA sign size query failed: " + last_openssl_error());
     }
     std::string sig(sig_len, '\0');
     if (EVP_DigestSignFinal(mctx.get(), reinterpret_cast<unsigned char*>(&sig[0]), &sig_len) != 1) {
-        set_err(err, "ECDSA sign final failed: " + last_openssl_error());
-        return false;
+        return fail_out(out_sig, err, "ECDSA sign final failed: " + last_openssl_error());
     }
     sig.resize(sig_len);
     out_sig.swap(sig);
@@ -423,40 +441,37 @@ bool ed25519_sign(const std::string& private_pem,
                   const std::string& message,
                   std::string& out_sig,
                   std::string* err) {
-    out_sig.clear();
 #ifdef EVP_PKEY_ED25519
     PkeyPtr key = load_private_pem(private_pem, err);
-    if (!key) return false;
-    if (EVP_PKEY_base_id(key.get()) != EVP_PKEY_ED25519) {
-        set_err(err, "expected an Ed25519 private key");
+    if (!key) {
+        out_sig.clear();
         return false;
+    }
+    if (EVP_PKEY_base_id(key.get()) != EVP_PKEY_ED25519) {
+        return fail_out(out_sig, err, "expected an Ed25519 private key");
     }
     MdCtxPtr mctx(EVP_MD_CTX_new());
     if (!mctx || EVP_DigestSignInit(mctx.get(), nullptr, nullptr, nullptr, key.get()) != 1) {
-        set_err(err, "Ed25519 sign init failed: " + last_openssl_error());
-        return false;
+        return fail_out(out_sig, err, "Ed25519 sign init failed: " + last_openssl_error());
     }
     static const unsigned char kEmpty = 0;
     const unsigned char* msg = message.empty()
         ? &kEmpty : reinterpret_cast<const unsigned char*>(message.data());
     std::size_t sig_len = 0;
-    if (EVP_DigestSign(mctx.get(), nullptr, &sig_len, msg, message.size()) != 1) {
-        set_err(err, "Ed25519 sign size query failed: " + last_openssl_error());
-        return false;
+    if (EVP_DigestSign(mctx.get(), nullptr, &sig_len, msg, message.size()) != 1 || sig_len == 0) {
+        return fail_out(out_sig, err, "Ed25519 sign size query failed: " + last_openssl_error());
     }
     std::string sig(sig_len, '\0');
     if (EVP_DigestSign(mctx.get(), reinterpret_cast<unsigned char*>(&sig[0]),
                        &sig_len, msg, message.size()) != 1) {
-        set_err(err, "Ed25519 sign failed: " + last_openssl_error());
-        return false;
+        return fail_out(out_sig, err, "Ed25519 sign failed: " + last_openssl_error());
     }
     sig.resize(sig_len);
     out_sig.swap(sig);
     return true;
 #else
     (void)private_pem; (void)message;
-    set_err(err, "Ed25519 is not supported by this OpenSSL version");
-    return false;
+    return fail_out(out_sig, err, "Ed25519 is not supported by this OpenSSL version");
 #endif
 }
 

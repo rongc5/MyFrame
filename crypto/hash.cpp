@@ -39,9 +39,10 @@ static void set_err(std::string* err, const std::string& msg) {
 
 Hasher::Hasher(HashAlg alg)
     : _alg(alg), _ctx(nullptr), _valid(false), _finalized(false) {
-    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     const EVP_MD* md = to_evp_md(alg);
-    if (ctx && md && EVP_DigestInit_ex(ctx, md, nullptr) == 1) {
+    if (!md) return;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (ctx && EVP_DigestInit_ex(ctx, md, nullptr) == 1) {
         _ctx = ctx;
         _valid = true;
     } else if (ctx) {
@@ -76,8 +77,8 @@ bool Hasher::update(const void* data, std::size_t len) {
 }
 
 bool Hasher::final_raw(std::string& out, std::string* err) {
-    out.clear();
     if (!_valid || _finalized || !_ctx) {
+        out.clear();
         set_err(err, "hasher is not in an active state");
         return false;
     }
@@ -85,11 +86,13 @@ bool Hasher::final_raw(std::string& out, std::string* err) {
     unsigned int digest_len = 0;
     if (EVP_DigestFinal_ex(static_cast<EVP_MD_CTX*>(_ctx), digest, &digest_len) != 1) {
         _valid = false;
+        out.clear();
         set_err(err, "EVP_DigestFinal_ex failed: " + last_openssl_error());
         return false;
     }
     _finalized = true;
-    out.assign(reinterpret_cast<const char*>(digest), digest_len);
+    std::string tmp(reinterpret_cast<const char*>(digest), digest_len);
+    out.swap(tmp);
     return true;
 }
 
@@ -104,6 +107,16 @@ bool Hasher::final_hex(std::string& out, std::string* err) {
 }
 
 bool hash_raw(HashAlg alg, const void* data, std::size_t len, std::string& out, std::string* err) {
+    if (!to_evp_md(alg)) {
+        out.clear();
+        set_err(err, "failed to initialize digest context");
+        return false;
+    }
+    if (len > 0 && !data) {
+        out.clear();
+        set_err(err, "digest data pointer is null with non-zero length");
+        return false;
+    }
     Hasher h(alg);
     if (!h.ok()) {
         out.clear();
@@ -115,7 +128,13 @@ bool hash_raw(HashAlg alg, const void* data, std::size_t len, std::string& out, 
         set_err(err, "EVP_DigestUpdate failed");
         return false;
     }
-    return h.final_raw(out, err);
+    std::string tmp;
+    if (!h.final_raw(tmp, err)) {
+        out.clear();
+        return false;
+    }
+    out.swap(tmp);
+    return true;
 }
 
 bool hash_hex(HashAlg alg, const void* data, std::size_t len, std::string& out, std::string* err) {
@@ -129,15 +148,16 @@ bool hash_hex(HashAlg alg, const void* data, std::size_t len, std::string& out, 
 }
 
 bool hash_file_raw(HashAlg alg, const std::string& path, std::string& out, std::string* err) {
-    out.clear();
-    std::ifstream ifs(path.c_str(), std::ios::binary);
-    if (!ifs.is_open()) {
-        set_err(err, "failed to open file: " + path);
-        return false;
-    }
     Hasher h(alg);
     if (!h.ok()) {
         set_err(err, "failed to initialize digest context");
+        out.clear();
+        return false;
+    }
+    std::ifstream ifs(path.c_str(), std::ios::binary);
+    if (!ifs.is_open()) {
+        set_err(err, "failed to open file: " + path);
+        out.clear();
         return false;
     }
     char buf[16384];
@@ -146,14 +166,22 @@ bool hash_file_raw(HashAlg alg, const std::string& path, std::string& out, std::
         std::streamsize n = ifs.gcount();
         if (n > 0 && !h.update(buf, static_cast<std::size_t>(n))) {
             set_err(err, "digest update failed");
+            out.clear();
             return false;
         }
     }
-    if (!ifs.eof() && ifs.fail()) {
+    if (ifs.bad() || (!ifs.eof() && ifs.fail())) {
         set_err(err, "failed reading file: " + path);
+        out.clear();
         return false;
     }
-    return h.final_raw(out, err);
+    std::string tmp;
+    if (!h.final_raw(tmp, err)) {
+        out.clear();
+        return false;
+    }
+    out.swap(tmp);
+    return true;
 }
 
 bool hash_file_hex(HashAlg alg, const std::string& path, std::string& out, std::string* err) {
@@ -199,29 +227,45 @@ std::string md5_hex(const void* data, std::size_t len) {
 bool hmac_raw(HashAlg alg, const void* key, std::size_t key_len,
               const void* data, std::size_t data_len,
               std::string& out, std::string* err) {
-    out.clear();
     const EVP_MD* md = to_evp_md(alg);
     if (!md) {
+        out.clear();
         set_err(err, "unsupported HMAC hash algorithm");
         return false;
     }
+    if (key_len > 0 && !key) {
+        out.clear();
+        set_err(err, "HMAC key pointer is null with non-zero length");
+        return false;
+    }
+    if (data_len > 0 && !data) {
+        out.clear();
+        set_err(err, "HMAC data pointer is null with non-zero length");
+        return false;
+    }
     if (key_len > static_cast<std::size_t>(INT_MAX)) {
+        out.clear();
         set_err(err, "HMAC key length exceeds INT_MAX");
         return false;
     }
+
     static const unsigned char kEmpty = 0;
-    const void* kptr = (key_len > 0 && key) ? key : static_cast<const void*>(&kEmpty);
-    const unsigned char* dptr = (data_len > 0 && data)
+    const void* kptr = (key_len > 0) ? key : static_cast<const void*>(&kEmpty);
+    const unsigned char* dptr = (data_len > 0)
         ? static_cast<const unsigned char*>(data) : &kEmpty;
 
     unsigned char mac[EVP_MAX_MD_SIZE];
     unsigned int mac_len = 0;
     if (!HMAC(md, kptr, static_cast<int>(key_len), dptr, data_len, mac, &mac_len)) {
+        secure_zero(mac, sizeof(mac));
+        out.clear();
         set_err(err, "HMAC failed: " + last_openssl_error());
         return false;
     }
-    out.assign(reinterpret_cast<const char*>(mac), mac_len);
+    std::string tmp(reinterpret_cast<const char*>(mac), mac_len);
     secure_zero(mac, sizeof(mac));
+    out.swap(tmp);
+    secure_zero(tmp);
     return true;
 }
 

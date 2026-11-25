@@ -7,6 +7,9 @@ namespace crypto {
 
 // PEM keypair generation (PKCS#8 Private Key + X.509 SubjectPublicKeyInfo Public Key).
 // RSA requires bits >= 2048.
+// On any error, output strings are cleared and false is returned.
+// Keypair generators require distinct output references (&out_private_pem != &out_public_pem).
+// Single-output encrypt/decrypt/sign APIs support input-output aliasing.
 bool generate_rsa_keypair(int bits,
                           std::string& out_private_pem,
                           std::string& out_public_pem,

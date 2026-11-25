@@ -213,6 +213,19 @@ void test_accept_emfile() {
     unsigned short port = bound_port(listen_fd);
     CHECK(th.start());
 
+    // Prime the control-block vptr checks used by the EMFILE retry timer.
+    // A cold UBSan vptr check probes memory with pipe2(), which itself fails
+    // when this test exhausts descriptors and falsely reports an invalid vptr.
+    // Keep all sanitizer checks enabled and exercise the full control-block
+    // lifecycle before exhausting FDs. The actual accept/backoff/recovery path
+    // below still runs with no descriptors available.
+    {
+        std::shared_ptr<timer_msg> warmup(new timer_msg);
+        std::shared_ptr<timer_msg> copy = warmup;
+        copy.reset();
+        warmup.reset();
+    }
+
     rlimit original{};
     CHECK(::getrlimit(RLIMIT_NOFILE, &original) == 0);
     rlimit lowered = original;
