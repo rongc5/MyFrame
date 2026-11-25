@@ -111,6 +111,8 @@ size_t BinaryApplicationAdapter::parse_tlv_message() {
 void BinaryApplicationAdapter::send_binary_response(
     uint32_t proto_id,
     const std::vector<uint8_t>& data) {
+    if (data.size() > kMaxBinaryFrameLen)
+        THROW_COMMON_EXCEPT("outbound binary payload exceeds frame limit");
     std::string frame;
     frame.reserve(8 + data.size());
 

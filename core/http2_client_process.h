@@ -39,7 +39,7 @@ private:
 
     // parsing helpers
     bool parse_frames();
-    bool handle_headers_payload(const unsigned char* p, uint32_t len, uint8_t flags);
+    bool decode_response_headers();
 
     void notify_done();
 
@@ -53,6 +53,8 @@ private:
     std::string _resp_body;
     bool _response_done{false};
     bool _headers_end_stream{false};
+    bool _awaiting_continuation{false};
+    std::string _header_block;
 
     // Debug/trace knob
     bool _trace{false};

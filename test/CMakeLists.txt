@@ -10,6 +10,24 @@ include_directories(
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 
+# Generate a throwaway localhost identity shared by the TLS test targets.
+set(TEST_TLS_DIR "${CMAKE_CURRENT_BINARY_DIR}/certs")
+set(TEST_TLS_CERT "${TEST_TLS_DIR}/server.crt")
+set(TEST_TLS_KEY "${TEST_TLS_DIR}/server.key")
+add_custom_command(OUTPUT "${TEST_TLS_CERT}" "${TEST_TLS_KEY}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${TEST_TLS_DIR}"
+    COMMAND openssl req -x509 -newkey rsa:2048 -nodes
+            -keyout "${TEST_TLS_KEY}" -out "${TEST_TLS_CERT}"
+            -days 30 -subj /CN=localhost
+    VERBATIM)
+add_custom_target(myframe_test_certs DEPENDS "${TEST_TLS_CERT}" "${TEST_TLS_KEY}")
+
+function(use_test_tls target)
+    add_dependencies(${target} myframe_test_certs)
+    target_compile_definitions(${target} PRIVATE
+        MYFRAME_TEST_CERT="${TEST_TLS_CERT}" MYFRAME_TEST_KEY="${TEST_TLS_KEY}")
+endfunction()
+
 # Helper to add executable if source exists (CMake 2.8 compatible)
 function(maybe_add_exe name src)
     if (EXISTS "${src}")
@@ -41,9 +59,7 @@ if(TARGET test_http_head)
 endif()
 maybe_add_exe(test_https_head ${CMAKE_CURRENT_SOURCE_DIR}/test_https_head.cpp)
 if(TARGET test_https_head)
-    target_compile_definitions(test_https_head PRIVATE
-        MYFRAME_TEST_CERT="${CMAKE_SOURCE_DIR}/test_certs/server.crt"
-        MYFRAME_TEST_KEY="${CMAKE_SOURCE_DIR}/test_certs/server.key")
+    use_test_tls(test_https_head)
     add_test(NAME https_head COMMAND test_https_head)
     set_tests_properties(https_head PROPERTIES TIMEOUT 30)
 endif()
@@ -133,9 +149,7 @@ endif()
 # Large-transfer, TLS, header-guard and concurrency stress regression.
 maybe_add_exe(test_large_transfer_and_stress ${CMAKE_CURRENT_SOURCE_DIR}/test_large_transfer_and_stress.cpp)
 if(TARGET test_large_transfer_and_stress)
-    target_compile_definitions(test_large_transfer_and_stress PRIVATE
-        MYFRAME_TEST_CERT="${CMAKE_SOURCE_DIR}/test_certs/server.crt"
-        MYFRAME_TEST_KEY="${CMAKE_SOURCE_DIR}/test_certs/server.key")
+    use_test_tls(test_large_transfer_and_stress)
     add_test(NAME large_transfer_and_stress COMMAND test_large_transfer_and_stress)
     set_tests_properties(large_transfer_and_stress PROPERTIES TIMEOUT 180)
 endif()
@@ -145,9 +159,7 @@ endif()
 # hardening, TLS protocol range, HTTP/2 split frames, event-loop mutation).
 maybe_add_exe(test_security_and_framing ${CMAKE_CURRENT_SOURCE_DIR}/test_security_and_framing.cpp)
 if(TARGET test_security_and_framing)
-    target_compile_definitions(test_security_and_framing PRIVATE
-        MYFRAME_TEST_CERT="${CMAKE_SOURCE_DIR}/test_certs/server.crt"
-        MYFRAME_TEST_KEY="${CMAKE_SOURCE_DIR}/test_certs/server.key")
+    use_test_tls(test_security_and_framing)
     add_test(NAME security_and_framing COMMAND test_security_and_framing)
     set_tests_properties(security_and_framing PROPERTIES TIMEOUT 120)
 endif()

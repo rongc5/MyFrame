@@ -129,14 +129,14 @@ size_t http_req_process::process_recv_body(const char *buf, size_t len, int &res
         _recv_type = CHUNK_TYPE;
         ret = get_chuncked(buf, len, result);				
     }
-    else if (content_length)
+    else if (tmp_str)
     {
         _recv_type = CONTENT_LENGTH_TYPE;
-        size_t remain = _recv_body_length >= content_length
-            ? 0 : static_cast<size_t>(content_length - _recv_body_length);
-        size_t take = len < remain ? len : remain;
+        uint64_t remain = _recv_body_length >= content_length
+            ? 0 : content_length - _recv_body_length;
+        size_t take = static_cast<size_t>(std::min<uint64_t>(len, remain));
         int data_result = 0;
-        ret = _data_process->process_recv_body(buf, take, data_result);
+        if (take) ret = std::min(take, _data_process->process_recv_body(buf, take, data_result));
         _recv_body_length += ret;
         result = _recv_body_length >= content_length ? 1 : 0;
     }

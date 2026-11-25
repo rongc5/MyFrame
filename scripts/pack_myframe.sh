@@ -56,7 +56,7 @@ tar -C "$PARENT_DIR" -czf "$OUT_PATH" \
   --exclude="$BASE_DIR/**/*.so" \
   --exclude="$BASE_DIR/**/*.so.*" \
   --exclude="$BASE_DIR/**/*.log" \
-  --exclude="$BASE_DIR/**/core" \
+  --exclude-from=<(cd "$PARENT_DIR" && find "$BASE_DIR" -type f -name core -print) \
   --exclude="$BASE_DIR/**/*.core" \
   --exclude="$BASE_DIR/**/log" \
   --exclude="$BASE_DIR/**/logs" \

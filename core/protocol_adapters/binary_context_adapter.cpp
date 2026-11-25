@@ -46,6 +46,8 @@ size_t BinaryContextImpl::payload_size() const {
 }
 
 void BinaryContextImpl::send(uint32_t proto_id, const void* data, size_t len) {
+    if (len > BinaryContextAdapter::kMaxBinaryContextFrameLen)
+        THROW_COMMON_EXCEPT("outbound binary context payload exceeds frame limit");
     auto c = _conn.lock();
     if (_slow_consumer.load(std::memory_order_acquire)) {
         myframe::detail::note_dropped(OutboundKind::Stream, len);
@@ -55,7 +57,7 @@ void BinaryContextImpl::send(uint32_t proto_id, const void* data, size_t len) {
     {
         std::lock_guard<std::mutex> lk(_pending_mutex);
         size_t queued = _pending_bytes.load(std::memory_order_relaxed);
-        if (queued != 0 && queued + len > limit) {
+        if (queued != 0 && (queued > limit || len > limit - queued)) {
             // Slow consumer: drop and close cleanly on the owner thread.
             myframe::detail::note_dropped(OutboundKind::Stream, len);
             if (!_slow_consumer.exchange(true, std::memory_order_acq_rel)) {
@@ -66,7 +68,7 @@ void BinaryContextImpl::send(uint32_t proto_id, const void* data, size_t len) {
         }
         PendingMessage msg;
         msg.proto_id = proto_id;
-        msg.data.assign(static_cast<const char*>(data), len);
+        if (len) msg.data.assign(static_cast<const char*>(data), len);
         _pending_queue.push(std::move(msg));
         _pending_bytes.fetch_add(len, std::memory_order_relaxed);
     }
@@ -261,7 +263,7 @@ std::string* BinaryContextAdapter::get_send_buf() {
     uint32_t net_proto_id = htonl(proto_id);
     uint32_t net_data_len = htonl(data_len);
     std::string* frame = new std::string;
-    frame->resize(8 + data_len);
+    frame->resize(8 + data.size());
     char* raw = frame->empty() ? nullptr : &(*frame)[0];
 
     std::memcpy(raw, &net_proto_id, sizeof(uint32_t));

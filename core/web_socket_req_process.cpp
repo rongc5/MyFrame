@@ -42,9 +42,10 @@ std::string* web_socket_req_process::SEND_WB_INIT_STAUTS_PROCESS()
 
 size_t web_socket_req_process::RECV_WB_HEAD_FINISH_PROCESS(const char *buf, const size_t len)
 {
+    const size_t previous = _recv_header.size();
     _recv_header.append(buf, len);
-    check_head_finish();
-    return len; 
+    if (!check_head_finish()) return len;
+    return _recv_header.size() - previous;
 }
 
 size_t web_socket_req_process::RECV_WB_INIT_STAUTS_PROCESS(const char *buf, const size_t len)

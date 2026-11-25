@@ -45,9 +45,7 @@ class http_res_process:public http_base_process
 		// the business layer.
 		size_t process_chunked(const char *buf, size_t len, int &result);
 
-		// Effective cap for a decoded request body (min of the chunked cap
-		// and myframe::max_http_body_bytes()).
-		static uint64_t body_limit();
+        static uint64_t body_limit();
 
     protected:
 		enum BOUNDARY_STATUS
@@ -80,9 +78,9 @@ class http_res_process:public http_base_process
 		uint64_t    _chunked_total;      // decoded bytes so far (bounded)
 };
 
-// Chunked safety limits: total decoded body size and single line length
-// (chunk-size lines and trailer lines).
-#define MAX_CHUNKED_BODY_LEN (8u * 1024u * 1024u)
+// Legacy default. Runtime policy for both body encodings is max_http_body_bytes().
+#define MAX_CHUNKED_BODY_LEN (16u * 1024u * 1024u)
+// Maximum chunk-size or trailer line length.
 #define MAX_CHUNK_LINE_LEN   8192u
 
 

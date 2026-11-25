@@ -108,7 +108,8 @@ enum HTTP_STATUS
     RECV_HEAD = 0,
     RECV_BODY = 1,
     SEND_HEAD = 2,
-    SEND_BODY = 3
+    SEND_BODY = 3,
+    WAIT_RESPONSE = 4
 };
 
 struct http_response_code

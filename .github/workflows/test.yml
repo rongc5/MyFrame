@@ -2,9 +2,9 @@ name: MyFrame Tests
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ master, main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ master, main ]
 
 jobs:
   test:
@@ -16,16 +16,17 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libssl-dev build-essential
+        sudo apt-get install -y libssl-dev openssl build-essential
     
     - name: Run test suite
       run: |
-        cd tests
-        bash run_all.sh
+        cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Release
+        cmake --build build-ci --parallel 2
+        ctest --test-dir build-ci --output-on-failure
     
     - name: Upload test results
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: test-results
-        path: tests/_build/
+        path: build-ci/Testing/Temporary/LastTest.log

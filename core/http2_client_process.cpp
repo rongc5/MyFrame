@@ -1,5 +1,6 @@
 #include "http2_client_process.h"
 #include "http2_frame.h"
+#include "common_exception.h"
 #include "base_thread.h"
 #include "base_net_obj.h"
 #include <iostream>
@@ -165,15 +166,9 @@ static int h2_static_status(uint32_t idx) {
     }
 }
 
-bool http2_client_process::handle_headers_payload(const unsigned char* p, uint32_t len, uint8_t flags) {
-    uint8_t pad_len = 0; const unsigned char* pp = p; const unsigned char* pe = p + len;
-    if (flags & 0x08 /*PADDED*/) { if (pp>=pe) return false; pad_len = *pp++; }
-    if (flags & 0x20 /*PRIORITY*/) { if ((size_t)(pe-pp) < 5) return false; pp += 5; }
-    size_t header_len = (size_t)(pe-pp); if (header_len < pad_len) return false; size_t remain = header_len - pad_len;
-    std::string block; block.assign((const char*)pp, remain);
-    // If not END_HEADERS, expect CONTINUATION frames in parse_frames()
-    // Minimal decode: only extract :status
-    const unsigned char* bp = (const unsigned char*)block.data(); const unsigned char* be = bp + block.size();
+bool http2_client_process::decode_response_headers() {
+    const unsigned char* bp = reinterpret_cast<const unsigned char*>(_header_block.data());
+    const unsigned char* be = bp + _header_block.size();
     while (bp < be) {
         if (*bp & 0x80) { uint32_t idx=0; if (!hp_read_int(bp,be,7,idx)) return false; int v = h2_static_status(idx); if (v) _status = v; }
         else if ((*bp & 0x40) == 0x40) { uint32_t n=0; std::string name,value; uint8_t first=*bp; if ((first & 0x3f)==0){ ++bp; if (!hp_read_str(bp,be,name)) return false; } else { if (!hp_read_int(bp,be,6,n)) return false; if (n>=8 && n<=14) name=":status"; }
@@ -185,33 +180,46 @@ bool http2_client_process::handle_headers_payload(const unsigned char* p, uint32
 }
 
 bool http2_client_process::parse_frames() {
-    size_t n = _in.size(); size_t off = 0; while (n - off >= 9) {
-        const unsigned char* p = &_in[off]; uint32_t len = read24u(p); uint8_t type = p[3]; uint8_t flags = p[4]; uint32_t sid = read32u(p+5) & 0x7fffffffu; if (n - off < 9 + len) break;
+    const size_t n = _in.size();
+    size_t off = 0;
+    while (n - off >= 9) {
+        const unsigned char* p = &_in[off];
+        const uint32_t len = read24u(p);
+        const uint8_t type = p[3], flags = p[4];
+        const uint32_t sid = read32u(p + 5) & 0x7fffffffu;
+        if (type == PING && (len != 8 || sid != 0)) return false;
+        if (n - off - 9 < len) break;
         if (_trace) {
             PDEBUG("[h2] frame: len=%u type=0x%02x flags=0x%02x sid=%u", len, (unsigned)type, (unsigned)flags, sid);
         }
         const unsigned char* payload = p + 9;
+        if (_awaiting_continuation && (type != CONTINUATION || sid != 1)) return false;
         if (type == SETTINGS) { if ((flags & FLAGS_ACK) == 0) { put_send_copy(make_settings_ack()); } }
-        else if (type == HEADERS && sid == 1) {
-            PDEBUG("[h2] HEADERS len=%u flags=0x%x sid=%u", len, flags, sid);
-            if (!handle_headers_payload(payload, len, flags)) return false;
-            if ((flags & 0x4) == 0) {
-                // need to gather CONTINUATIONs until END_HEADERS
-                size_t cont_off = off + 9 + len; while (n - cont_off >= 9) {
-                    const unsigned char* ch = &_in[cont_off]; uint32_t clen = read24u(ch); uint8_t ctype = ch[3]; uint8_t cflags = ch[4]; uint32_t csid = read32u(ch+5) & 0x7fffffffu; if (n - cont_off < 9 + clen) break; if (ctype != CONTINUATION || csid != 1) break; // ignore unexpected
-                    if (clen) { if (!handle_headers_payload(ch+9, clen, cflags)) return false; }
-                    cont_off += 9 + clen; if (cflags & 0x4) break; }
-            }
-            if (flags & 0x1 /*END_STREAM*/) {
-                _headers_end_stream = true;
-                // Only treat as done for statuses without body or HEAD method
-                std::string m = _method; for (auto& c : m) c = (char)tolower((unsigned char)c);
-                if (_status == 204 || _status == 304 || m == "head") {
-                    _response_done = true;
-                    notify_done();
-                } else {
-                    PDEBUG("[h2] HEADERS had END_STREAM but status=%d method=%s -> waiting for DATA", _status, m.c_str());
+        else if ((type == HEADERS || type == CONTINUATION) && sid == 1) {
+            const unsigned char* fragment = payload;
+            size_t size = len;
+            if (type == HEADERS) {
+                _headers_end_stream = (flags & 0x1) != 0;
+                if (flags & 0x08) {
+                    if (!size || fragment[0] >= size) return false;
+                    size -= 1 + fragment[0];
+                    ++fragment;
                 }
+                if (flags & 0x20) {
+                    if (size < 5) return false;
+                    fragment += 5;
+                    size -= 5;
+                }
+            } else if (!_awaiting_continuation) {
+                return false;
+            }
+            if (size > MAX_HTTP_HEAD_LEN - _header_block.size()) return false;
+            _header_block.append(reinterpret_cast<const char*>(fragment), size);
+            _awaiting_continuation = (flags & 0x4) == 0;
+            if (!_awaiting_continuation) {
+                if (!decode_response_headers()) return false;
+                _header_block.clear();
+                if (_headers_end_stream) _response_done = true;
             }
         }
         else if (type == DATA && sid == 1) {
@@ -227,7 +235,7 @@ bool http2_client_process::parse_frames() {
                 if (_conn_win_credits >= _winupdate_threshold) { put_send_copy(make_window_update(0, _conn_win_credits)); _conn_win_credits = 0; }
                 if (_strm1_win_credits >= _winupdate_threshold) { put_send_copy(make_window_update(1, _strm1_win_credits)); _strm1_win_credits = 0; }
             }
-            if (flags & 0x1) { _response_done = true; notify_done(); }
+            if (flags & 0x1) { _response_done = true; }
         }
         else if (type == PING) {
             if ((flags & FLAGS_ACK) == 0) {
@@ -244,7 +252,6 @@ bool http2_client_process::parse_frames() {
                 PDEBUG("[h2] GOAWAY last_stream_id=%u error=0x%x", last_sid, (unsigned)err);
             } else { PDEBUG("[h2] GOAWAY len=%u", len); }
             _response_done = true;
-            notify_done();
         }
         off += 9 + len;
     }
@@ -253,6 +260,9 @@ bool http2_client_process::parse_frames() {
 }
 
 size_t http2_client_process::process_recv_buf(const char* buf, size_t len) {
+    if (_response_done) {
+        return len;
+    }
     if (len) {
         if (_trace) {
             PDEBUG("[h2] recv bytes: %zu", len);
@@ -268,7 +278,7 @@ size_t http2_client_process::process_recv_buf(const char* buf, size_t len) {
         }
         _in.insert(_in.end(), (const unsigned char*)buf, (const unsigned char*)buf + len);
     }
-    if (!parse_frames()) return 0;
+    if (!parse_frames()) THROW_COMMON_EXCEPT("invalid HTTP/2 response frame or header block");
     if (_response_done) {
         if (_status == 0) _status = 200;
         PDEBUG("H2 Response Status: %d", _status);
@@ -309,7 +319,7 @@ size_t http2_client_process::process_recv_buf(const char* buf, size_t len) {
 #else
         if (_resp_body.size() < 1000) PDEBUG("Response Body: %s", _resp_body.c_str());
 #endif
-        // Do not stop all threads automatically; allow the owner to decide.
+        notify_done();
     }
     return len;
 }

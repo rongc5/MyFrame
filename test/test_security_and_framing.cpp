@@ -33,6 +33,8 @@
 #include "protocol_adapters/binary_context_adapter.h"
 #include "server.h"
 #include "ssl_context.h"
+#include "web_socket_req_process.h"
+#include "web_socket_data_process.h"
 #include "unified_protocol_factory.h"
 #include "multi_protocol_factory.h"
 #include "ws_test_client.h"
@@ -169,6 +171,28 @@ static std::string post_with(const std::string& extra_headers, const std::string
 static void test_http_smuggling_and_framing() {
     section("1. HTTP smuggling and strict framing [N1, C1, N1b]");
 
+    {
+        ProbeClient p;
+        std::string pending;
+        const std::string header = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+        CHECK(feed_like_connection(p, pending, header + "next") == header.size());
+        CHECK(p.consumer->finishes == 1 && p.consumer->body.empty() && pending == "next");
+    }
+    // Exercise every read split, including splits inside the closing boundary.
+    for (const std::string& value : {std::string("sample"), std::string()}) {
+        const std::string body = "--b\r\nContent-Disposition: form-data; name=x\r\n\r\n" + value + "\r\n--b--\r\n";
+        const std::string header = "POST / HTTP/1.1\r\nHost: t\r\nContent-Type: multipart/form-data; boundary=b\r\n"
+            "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n";
+        const std::string next = "GET / HTTP/1.1\r\nHost: t\r\n\r\n";
+        for (size_t cut = 0; cut < body.size(); ++cut) {
+            ProbeServer p;
+            std::string pending;
+            feed_like_connection(p, pending, header + body.substr(0, cut));
+            CHECK(p.consumer->finishes == 0);
+            feed_like_connection(p, pending, body.substr(cut) + next);
+            CHECK(pending == next && p.consumer->finishes == 1 && p.consumer->body == value);
+        }
+    }
     // Exact lookup: A-Content-Length must not shadow Content-Length.
     {
         ProbeServer p;
@@ -369,8 +393,19 @@ static void test_chunked_overflow() {
     CHECK(server_rejects(head + "-5\r\nhello\r\n0\r\n\r\n"));
     CHECK(server_rejects(head + " 5\r\nhello\r\n0\r\n\r\n"));
     CHECK(server_rejects(head + "5\r\nhelloXX0\r\n\r\n"));
-    // A single chunk above the chunked body cap (MAX_CHUNKED_BODY_LEN).
-    CHECK(server_rejects(head + "800001\r\n"));
+    {
+        ProbeServer p;
+        const size_t size = 9u * 1024u * 1024u;
+        const std::string prefix = head + "900000\r\n";
+        CHECK(p.process_recv_buf(prefix.data(), prefix.size()) == prefix.size());
+        const std::string block(32u * 1024u, 'x');
+        for (size_t off = 0; off < size; off += block.size())
+            p.process_recv_buf(block.data(), block.size());
+        const std::string end = "\r\n0\r\n\r\n";
+        CHECK(p.process_recv_buf(end.data(), end.size()) == end.size());
+        CHECK(p.consumer->body.size() == size && p.consumer->finishes == 1);
+    }
+    CHECK(server_rejects(head + "1000001\r\n"));
     {
         uint64_t v = 0;
         CHECK(myframe::parse_strict_hex_u64("ffffffffffffffff", v) && v == 0xffffffffffffffffull);
@@ -750,6 +785,14 @@ static bool feed_chunks_exact(Proc& p, const std::string& wire, size_t step) {
 
 static void test_binary_adapters() {
     section("5. Binary TLV adapters overflow and split packets [N2, N3b, N20]");
+    {
+        myframe::BinaryContextImpl ctx{std::shared_ptr<base_net_obj>()};
+        std::string large(myframe::BinaryContextAdapter::kMaxBinaryContextFrameLen + 1, 'x');
+        bool rejected = false;
+        try { ctx.send(1, large.data(), large.size()); }
+        catch (const std::exception&) { rejected = true; }
+        CHECK(rejected && !ctx.has_pending_send());
+    }
     // Oversized length 0xFFFFFFF8 (the old 8 + len wrapped to 0).
     {
         BinApp app;
@@ -833,6 +876,28 @@ static void test_binary_adapters() {
 // ===========================================================================
 // 6. WebSocket hardening [N11, C3, W-c]
 // ===========================================================================
+
+class WelcomeReceiver : public web_socket_data_process {
+public:
+    explicit WelcomeReceiver(web_socket_process* p) : web_socket_data_process(p) {}
+    void msg_recv_finish() override { message.swap(_recent_msg); }
+    std::string message;
+};
+
+static void test_ws_upgrade_tail() {
+    web_socket_req_process client{std::shared_ptr<base_net_obj>()};
+    WelcomeReceiver* receiver = new WelcomeReceiver(&client);
+    client.set_process(receiver);
+    client.get_req_para()._s_websocket_key = "dGhlIHNhbXBsZSBub25jZQ==";
+    delete client.get_send_buf();
+    std::string pending;
+    feed_like_connection(client, pending, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n");
+    const std::string frame = wstest::Client::build_frame(1, "welcome", true, false);
+    feed_like_connection(client, pending, "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n" + frame);
+    CHECK(pending == frame);
+    feed_like_connection(client, pending, "");
+    CHECK(pending.empty() && receiver->message == "welcome");
+}
 
 static void test_ws_header_parse_speed() {
     section("6a. WebSocket frame header parsing is O(1) per frame [N11]");
@@ -985,7 +1050,7 @@ static void test_ws_hardening(unsigned short port) {
 // 7. TLS exact protocol range [T-a]
 // ===========================================================================
 
-static bool tls_handshake(unsigned short port, long max_version, bool do_request, std::string* status) {
+static bool tls_handshake(unsigned short port, long max_version, bool do_request, std::string* status, bool split_hello = false) {
     SSL_CTX* cctx = SSL_CTX_new(TLS_client_method());
     if (!cctx) return false;
     SSL_CTX_set_verify(cctx, SSL_VERIFY_NONE, NULL);
@@ -994,8 +1059,23 @@ static bool tls_handshake(unsigned short port, long max_version, bool do_request
     int fd = tcp_connect(port, 3000);
     if (fd >= 0) {
         SSL* ssl = SSL_new(cctx);
+        bool ready = true;
+        if (split_hello) {
+            BIO* output = BIO_new(BIO_s_mem());
+            SSL_set_bio(ssl, BIO_new(BIO_s_mem()), output);
+            int rc = SSL_connect(ssl);
+            ready = SSL_get_error(ssl, rc) == SSL_ERROR_WANT_READ;
+            std::string hello(BIO_ctrl_pending(output), '\0');
+            ready = ready && hello.size() > 1 &&
+                BIO_read(output, &hello[0], static_cast<int>(hello.size())) == static_cast<int>(hello.size());
+            if (ready) {
+                ready = send_all(fd, hello.substr(0, 1));
+                sleep_ms(50);
+                ready = ready && send_all(fd, hello.substr(1));
+            }
+        }
         SSL_set_fd(ssl, fd);
-        if (SSL_connect(ssl) == 1) {
+        if (ready && SSL_connect(ssl) == 1) {
             ok = true;
             if (do_request) {
                 const std::string req = "GET /tls HTTP/1.1\r\nHost: t\r\n\r\n";
@@ -1041,7 +1121,7 @@ static void test_tls_protocol_range(unsigned short port) {
 
     std::string status;
     CHECK(!tls_handshake(port, TLS1_2_VERSION, false, NULL));
-    CHECK(tls_handshake(port, 0, true, &status));
+    CHECK(tls_handshake(port, 0, true, &status, true));
     CHECK(status == "HTTP/1.1 200 OK");
     CHECK(tls_handshake(port, TLS1_3_VERSION, false, NULL));
 }
@@ -1086,6 +1166,7 @@ static int h2_status_for_index(uint8_t idx) {
         if (!s) break;
         delete s;
     }
+    CHECK(c.is_response_done());
     return c.status();
 }
 
@@ -1180,6 +1261,32 @@ static void test_http2_and_container() {
         CHECK(settings_acks == 1);
         CHECK(goaways == 0);
     }
+    // END_STREAM takes effect once the final header fragment is decoded.
+    {
+        std::shared_ptr<base_net_obj> conn(new DetachedConn());
+        http2_client_process c(conn, "GET", "http", "t", "/", {}, "");
+        const std::string block = std::string(1, static_cast<char>(0x08)) + "\x03" + "201";
+        const std::string first = h2_frame(0x1, 0x1, 1, block.substr(0, 3));
+        CHECK(c.process_recv_buf(first.data(), first.size()) == first.size());
+        CHECK(!c.is_response_done());
+        const std::string tail = h2_frame(0x9, 0x4, 1, block.substr(3));
+        CHECK(c.process_recv_buf(tail.data(), tail.size()) == tail.size());
+        CHECK(c.is_response_done() && c.status() == 201 && c.response_body().empty());
+        // Trailing frames after completion must not mutate published status/body.
+        const std::string extra = h2_frame(0x0, 0x1, 1, "late-data") +
+            h2_frame(0x1, 0x5, 1, std::string(1, static_cast<char>(0x88)));
+        CHECK(c.process_recv_buf(extra.data(), extra.size()) == extra.size());
+        CHECK(c.is_response_done() && c.status() == 201 && c.response_body().empty());
+    }
+    // Reject invalid PING metadata even when enough payload bytes are available.
+    for (const std::string& frame : {h2_frame(0x6, 0, 0, "123456789"), h2_frame(0x6, 0, 1, "12345678")}) {
+        std::shared_ptr<base_net_obj> conn(new DetachedConn());
+        http2_client_process c(conn, "GET", "http", "t", "/", {}, "");
+        bool rejected = false;
+        try { c.process_recv_buf(frame.data(), frame.size()); }
+        catch (const std::exception&) { rejected = true; }
+        CHECK(rejected);
+    }
     // Client static-table :status mapping (indices 8..14).
     CHECK(h2_status_for_index(8) == 200);
     CHECK(h2_status_for_index(9) == 204);
@@ -1243,6 +1350,7 @@ int main() {
     test_status_line_unit();
     test_binary_adapters();
     test_ws_header_parse_speed();
+    test_ws_upgrade_tail();
     test_http2_and_container();
 
     // TLS configured as exactly TLS 1.3. Because TLS is configured, the

@@ -51,12 +51,8 @@ void http_res_process::reset()
 
 uint64_t http_res_process::body_limit()
 {
-    uint64_t limit = static_cast<uint64_t>(myframe::max_http_body_bytes());
-    if (limit > static_cast<uint64_t>(MAX_CHUNKED_BODY_LEN))
-        limit = static_cast<uint64_t>(MAX_CHUNKED_BODY_LEN);
-    return limit;
+    return myframe::max_http_body_bytes();
 }
-
 
 size_t http_res_process::process_recv_body(const char *buf, size_t len, int &result)
 {
@@ -365,8 +361,8 @@ size_t http_res_process::process_chunked(const char *buf, size_t len, int &resul
         {
             if (!_has_cur_chunk_len)
                 THROW_COMMON_EXCEPT("chunk decoder state error");
-            if (_chunk_buf.length() < _cur_chunk_len + 2)
-                return len;   // wait for the whole chunk (total bounded by body_limit())
+            if (_chunk_buf.size() < _cur_chunk_len || _chunk_buf.size() - _cur_chunk_len < 2)
+                return len;   // wait for the whole chunk (bounded by the configured body limit)
             if (_chunk_buf[_cur_chunk_len] != '\r' || _chunk_buf[_cur_chunk_len + 1] != '\n')
                 THROW_COMMON_EXCEPT("chunk data not CRLF terminated");
             int ignore = 0;
@@ -403,13 +399,14 @@ size_t http_res_process::process_chunked(const char *buf, size_t len, int &resul
 
 void http_res_process::recv_finish()
 {
+    change_http_status(WAIT_RESPONSE, false);
     _data_process->msg_recv_finish();
     http_base_data_process* data_process = get_process();
     if (data_process && data_process->async_response_pending()) {
         PDEBUG("http_res_process waiting async response");
         return;
     }
-    notify_send_ready();
+    if (_http_status == WAIT_RESPONSE) notify_send_ready();
 }
 
 void http_res_process::send_finish()
@@ -431,87 +428,46 @@ void http_res_process::send_finish()
 
 size_t http_res_process::get_boundary(const char *buf, size_t len, int &result)
 {	
-    uint64_t content_length = _has_content_length ? _content_length : 0;
+    if (!_has_content_length || !_content_length)
+        THROW_COMMON_EXCEPT("multipart body requires a positive content-length");
 
-    if (!content_length)
-    {
-        THROW_COMMON_EXCEPT("get boundary but content_len not found");
-    }
-    size_t ret = len;
-    size_t p_len = 0;
+    const size_t take = static_cast<size_t>(std::min<uint64_t>(len, _content_length - _recv_body_length));
+    size_t used = 0;
     result = 0;
-    _recv_body_length += len;
-    // First locate the boundary part header
-    if (_recv_boundary_status == BOUNDARY_RECV_HEAD)
-    {				
-        _recv_boundary_head.append(buf, len);
-        size_t pos = _recv_boundary_head.find("\r\n\r\n");
-        if (pos != std::string::npos)
-        {					
-            _boundary_para._boundary_content_length = content_length - (_boundary_para._boundary_str.length() + BOUNDARY_EXTRA_LEN)
-                - (pos+4);	
-            std::string left_str;
-            if (_recv_body_length == content_length)
-            {											
-                left_str = _recv_boundary_head.substr(pos+4, _boundary_para._boundary_content_length);
-            }
-            else if (_recv_body_length >= content_length - (_boundary_para._boundary_str.length() + BOUNDARY_EXTRA_LEN)) 
-            {
-                left_str = _recv_boundary_head.substr(pos+4, _boundary_para._boundary_content_length);
-                _recv_boundary_status = BOUNDARY_RECV_TAIL;
-            }
-            else
-            {
-                left_str = _recv_boundary_head.substr(pos+4);
-                _recv_boundary_status = BOUNDARY_RECV_BODY;
-            }
-
-            if (left_str.length() > 0)
-            {
-                p_len = _data_process->process_recv_body(left_str.c_str(), left_str.length(), result);
-                if (_recv_body_length == content_length)
-                    result = 1;
-                p_len = left_str.length() - p_len;
-            }
-            else // nothing to deliver yet
-            {
-            }
+    if (_recv_boundary_status == BOUNDARY_RECV_HEAD) {
+        const size_t old_size = _recv_boundary_head.size();
+        const size_t scan = std::min<size_t>(take, MAX_HTTP_HEAD_LEN - old_size);
+        _recv_boundary_head.append(buf, scan);
+        const size_t pos = _recv_boundary_head.find(CRLF2, old_size > 3 ? old_size - 3 : 0);
+        if (pos == std::string::npos) {
+            if (_recv_boundary_head.size() == MAX_HTTP_HEAD_LEN || _recv_body_length + scan == _content_length)
+                THROW_COMMON_EXCEPT("incomplete multipart part header");
+            _recv_body_length += scan;
+            return scan;
         }
-        else // boundary part header still incomplete
-        {
-            if (_recv_boundary_head.length() >= MAX_HTTP_HEAD_LEN)
-                THROW_COMMON_EXCEPT("http boundary head too long (" << _recv_boundary_head.length() << ")");
+        used = pos + 4 - old_size;
+        _recv_body_length += used;
+        _recv_boundary_head.clear();
+        const size_t tail_size = _boundary_para._boundary_str.size() + BOUNDARY_EXTRA_LEN;
+        if (tail_size > _content_length - _recv_body_length)
+            THROW_COMMON_EXCEPT("multipart body too short for closing boundary");
+        const uint64_t part_size = _content_length - _recv_body_length - tail_size;
+        _boundary_para._boundary_content_length = static_cast<uint32_t>(std::min<uint64_t>(part_size, UINT32_MAX));
+        _recv_boundary_status = BOUNDARY_RECV_BODY;
+    }
+
+    const uint64_t payload_end = _content_length - (_boundary_para._boundary_str.size() + BOUNDARY_EXTRA_LEN);
+    if (_recv_body_length < payload_end) {
+        const size_t payload = static_cast<size_t>(std::min<uint64_t>(take - used, payload_end - _recv_body_length));
+        if (payload) {
+            int callback_result = 0;
+            const size_t consumed = std::min(payload, _data_process->process_recv_body(buf + used, payload, callback_result));
+            _recv_body_length += consumed;
+            used += consumed;
+            if (consumed < payload) return used;
         }
     }
-    else if (_recv_boundary_status == BOUNDARY_RECV_BODY)//recv_body
-    {		
-        int tmp_len = len;
-        if (_recv_body_length == content_length)
-        {
-            tmp_len = len - (_boundary_para._boundary_str.length() + BOUNDARY_EXTRA_LEN);
-
-        }
-        else if (_recv_body_length >= content_length - (_boundary_para._boundary_str.length() + BOUNDARY_EXTRA_LEN))
-        {
-            tmp_len = len - (_recv_body_length - (content_length - (_boundary_para._boundary_str.length() + BOUNDARY_EXTRA_LEN)));
-            _recv_boundary_status = BOUNDARY_RECV_TAIL;
-        }
-        else // plain body bytes
-        {
-        }
-
-        p_len = _data_process->process_recv_body(buf, tmp_len, result);
-        p_len = tmp_len - p_len;
-
-        if (_recv_body_length == content_length)
-            result = 1; // body complete
-    }
-    else //recv tail
-    {	
-        // trailing boundary: nothing to deliver, just consume
-        if (_recv_body_length == content_length)
-            result = 1;				
-    }
-    _recv_body_length = _recv_body_length - p_len;
-    return ret - p_len;
+    _recv_body_length += take - used;
+    result = (_recv_body_length == _content_length);
+    return take;
 }

@@ -54,7 +54,7 @@ size_t web_socket_process::process_recv_buf(const char *buf, const size_t len)
     }
     else if (WB_HEAD_FINISH == _wb_status)
     {
-        RECV_WB_HEAD_FINISH_PROCESS(buf, len);
+        return RECV_WB_HEAD_FINISH_PROCESS(buf, len);
     }
     else
     {			
@@ -245,6 +245,7 @@ bool web_socket_process::check_head_finish()
     size_t pos =  _recv_header.find("\r\n\r\n");
     if (pos != std::string::npos)
     {
+        if (pos + 4 > MAX_HTTP_HEAD_LEN) THROW_COMMON_EXCEPT("websocket handshake header too long");
         _recv_header.erase(pos + 4);
         parse_header();                     
         ret = true;

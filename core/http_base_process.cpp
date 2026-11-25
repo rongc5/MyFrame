@@ -87,7 +87,7 @@ size_t http_base_process::process_recv_buf(const char *buf, size_t len)
 
 std::string* http_base_process::get_send_buf()
 {
-    if (_http_status < SEND_HEAD)
+    if (_http_status != SEND_HEAD && _http_status != SEND_BODY)
     {
         return NULL;
     }

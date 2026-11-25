@@ -327,9 +327,11 @@ class base_connect:public base_net_obj
             if (_fd < 0) {
                 return;
             }
-            if (_peek_drain_backlog > 0) {
+            const bool peeking = !_codec && _process && _process->want_peek();
+            if (!peeking && _peek_drain_backlog > 0) {
                 size_t flushed = drain_peek_bytes(_peek_drain_backlog);
-                _peek_drain_backlog -= std::min(_peek_drain_backlog, flushed);
+                _peek_drain_backlog -= flushed;
+                if (_peek_drain_backlog) return;
             }
             // If protocol doesn't want to receive, and there is no codec
             // that may still need read events (e.g., TLS handshake), skip.
@@ -364,18 +366,19 @@ class base_connect:public base_net_obj
 
                 // During protocol detection (pre-TLS), peek bytes so we don't consume
                 // the ClientHello before SSL_accept can read it. Once over TLS, do not peek.
-                bool did_peek = false;
-                size_t peek_len = 0;
-                if (!_codec && _process && _process->want_peek()) {
+                size_t offset = 0;
+                if (peeking) {
                     // Peek mode must never fall back to a consuming read: if the
                     // peek sees EAGAIN and the ClientHello arrives right after, a
                     // plain recv() would swallow it and SSL_accept() would then
                     // wait forever for bytes that are already gone.
-                    ssize_t pr = ::recv(_fd, t_buf, r_len, MSG_DONTWAIT | MSG_PEEK);
+                    ssize_t pr = ::recv(_fd, t_buf, sizeof(t_buf), MSG_DONTWAIT | MSG_PEEK);
                     if (pr > 0) {
-                        ret = pr;
-                        did_peek = true;
-                        peek_len = static_cast<size_t>(pr);
+                        // Repeated peeks start at the same unread socket byte.
+                        offset = _peek_drain_backlog;
+                        if (static_cast<size_t>(pr) <= offset) return;
+                        ret = pr - offset;
+                        _peek_drain_backlog = static_cast<size_t>(pr);
                     } else if (pr == 0) {
                         _process->notify_peer_close();
                         THROW_COMMON_EXCEPT("the client close the socket(" << _fd << ")");
@@ -389,16 +392,13 @@ class base_connect:public base_net_obj
                 }
 
                 if (ret > 0){
-                    _recv_buf.append(t_buf, ret);
+                    _recv_buf.append(t_buf + offset, ret);
                     _recv_buf_len += ret;
                     touch_active(GetMonotonicMilliSecond());
-                    if (did_peek) {
-                        _peek_drain_backlog += peek_len;
-                    }
                 }
             }
 
-            if (_recv_buf_len > 0 || flag)
+            if ((_recv_buf_len > 0 || flag) && _process && _process->can_process_buffered_input())
             {
                 PDEBUG("process_recv_buf _recv_buf_len[%zu] fd[%d], flag[%d]", _recv_buf_len, _fd, flag);
                 recv_dispatch_guard guard(_in_recv_dispatch);
@@ -704,6 +704,7 @@ class base_connect:public base_net_obj
                     if (_process) _process->notify_peer_close();
                     break;
                 } else {
+                    if (errno == EINTR) continue;
                     if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         break;
                     }

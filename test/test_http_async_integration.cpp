@@ -277,6 +277,20 @@ int main(int argc, char** argv) {
         ::close(fd);
         CHECK(g_after_count.load() == 2);              // 两请求各一次；若跨请求累积会是 3
     }
+    // A pipelined request must wait while the previous callback is pending.
+    {
+        g_slowcnt_work.store(0);
+        g_slowcnt_success.store(0);
+        int fd = dial(port);
+        CHECK(fd >= 0);
+        send_all(fd, "GET /slow-cnt HTTP/1.1\r\nHost: t\r\n\r\n"
+                     "GET /echolen HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
+        std::string carry, body;
+        CHECK(parse_status(read_one(fd, body, carry)) == 200 && body == "slow");
+        CHECK(parse_status(read_one(fd, body, carry)) == 200 && body == "0");
+        CHECK(g_slowcnt_work.load() == 1 && g_slowcnt_success.load() == 1);
+        ::close(fd);
+    }
     // 5) 客户端在 work 完成前断开 → 不崩、work 仍执行、但失效回调 on_success 不执行
     {
         g_slowcnt_work.store(0);
