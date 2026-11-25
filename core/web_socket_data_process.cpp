@@ -6,6 +6,7 @@
 #include "string_pool.h"
 #include "common_exception.h"
 #include "obj_task_msg.h"
+#include "protocol_limits.h"
 
 
 
@@ -192,6 +193,13 @@ ws_msg_type web_socket_data_process::get_send_msg()
 
 size_t web_socket_data_process::process_recv_buf(const char *buf, size_t len)
 {
+    // Bound the reassembled (possibly fragmented) message size before
+    // appending, so a peer cannot grow memory with endless continuations.
+    const size_t limit = myframe::max_ws_message_bytes();
+    if (len > limit || _recent_msg.size() > limit - len)
+    {
+        THROW_COMMON_EXCEPT("websocket message too large (limit " << limit << ")");
+    }
     _recent_msg.append(buf, len); 
     return len;
 }

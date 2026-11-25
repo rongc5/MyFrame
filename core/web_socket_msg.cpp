@@ -63,15 +63,39 @@ void web_socket_frame_header::clear()
     _more_flag=0;
 }
 
+// Incrementally collect the frame header from buf. Only the bytes the header
+// still needs are copied (2-byte base header, then the 0/2/8-byte extended
+// length, then the optional 4-byte masking key: at most 14 bytes in total),
+// so the cost per frame is O(1) regardless of how much data follows in buf.
+// On return buf/len describe the bytes after the header (len == 0 when the
+// header is still incomplete and every input byte was absorbed).
 void web_socket_frame_header::process(char* &buf,   uint32_t &len)
 {
-    char *ret_buf =NULL;
-    uint32_t ret_len = 0;
-    _s_header.append(buf, len);
-    if (_s_header.length() >= 2)
+    for (;;)
     {
+        const size_t need = (_mask_flag == -1)
+                                ? 2u
+                                : (2u + _e_p_len + (_mask_flag == 1 ? 4u : 0u));
+        if (_s_header.length() < need)
+        {
+            if (len == 0)
+            {
+                break;  // header incomplete: wait for more data
+            }
+            size_t want = need - _s_header.length();
+            size_t take = (static_cast<size_t>(len) < want) ? static_cast<size_t>(len) : want;
+            _s_header.append(buf, take);
+            buf += take;
+            len -= static_cast<uint32_t>(take);
+            if (_s_header.length() < need)
+            {
+                break;
+            }
+        }
+
         if (_mask_flag == -1)
         {
+            // Base header complete: decode FIN/RSV/opcode/MASK/payload len.
             _op_code = _s_header[0]  & 0xF;
             _more_flag = (_s_header[0] >> 7) & 0x01;
             uint8_t rsv = (_s_header[0] >> 4) & 0x07;
@@ -79,7 +103,7 @@ void web_socket_frame_header::process(char* &buf,   uint32_t &len)
             {
                 THROW_COMMON_EXCEPT("websocket RSV bits are not supported");
             }
-            // Reject opcodes reserved by RFC 6455 §5.2 (must fail the connection).
+            // Reject opcodes reserved by RFC 6455 5.2 (must fail the connection).
             if (_op_code != 0x0 && _op_code != 0x1 && _op_code != 0x2 &&
                 _op_code != 0x8 && _op_code != 0x9 && _op_code != 0xA)
             {
@@ -91,7 +115,7 @@ void web_socket_frame_header::process(char* &buf,   uint32_t &len)
             {
                 THROW_COMMON_EXCEPT("invalid websocket control frame");
             }
-            // RFC 6455 §5.5.1: a Close frame body is either empty or contains
+            // RFC 6455 5.5.1: a Close frame body is either empty or contains
             // at least a 2-byte status code. A 1-byte payload is illegal and
             // MUST fail the connection.
             if (_op_code == 0x08 && tmp_len == 1)
@@ -99,7 +123,8 @@ void web_socket_frame_header::process(char* &buf,   uint32_t &len)
                 THROW_COMMON_EXCEPT("invalid close frame: payload length 1");
             }
             if (tmp_len < 126)
-            {					
+            {
+                _e_p_len = 0;
             }
             else if (tmp_len == 126)
             {
@@ -109,49 +134,22 @@ void web_socket_frame_header::process(char* &buf,   uint32_t &len)
             {
                 _e_p_len = 8;
             }
+            continue;  // re-evaluate how many header bytes are needed
         }
 
-        //计算left_str
+        // Full header available.
         if (_mask_flag == 1)
-        {	
-            if (_s_header.length() >= (uint32_t)(2 + _e_p_len + 4))
-            {
-                uint32_t aa_len = _s_header.length() - (2 + _e_p_len + 4);                                         
-                ret_buf = buf + (len - aa_len);
-                ret_len = aa_len;
-                _mask_key.resize(4);
-                //memcpy((char*)_mask_key.c_str(), _s_header.c_str() + 2 + _e_p_len, 4);
-                _mask_key.clear();
-                _mask_key.append(_s_header, 2+_e_p_len, 4);
-                //left_str = _s_header.substr(6 + _e_p_len);
-                _s_header = _s_header.substr(0, 6 + _e_p_len);
-                get_payload_length();
-                _wb_body_status = WB_FRAME_BODY_STAUS;
-            }
-
+        {
+            _mask_key.assign(_s_header, 2 + _e_p_len, 4);
         }
         else
         {
-            if (_s_header.length() >= (uint32_t)(2 + _e_p_len))
-            {
-                uint32_t aa_len = _s_header.length() - (2 + _e_p_len);                                       
-                ret_buf = buf + (len - aa_len); //_s_header.substr(2 + _e_p_len);
-                ret_len = aa_len;
-                _s_header = _s_header.substr(0, 2 + _e_p_len);
-                get_payload_length();
-                _wb_body_status = WB_FRAME_BODY_STAUS;
-            }	
-
+            _mask_key.clear();
         }
-    }		
-    else
-    {
-        ret_buf = buf + len;
-        ret_len = 0;
+        get_payload_length();
+        _wb_body_status = WB_FRAME_BODY_STAUS;
+        break;
     }
-
-    buf = ret_buf;
-    len = ret_len;
 }
 
 std::string web_socket_frame_header::gen_ping_header(const int8_t op_code/*0x09 or 0x0A*/, const std::string &ping_data)//ping or pong

@@ -13,19 +13,21 @@ namespace myframe {
 
 // ============================================================================
 // Binary Application Adapter (Level 1)
-// �� base_data_process ���䵽 IApplicationHandler �ӿ�
-// ֧�ּ򵥵� TLV��Tag-Length-Value����ʽ
 // ============================================================================
 
+// Simple TLV framing: [4-byte protocol id][4-byte payload length][payload].
 class BinaryApplicationAdapter : public ::base_data_process {
 public:
+    // TLV header size and maximum accepted payload length (16 MiB).
+    static const size_t kBinaryHeaderLen = 8u;
+    static const size_t kMaxBinaryFrameLen = 16u * 1024u * 1024u;
+
     BinaryApplicationAdapter(
         std::shared_ptr<base_net_obj> conn,
         IApplicationHandler* handler);
 
     virtual ~BinaryApplicationAdapter();
 
-    // base_data_process �ӿ�ʵ��
     size_t process_recv_buf(const char* buf, size_t len) override;
     std::string* get_send_buf() override;
     void handle_msg(std::shared_ptr<::normal_msg>& msg) override;
@@ -34,25 +36,18 @@ public:
     void reset() override;
     void destroy() override;
 
-    // Э���ⷽ������ UnifiedProtocolFactory ʹ�ã�
     static bool can_handle(const char* buf, size_t len);
 
-    // ������������ UnifiedProtocolFactory ʹ�ã�
     static std::unique_ptr<::base_data_process> create(
         std::shared_ptr<base_net_obj> conn);
 
-    // ���� Handler
     void set_handler(IApplicationHandler* handler) { _handler = handler; }
 
 private:
-    // TLV ��ʽ��[4�ֽ�Э��ID][4�ֽڳ���][����...]
-    // Э����ͽ���
     size_t parse_tlv_message();
 
-    // ��Ӧ����
     void send_binary_response(uint32_t proto_id, const std::vector<uint8_t>& data);
 
-    // ��Ա����
     IApplicationHandler* _handler;
     std::string _recv_buffer;
     std::deque<std::string> _send_queue;

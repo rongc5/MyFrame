@@ -65,6 +65,16 @@ class base_data_process
         // (e.g., HTTP client while still sending request).
         virtual bool want_recv() const { return true; }
 
+        // Whether bytes that are already buffered in the connection (for
+        // example a pipelined second request left over after the first one
+        // was consumed) may be fed to process_recv_buf() right now without
+        // waiting for a new socket read. Default: same as want_recv().
+        // HTTP servers return false while a response is still pending.
+        virtual bool can_process_buffered_input() const { return want_recv(); }
+
+        // True once a close of this process has been requested.
+        bool is_closing() const { return _closing; }
+
         // Whether this process prefers using MSG_PEEK to avoid consuming data
         // during early protocol detection (e.g. keep TLS ClientHello available).
         // Default false; detectors override to request peeking.

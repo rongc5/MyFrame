@@ -1,5 +1,7 @@
 // Minimal blocking WebSocket client used by the P0 tests (server frames are
-// unmasked; this client never sends data frames).
+// unmasked). Frames sent by this client are masked as RFC 6455 5.1 requires
+// for every client-to-server frame; tests may opt out explicitly to verify
+// that the server rejects unmasked frames.
 #pragma once
 
 #include <arpa/inet.h>
@@ -103,6 +105,59 @@ public:
             int r = fill_once();
             if (r <= 0) return r;
         }
+    }
+
+    // Build one frame. Client frames are masked by default (RFC 6455 5.1).
+    static std::string build_frame(int opcode, const std::string& payload, bool fin = true,
+                                   bool masked = true, uint32_t mask_seed = 0x5a17c3e9u) {
+        std::string f;
+        f.push_back(static_cast<char>((fin ? 0x80 : 0x00) | (opcode & 0x0f)));
+        const unsigned char mbit = masked ? 0x80 : 0x00;
+        const uint64_t n = payload.size();
+        if (n < 126) {
+            f.push_back(static_cast<char>(mbit | static_cast<unsigned char>(n)));
+        } else if (n <= 0xffff) {
+            f.push_back(static_cast<char>(mbit | 126));
+            f.push_back(static_cast<char>((n >> 8) & 0xff));
+            f.push_back(static_cast<char>(n & 0xff));
+        } else {
+            f.push_back(static_cast<char>(mbit | 127));
+            for (int i = 7; i >= 0; --i) f.push_back(static_cast<char>((n >> (8 * i)) & 0xff));
+        }
+        if (!masked) {
+            f += payload;
+            return f;
+        }
+        unsigned char key[4];
+        key[0] = static_cast<unsigned char>(mask_seed >> 24);
+        key[1] = static_cast<unsigned char>(mask_seed >> 16);
+        key[2] = static_cast<unsigned char>(mask_seed >> 8);
+        key[3] = static_cast<unsigned char>(mask_seed);
+        f.append(reinterpret_cast<const char*>(key), 4);
+        for (size_t i = 0; i < payload.size(); ++i) {
+            f.push_back(static_cast<char>(static_cast<unsigned char>(payload[i]) ^ key[i % 4]));
+        }
+        return f;
+    }
+
+    bool send_frame(int opcode, const std::string& payload, bool fin = true, bool masked = true) {
+        return send_raw(build_frame(opcode, payload, fin, masked));
+    }
+
+    bool send_raw(const std::string& bytes) { return _fd >= 0 && send_all(bytes); }
+
+    // Wait until the server closes the connection (EOF or reset).
+    // Returns true when closed within timeout_ms.
+    bool wait_closed(int timeout_ms) {
+        set_timeout(100);
+        int waited = 0;
+        while (waited < timeout_ms) {
+            int r = fill_once();
+            if (r < 0) return true;
+            if (r == 0) waited += 100;
+            _buf.clear();
+        }
+        return false;
     }
 
     // Close with RST (SO_LINGER 0) to maximize server-side teardown races.

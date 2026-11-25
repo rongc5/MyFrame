@@ -150,26 +150,34 @@ size_t http2_process::process_recv_buf(const char* buf, size_t len) {
         _in.insert(_in.end(), (const unsigned char*)buf, (const unsigned char*)buf + len);
     }
 
-    size_t consumed_total = 0;
+    // Every input byte has been copied into _in above, so all len bytes are
+    // consumed from the caller's point of view, even when a frame (or the
+    // preface) is still incomplete. Returning less would make base_connect
+    // feed the unparsed tail a second time and duplicate it inside _in.
     // Handle connection preface
     if (!_preface_ok) {
-        if (_in.size() < CONNECTION_PREFACE_LEN) return 0;
+        if (_in.size() < CONNECTION_PREFACE_LEN) {
+            // Fail fast on a prefix that can never become the preface.
+            if (!_in.empty() && std::memcmp(_in.data(), CONNECTION_PREFACE, _in.size()) != 0) {
+                throw CMyCommonException("http2: bad connection preface");
+            }
+            return len;
+        }
         if (std::memcmp(_in.data(), CONNECTION_PREFACE, CONNECTION_PREFACE_LEN) != 0) {
             throw CMyCommonException("http2: bad connection preface");
         }
         _preface_ok = true;
         _in.erase(_in.begin(), _in.begin() + CONNECTION_PREFACE_LEN);
-        consumed_total += CONNECTION_PREFACE_LEN;
     }
 
     // Parse frames
     size_t consumed = 0;
     bool sent_goaway = parse_frames(consumed);
+    (void)sent_goaway;
     if (consumed) {
         _in.erase(_in.begin(), _in.begin() + consumed);
-        consumed_total += consumed;
     }
-    return consumed_total;
+    return len;
 }
 
 bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& block, bool end_stream) {

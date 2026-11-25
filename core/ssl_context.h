@@ -41,6 +41,55 @@ struct ssl_config {
     bool _enable_tickets{true};
 };
 
+// Parse a protocol list such as "TLSv1.3" or "TLSv1.2,TLSv1.3" into an
+// inclusive [minv, maxv] version range. Tokens are separated by ',', ';', ':'
+// or whitespace and must match exactly (case-insensitive) one of TLSv1,
+// TLSv1.1, TLSv1.2 or TLSv1.3; unknown tokens are ignored. Returns false when
+// no known token was found (callers then keep the safe TLS 1.2+ default).
+static inline bool myframe_parse_tls_protocols(const std::string& list, long& minv, long& maxv)
+{
+    minv = 0;
+    maxv = 0;
+    bool any = false;
+    size_t i = 0;
+    while (i < list.size()) {
+        while (i < list.size() && (list[i] == ',' || list[i] == ';' || list[i] == ':' ||
+                                   list[i] == ' ' || list[i] == '\t' || list[i] == '\r' ||
+                                   list[i] == '\n')) {
+            ++i;
+        }
+        size_t start = i;
+        while (i < list.size() && !(list[i] == ',' || list[i] == ';' || list[i] == ':' ||
+                                    list[i] == ' ' || list[i] == '\t' || list[i] == '\r' ||
+                                    list[i] == '\n')) {
+            ++i;
+        }
+        if (i == start) continue;
+        const std::string tok = list.substr(start, i - start);
+        long v = 0;
+#if defined(TLS1_VERSION)
+        if (strcasecmp(tok.c_str(), "TLSv1") == 0 || strcasecmp(tok.c_str(), "TLSv1.0") == 0) v = TLS1_VERSION;
+#endif
+#if defined(TLS1_1_VERSION)
+        if (strcasecmp(tok.c_str(), "TLSv1.1") == 0) v = TLS1_1_VERSION;
+#endif
+#if defined(TLS1_2_VERSION)
+        if (strcasecmp(tok.c_str(), "TLSv1.2") == 0) v = TLS1_2_VERSION;
+#endif
+#if defined(TLS1_3_VERSION)
+        if (strcasecmp(tok.c_str(), "TLSv1.3") == 0) v = TLS1_3_VERSION;
+#endif
+        if (v == 0) {
+            PDEBUG("[tls] ignoring unknown protocol token '%s'", tok.c_str());
+            continue;
+        }
+        if (!any || v < minv) minv = v;
+        if (!any || v > maxv) maxv = v;
+        any = true;
+    }
+    return any;
+}
+
 void tls_set_server_config(const ssl_config& conf);
 bool tls_get_server_config(ssl_config& out);
 void tls_set_client_config(const ssl_config& conf);
@@ -211,40 +260,29 @@ public:
             _allow_h11 = (s.find("http/1.1") != std::string::npos) || (s.find("http1.1") != std::string::npos);
         }
         SSL_CTX_set_alpn_select_cb(_ctx, myframe_alpn_select_cb, this);
-        // Enforce protocol range if provided (expects CSV like "TLSv1.2,TLSv1.3")
+        // Enforce the protocol range if provided (exact tokens such as
+        // "TLSv1.3" or "TLSv1.2,TLSv1.3"); otherwise default to TLS 1.2+.
 #if defined(TLS1_VERSION)
-        if (!conf._protocols.empty()) {
-            auto has = [&](const char* t) { return conf._protocols.find(t) != std::string::npos; };
+        {
             long minv = 0, maxv = 0;
-#if defined(TLS1_3_VERSION)
-            if (has("TLSv1.3")) maxv = TLS1_3_VERSION;
-#endif
-#if defined(TLS1_2_VERSION)
-            if (maxv == 0 && has("TLSv1.2")) maxv = TLS1_2_VERSION;
-            if (has("TLSv1.2")) minv = (minv == 0 ? TLS1_2_VERSION : minv);
-#endif
-#if defined(TLS1_1_VERSION)
-            if (has("TLSv1.1")) minv = (minv == 0 ? TLS1_1_VERSION : minv);
-#endif
-#if defined(TLS1_VERSION)
-            if (has("TLSv1"))   minv = (minv == 0 ? TLS1_VERSION : minv);
-#endif
+            if (!conf._protocols.empty() && myframe_parse_tls_protocols(conf._protocols, minv, maxv)) {
 #if defined(SSL_CTX_set_min_proto_version)
-            if (minv) SSL_CTX_set_min_proto_version(_ctx, (int)minv);
-            if (maxv) SSL_CTX_set_max_proto_version(_ctx, (int)maxv);
+                SSL_CTX_set_min_proto_version(_ctx, (int)minv);
+                SSL_CTX_set_max_proto_version(_ctx, (int)maxv);
 #else
-            // Fallback: disable older protocols via options if min >= TLS1_2
-            if (minv >= TLS1_2_VERSION) {
-                SSL_CTX_set_options(_ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
-            }
+                // Fallback: disable older protocols via options if min >= TLS1_2
+                if (minv >= TLS1_2_VERSION) {
+                    SSL_CTX_set_options(_ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+                }
 #endif
-        } else {
-            // Safe defaults: TLS1.2+
+            } else {
+                // Safe defaults: TLS1.2+
 #if defined(SSL_CTX_set_min_proto_version) && defined(TLS1_2_VERSION)
-            SSL_CTX_set_min_proto_version(_ctx, TLS1_2_VERSION);
+                SSL_CTX_set_min_proto_version(_ctx, TLS1_2_VERSION);
 #else
-            SSL_CTX_set_options(_ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+                SSL_CTX_set_options(_ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
 #endif
+            }
         }
 #endif
         // Optional peer verification
@@ -328,28 +366,22 @@ public:
             SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
         }
 #endif
-        // Protocol version: TLS 1.2+ by default
+        // Protocol version: exact tokens from _protocols, TLS 1.2+ by default
 #if defined(TLS1_VERSION)
-        if (!conf._protocols.empty()) {
-            auto has = [&](const char* t) { return conf._protocols.find(t) != std::string::npos; };
+        {
             long minv = 0, maxv = 0;
-#if defined(TLS1_3_VERSION)
-            if (has("TLSv1.3")) maxv = TLS1_3_VERSION;
-#endif
-#if defined(TLS1_2_VERSION)
-            if (maxv == 0 && has("TLSv1.2")) maxv = TLS1_2_VERSION;
-            if (has("TLSv1.2")) minv = (minv == 0 ? TLS1_2_VERSION : minv);
-#endif
+            if (!conf._protocols.empty() && myframe_parse_tls_protocols(conf._protocols, minv, maxv)) {
 #if defined(SSL_CTX_set_min_proto_version)
-            if (minv) SSL_CTX_set_min_proto_version(ctx, (int)minv);
-            if (maxv) SSL_CTX_set_max_proto_version(ctx, (int)maxv);
+                SSL_CTX_set_min_proto_version(ctx, (int)minv);
+                SSL_CTX_set_max_proto_version(ctx, (int)maxv);
 #endif
-        } else {
+            } else {
 #if defined(SSL_CTX_set_min_proto_version) && defined(TLS1_2_VERSION)
-            SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+                SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
 #else
-            SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+                SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
 #endif
+            }
         }
 #endif
         // Register session reuse callback for client connections

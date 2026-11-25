@@ -8,6 +8,7 @@
 #include "common_exception.h"
 #include "common_def.h"
 #include "http_base_process.h"
+#include "protocol_limits.h"
 
 class http_res_process:public http_base_process
 {
@@ -17,6 +18,10 @@ class http_res_process:public http_base_process
         virtual ~http_res_process();
 
 		virtual void reset();     
+
+		// Buffered (pipelined) input can only be parsed while waiting for a
+		// request; during the response phase it stays queued.
+		virtual bool can_process_buffered_input() const { return _http_status <= RECV_BODY; }
 
     protected:
 		virtual size_t process_recv_body(const char *buf, size_t len, int &result);
@@ -31,10 +36,18 @@ class http_res_process:public http_base_process
 
 		size_t get_boundary(const char *buf, size_t len, int &result);
 
-		// chunked 请求体解码（RFC 9112 §7.1：HTTP/1.1 服务器必须支持;cloudflared 等代理会用 chunked 转发 body）。
-		// 安全约束：TE 与 Content-Length 并存 → 拒绝(请求走私防护);仅支持单一 "chunked";
-		//           解码总量/行长有上限;trailer 消费但忽略。解码后对业务层等价于普通完整 body。
+		// Chunked request body decoder (RFC 9112 7.1: an HTTP/1.1 server must
+		// support it; proxies such as cloudflared forward bodies as chunked).
+		// Safety rules: Transfer-Encoding together with Content-Length is
+		// rejected (smuggling guard); only a single "chunked" coding is
+		// accepted; decoded size and line lengths are capped; trailers are
+		// consumed and ignored. The decoded body looks like a plain body to
+		// the business layer.
 		size_t process_chunked(const char *buf, size_t len, int &result);
+
+		// Effective cap for a decoded request body (min of the chunked cap
+		// and myframe::max_http_body_bytes()).
+		static uint64_t body_limit();
 
     protected:
 		enum BOUNDARY_STATUS
@@ -46,23 +59,29 @@ class http_res_process:public http_base_process
         std::string _recv_boundary_head;
 		boundary_para _boundary_para;
 		BOUNDARY_STATUS _recv_boundary_status;
-		uint32_t _recv_body_length;
+		uint64_t _recv_body_length;
 
-		// ---- chunked 解码状态 ----
+		// Framing state decided by parse_header().
+		bool        _has_content_length;
+		uint64_t    _content_length;
+
+		// ---- chunked decoder state ----
 		enum CHUNK_STATE
 		{
-			CHUNK_SIZE = 0,     // 等 chunk-size 行
-			CHUNK_DATA = 1,     // 等当前 chunk 数据(+CRLF)
-			CHUNK_TRAILER = 2   // 0 块之后:消费 trailer 行直到空行
+			CHUNK_SIZE = 0,     // waiting for a chunk-size line
+			CHUNK_DATA = 1,     // waiting for the current chunk data (+CRLF)
+			CHUNK_TRAILER = 2   // after the last chunk: consume trailer lines up to the empty line
 		};
-		bool        _chunked;         // 本请求体为 chunked（parse_header 判定）
+		bool        _chunked;            // request body uses chunked coding
 		CHUNK_STATE _chunk_state;
-		std::string _chunk_buf;       // 尚未解码完的输入
-		long        _cur_chunk_len;   // 当前 chunk 数据长；-1 = 等 size 行
-		uint64_t    _chunked_total;   // 已解码总量（上限防护）
+		std::string _chunk_buf;          // undecoded input
+		size_t      _cur_chunk_len;      // current chunk data length (valid when _has_cur_chunk_len)
+		bool        _has_cur_chunk_len;
+		uint64_t    _chunked_total;      // decoded bytes so far (bounded)
 };
 
-// chunked 防护上限：解码后 body 总量 / 单行(size 行与 trailer 行)长度
+// Chunked safety limits: total decoded body size and single line length
+// (chunk-size lines and trailer lines).
 #define MAX_CHUNKED_BODY_LEN (8u * 1024u * 1024u)
 #define MAX_CHUNK_LINE_LEN   8192u
 

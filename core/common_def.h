@@ -116,6 +116,8 @@ struct http_response_code
         http_response_code()
         {
             _response_list.insert(std::make_pair(200, "OK"));
+            _response_list.insert(std::make_pair(201, "Created"));
+            _response_list.insert(std::make_pair(204, "No Content"));
             _response_list.insert(std::make_pair(206, "Partial Content"));
             _response_list.insert(std::make_pair(301, "Moved Temporarily"));
             _response_list.insert(std::make_pair(302, "the uri moved temporarily"));
@@ -123,7 +125,9 @@ struct http_response_code
             _response_list.insert(std::make_pair(400, "Bad Request"));
             _response_list.insert(std::make_pair(404, "Not Found"));
             _response_list.insert(std::make_pair(403, "Forbidden"));
+            _response_list.insert(std::make_pair(405, "Method Not Allowed"));
             _response_list.insert(std::make_pair(409, "Conflict"));
+            _response_list.insert(std::make_pair(413, "Payload Too Large"));
             _response_list.insert(std::make_pair(500, "Internal Server Error"));
             _response_list.insert(std::make_pair(501, "not implemented"));
             _response_list.insert(std::make_pair(503, "the server is not available"));
@@ -176,9 +180,12 @@ struct http_req_head_para
             return ptr;
         }
 
+        // Exact, case-insensitive field-name match. A substring match would
+        // let "A-Content-Length" or "X-Transfer-Encoding" shadow the real
+        // framing headers (request smuggling).
         std::map<std::string, std::string>::iterator it;
         for (it = _headers.begin(); it != _headers.end(); it++) {
-            if (strcasestr(it->first.c_str(), str)) {
+            if (strcasecmp(it->first.c_str(), str) == 0) {
                 ptr = &(it->second);
                 break;
             }
@@ -221,9 +228,11 @@ struct http_res_head_para
 
     void init()
     {
+        // Keep-alive responses reuse this object: restore the defaults the
+        // constructor sets so the next status line is never " 200 ".
         _response_code = 200;
-        _response_str.clear();
-        _version.clear();
+        _response_str = "OK";
+        _version = "HTTP/1.1";
         _cookie_list.clear();
         _headers.clear();
         _chunked.clear();
@@ -236,9 +245,12 @@ struct http_res_head_para
             return ptr;
         }
 
+        // Exact, case-insensitive field-name match. A substring match would
+        // let "A-Content-Length" or "X-Transfer-Encoding" shadow the real
+        // framing headers (request smuggling).
         std::map<std::string, std::string>::iterator it;
         for (it = _headers.begin(); it != _headers.end(); it++) {
-            if (strcasestr(it->first.c_str(), str)) {
+            if (strcasecmp(it->first.c_str(), str) == 0) {
                 ptr = &(it->second);
                 break;
             }

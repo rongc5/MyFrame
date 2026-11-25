@@ -34,6 +34,7 @@ test/test_*
 !test/test_ws_slow_consumer.cpp
 !test/test_p1_core.cpp
 !test/test_large_transfer_and_stress.cpp
+!test/test_security_and_framing.cpp
 build_test/
 test/simple_*
 test/https_*

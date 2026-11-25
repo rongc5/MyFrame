@@ -14,7 +14,12 @@ namespace myframe {
 
 // ============================================================================
 // Protocol Detector
-// 协议检测器 - 自动检测协议并创建相应的处理器
+// Detects the protocol from the first bytes and installs the matching handler.
+//
+// Undetected bytes are never copied into a private buffer: process_recv_buf()
+// returns 0 ("need more") so base_connect keeps accumulating them in
+// _recv_buf and re-presents the whole prefix on the next read. This keeps the
+// byte stream intact across the handoff (nothing is dropped or fed twice).
 // ============================================================================
 
 class ProtocolDetector : public ::base_data_process {
@@ -37,15 +42,22 @@ public:
     bool want_peek() const override { return !_over_tls && !_detected; }
 
 private:
+    // Install the handler for proto and feed it data. Returns false when the
+    // handler could not be created. On success, consumed receives the number
+    // of bytes of data the new handler consumed; the caller must report
+    // exactly that to base_connect so any unconsumed tail (an incomplete
+    // header fragment or a pipelined second request) stays in _recv_buf.
+    // After a successful handoff 'this' has been deleted.
     bool handoff_to_protocol(const UnifiedProtocolFactory::ProtocolEntry& proto,
                              base_connect<base_data_process>* holder,
                              const char* data,
-                             size_t len);
+                             size_t len,
+                             size_t& consumed);
 
     std::vector<UnifiedProtocolFactory::ProtocolEntry> _protocols;
     bool _over_tls;
     bool _detected;
-    std::string _buffer;
+    std::string _buffer;   // unused; kept for layout compatibility
     uint64_t _start_ms;
     uint32_t _timer_id;
 

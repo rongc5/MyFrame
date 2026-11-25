@@ -17,6 +17,9 @@ web_socket_res_process::web_socket_res_process(std::shared_ptr<base_net_obj> p):
 {
     _wb_version = 0;		
     _if_send_mask = false;
+    // RFC 6455 5.1: a server must close the connection on an unmasked
+    // client frame.
+    _require_recv_mask = true;
     _if_upgrade = false;
 }
 

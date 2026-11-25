@@ -88,9 +88,17 @@ void http_res_head_para::to_head_str(std::string * head)
     if (!head) {
         return;
     }
-    //返回状态码
-    if (!_response_str.empty())
-        _response_str = http_response_code::response.get_response_str(_response_code);
+    // Reason phrase: keep a caller-provided phrase; look up the standard one
+    // when it is empty, or when it is still the stale "OK" default while the
+    // status code is no longer 200.
+    if (_response_str.empty() || (_response_code != 200 && _response_str == "OK"))
+    {
+        std::string std_reason = http_response_code::response.get_response_str(_response_code);
+        if (!std_reason.empty() || _response_str.empty())
+            _response_str = std_reason;
+    }
+    if (_version.empty())
+        _version = "HTTP/1.1";
 
     {
         head->append(_version);

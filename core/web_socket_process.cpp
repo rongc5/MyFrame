@@ -12,8 +12,11 @@ web_socket_process::web_socket_process(std::shared_ptr<base_net_obj> p):base_dat
 {
     _wb_status = WB_INIT_STAUTS;
     _if_send_mask = true;
+    _require_recv_mask = false;
     _p_data_process = NULL;
 }
+
+const size_t web_socket_process::kMaxPendingControlFrames;
 
 web_socket_process::~web_socket_process()
 {
@@ -139,8 +142,16 @@ void web_socket_process::send_ping(const char op_code, const std::string &ping_d
         post_to_owner_thread([this, op_code, data]() { send_ping(op_code, data); });
         return;
     }
-    if (ping_data.length() <= 125) //125ֽڵping÷ȥ
+    if (ping_data.length() <= 125) // control frame payloads are limited to 125 bytes
     {
+        if (_p_tmp_str.size() >= kMaxPendingControlFrames)
+        {
+            // The peer does not read its PONGs: drop the frame and close the
+            // connection instead of queueing without bound.
+            PDEBUG("websocket pending control frames over limit, closing");
+            request_close_now();
+            return;
+        }
         std::string *p_str = new std::string;
         *p_str = make_control_frame(op_code, ping_data);
         _p_tmp_str.push_back(p_str);
@@ -153,6 +164,12 @@ void web_socket_process::send_close(const std::string &close_data)
     if (!on_owner_thread()) {
         std::string data = close_data;
         post_to_owner_thread([this, data]() { send_close(data); });
+        return;
+    }
+    if (_p_tmp_str.size() >= kMaxPendingControlFrames)
+    {
+        PDEBUG("websocket pending control frames over limit, closing");
+        request_close_now();
         return;
     }
     std::string payload = close_data;
@@ -309,7 +326,13 @@ size_t web_socket_process::RECV_WB_HANDSHAKE_OK_PROCESS(const char *buf, const s
     {							       
         if (_recent_recv_web_header._wb_body_status == WB_FRAME_HEAD_STAUS)
         {
-            _recent_recv_web_header.process(left_buf, left_len);					
+            _recent_recv_web_header.process(left_buf, left_len);
+            if (_recent_recv_web_header._wb_body_status == WB_FRAME_BODY_STAUS &&
+                _require_recv_mask && _recent_recv_web_header._mask_flag != 1)
+            {
+                // RFC 6455 5.1: fail the connection (1002 protocol error).
+                THROW_COMMON_EXCEPT("websocket client frame must be masked");
+            }
         }
 
         if (_recent_recv_web_header._wb_body_status == WB_FRAME_BODY_STAUS)

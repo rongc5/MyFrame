@@ -164,8 +164,11 @@ void WsApplicationDataProcess::on_close() {
 void WsApplicationDataProcess::on_ping(const char op_code, const std::string& ping_data) {
     PDEBUG("[WsApplicationDataProcess] Received ping, opcode=0x%02x", (unsigned char)op_code);
 
-    // 自动回复 pong
-    _process->send_ping(0xA, ping_data);
+    // Only a PING (0x9) is answered with a PONG (0xA). Replying to an
+    // unsolicited PONG would create an endless PONG ping-pong with the peer.
+    if (op_code == 0x09 && _process) {
+        _process->send_ping(0xA, ping_data);
+    }
 }
 
 } // namespace myframe

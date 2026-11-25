@@ -26,7 +26,7 @@ protocol_detect_process::~protocol_detect_process() {}
 size_t protocol_detect_process::process_recv_buf(const char* buf, size_t buf_len)
 {
     if (_protocol_detected) {
-        // 已切换后直接转发
+        // Already switched: forward directly
         base_connect<base_data_process>* holder = dynamic_cast< base_connect<base_data_process>* >(get_base_net().get());
         if (holder && holder->process()) {
             return holder->process()->process_recv_buf(buf, buf_len);
@@ -50,7 +50,7 @@ size_t protocol_detect_process::process_recv_buf(const char* buf, size_t buf_len
             base_connect<base_data_process>* holder = dynamic_cast< base_connect<base_data_process>* >(get_base_net().get());
             if (holder) {
                 std::unique_ptr<base_data_process> next = probe->create(get_base_net());
-                // base_connect 将接管生命周期（包装为 unique_ptr）
+                // base_connect takes ownership (wrapped in a unique_ptr)
                 if (!next) {
                     PDEBUG("[detect] probe create returned null");
                     THROW_COMMON_EXCEPT("protocol detect create failed");
@@ -66,31 +66,28 @@ size_t protocol_detect_process::process_recv_buf(const char* buf, size_t buf_len
                     net->set_protocol_tag(tag, lock_protocol);
                 }
 
+                // set_process() deletes this detector: only locals below.
                 holder->set_process(next.release());
 
-                // 让新流程预处理这批数据，但按探测缓冲长度告知上层擦除
+                // Feed the buffered bytes to the new process and report exactly
+                // what it consumed, so an incomplete header or a pipelined
+                // request stays in base_connect::_recv_buf instead of being
+                // erased.
                 if (holder->process()) {
-                    (void)holder->process()->process_recv_buf(buf, buf_len);
-                    return buf_len;
+                    size_t consumed = holder->process()->process_recv_buf(buf, buf_len);
+                    return consumed > buf_len ? buf_len : consumed;
                 }
             }
             return 0;
         }
     }
-    // Update total sniffed bytes and enforce limit
-    if (buf_len > 0) {
-        // Guard against overflow though impractical here
-        if (_total_bytes > SIZE_MAX - buf_len) {
-            THROW_COMMON_EXCEPT("protocol detect overflow");
-            return 0;
-        }
-        _total_bytes += buf_len;
-        if (_total_bytes > kMaxDetectBytes) {
-            THROW_COMMON_EXCEPT("Too much data without protocol detection");
-            return 0;
-        }
+    // Nothing is consumed while undetected, so buf always holds the whole
+    // sniffed prefix: its length is the total number of sniffed bytes.
+    _total_bytes = buf_len;
+    if (_total_bytes > kMaxDetectBytes) {
+        THROW_COMMON_EXCEPT("Too much data without protocol detection");
     }
-    return 0; // 不消费，等待更多数据
+    return 0; // consume nothing; wait for more data
 }
 
 void protocol_detect_process::handle_timeout(std::shared_ptr<timer_msg>& t)

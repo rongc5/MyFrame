@@ -303,30 +303,49 @@ void common_obj_container::obj_process()
     std::vector<std::shared_ptr<base_net_obj> > exception_vec;
     std::vector<std::shared_ptr<base_net_obj> > real_net_vec;
 
-    for (const auto & u: _obj_net_map)
+    // Snapshot the real-net objects first: a handler may insert into (or
+    // erase from) _obj_net_map during real_net_process(), and a rehash would
+    // invalidate a live iterator. Objects added during this tick are picked
+    // up on the next one.
+    std::vector<std::shared_ptr<base_net_obj> > tick_objs;
+    tick_objs.reserve(_obj_net_map.size());
+    for (std::unordered_map<uint32_t, std::shared_ptr<base_net_obj> >::const_iterator it = _obj_net_map.begin();
+         it != _obj_net_map.end(); ++it)
     {
+        if (it->second) tick_objs.push_back(it->second);
+    }
+
+    for (size_t i = 0; i < tick_objs.size(); ++i)
+    {
+        const std::shared_ptr<base_net_obj> & obj = tick_objs[i];
+        // Skip objects removed earlier in this tick (or whose id was reused).
+        std::unordered_map<uint32_t, std::shared_ptr<base_net_obj> >::const_iterator cur =
+            _obj_net_map.find(obj->get_id()._id);
+        if (cur == _obj_net_map.end() || cur->second != obj) {
+            continue;
+        }
         try
         {
-            u.second->real_net_process();
-            if (!u.second->get_real_net()) {
-                real_net_vec.push_back(u.second);
+            obj->real_net_process();
+            if (!obj->get_real_net()) {
+                real_net_vec.push_back(obj);
             }
         }
         catch(CMyCommonException &e)
         {
-            PDEBUG("CMyCommonException obj_id=%d: %s", u.second ? u.second->get_id()._id : -1, e.what());
+            PDEBUG("CMyCommonException obj_id=%d: %s", obj->get_id()._id, e.what());
             if (!is_expected_disconnect(e.what())) {
                 fprintf(stderr, "[obj_process] CMyCommonException obj_id=%d: %s\n",
-                        u.second ? u.second->get_id()._id : -1, e.what());
+                        obj->get_id()._id, e.what());
             }
-            exception_vec.push_back(u.second);
+            exception_vec.push_back(obj);
         }
         catch(std::exception &e)
         {
-            PDEBUG("std::exception obj_id=%d: %s", u.second ? u.second->get_id()._id : -1, e.what());
+            PDEBUG("std::exception obj_id=%d: %s", obj->get_id()._id, e.what());
             fprintf(stderr, "[obj_process] std::exception obj_id=%d: %s\n",
-                    u.second ? u.second->get_id()._id : -1, e.what());
-            exception_vec.push_back(u.second);
+                    obj->get_id()._id, e.what());
+            exception_vec.push_back(obj);
         }
     }
 

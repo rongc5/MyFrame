@@ -5,10 +5,13 @@
 #include "../common_obj_container.h"
 #include "../base_net_thread.h"
 #include "../outbound_guard.h"
+#include "../common_exception.h"
 #include <algorithm>
 #include <limits>
 
 namespace myframe {
+
+const size_t BinaryContextAdapter::kMaxBinaryContextFrameLen;
 
 // ============================================================================
 // BinaryContextImpl Implementation
@@ -188,7 +191,7 @@ size_t BinaryContextAdapter::process_recv_buf(const char* buf, size_t len) {
         offset += parsed;
     }
 
-    // 清理已消费的数据
+    // Drop the consumed bytes; everything appended above counts as consumed
     if (offset > 0) {
         _recv_buffer.erase(0, offset);
     }
@@ -197,14 +200,14 @@ size_t BinaryContextAdapter::process_recv_buf(const char* buf, size_t len) {
 }
 
 size_t BinaryContextAdapter::parse_tlv_message(const char* data, size_t len) {
-    // TLV 格式：[4字节协议ID][4字节长度][数据...]
+    // TLV format: [4-byte protocol id][4-byte length][payload...] (network order)
     const size_t HEADER_SIZE = 8;
 
     if (len < HEADER_SIZE) {
-        return 0;  // 数据不足
+        return 0;  // not enough data
     }
 
-    // 解析协议ID和长度
+    // Decode protocol id and length
     uint32_t proto_id = 0;
     uint32_t data_len = 0;
     std::memcpy(&proto_id, data, sizeof(uint32_t));
@@ -213,24 +216,26 @@ size_t BinaryContextAdapter::parse_tlv_message(const char* data, size_t len) {
     proto_id = ntohl(proto_id);
     data_len = ntohl(data_len);
 
-    // 检查长度的合理性（防止攻击）
-    if (data_len > 10 * 1024 * 1024) {  // 最大10MB
+    // Reject oversized frames: returning 0 ("need more") here would let the
+    // receive buffer grow without bound. Throwing closes the connection.
+    if (static_cast<size_t>(data_len) > kMaxBinaryContextFrameLen) {
         PDEBUG("[BinaryContextAdapter] Invalid data length: %u", data_len);
-        return 0;
+        THROW_COMMON_EXCEPT("binary frame too large (" << data_len << " > "
+                            << kMaxBinaryContextFrameLen << ")");
     }
 
-    // 检查是否有完整的消息
-    if (len < HEADER_SIZE + data_len) {
-        return 0;  // 数据不完整
+    // Is the whole message available? (size_t arithmetic: cannot wrap)
+    if (len < HEADER_SIZE + static_cast<size_t>(data_len)) {
+        return 0;  // incomplete message
     }
 
-    // 提取数据
+    // Extract the payload
     std::string payload(data + HEADER_SIZE, data_len);
 
-    // 更新 context
+    // Update the context
     _context->set_message(proto_id, payload);
 
-    // 调用用户处理器
+    // Invoke the user handler
     detail::HandlerContextScope scope(this);
     _handler->on_binary_message(*_context);
 

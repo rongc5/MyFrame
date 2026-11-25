@@ -151,6 +151,20 @@ static uint32_t read32u(const unsigned char* p){ return ((uint32_t)p[0]<<24)|((u
 static bool hp_read_int(const unsigned char*& p, const unsigned char* e, int prefix_bits, uint32_t& out){ if (p>=e) return false; uint8_t first=*p++; uint32_t max=(1u<<prefix_bits)-1u; uint32_t val=(first & max); if (val<max){ out=val; return true;} uint32_t m=0,add=0; do{ if(p>=e) return false; add=(uint32_t)(*p & 0x7f); val += (add<<m); m+=7; }while((*p++ & 0x80)==0x80); out=val; return true; }
 static bool hp_read_str(const unsigned char*& p, const unsigned char* e, std::string& s){ if (p>=e) return false; uint8_t b=*p++; bool h=(b&0x80)!=0; uint32_t len=(b&0x7f); if (len==0x7f){ uint32_t m=0,add=0; len=0x7f; do{ if(p>=e) return false; add=(uint32_t)(*p & 0x7f); len += (add<<m); m+=7; }while((*p++ & 0x80)==0x80);} if ((size_t)(e-p) < len) return false; if (h) return false; s.assign((const char*)p, (const char*)p+len); p += len; return true; }
 
+// RFC 7541 Appendix A static table entries 8..14 are the ":status" values.
+static int h2_static_status(uint32_t idx) {
+    switch (idx) {
+        case 8:  return 200;
+        case 9:  return 204;
+        case 10: return 206;
+        case 11: return 304;
+        case 12: return 400;
+        case 13: return 404;
+        case 14: return 500;
+        default: return 0;
+    }
+}
+
 bool http2_client_process::handle_headers_payload(const unsigned char* p, uint32_t len, uint8_t flags) {
     uint8_t pad_len = 0; const unsigned char* pp = p; const unsigned char* pe = p + len;
     if (flags & 0x08 /*PADDED*/) { if (pp>=pe) return false; pad_len = *pp++; }
@@ -161,7 +175,7 @@ bool http2_client_process::handle_headers_payload(const unsigned char* p, uint32
     // Minimal decode: only extract :status
     const unsigned char* bp = (const unsigned char*)block.data(); const unsigned char* be = bp + block.size();
     while (bp < be) {
-        if (*bp & 0x80) { uint32_t idx=0; if (!hp_read_int(bp,be,7,idx)) return false; if (idx>=8 && idx<=14) { static const int map[]={0,0,0,0,0,0,0,200,204,206,304,400,404,500}; int v = map[idx]; if (v) _status = v; } }
+        if (*bp & 0x80) { uint32_t idx=0; if (!hp_read_int(bp,be,7,idx)) return false; int v = h2_static_status(idx); if (v) _status = v; }
         else if ((*bp & 0x40) == 0x40) { uint32_t n=0; std::string name,value; uint8_t first=*bp; if ((first & 0x3f)==0){ ++bp; if (!hp_read_str(bp,be,name)) return false; } else { if (!hp_read_int(bp,be,6,n)) return false; if (n>=8 && n<=14) name=":status"; }
             if (!hp_read_str(bp,be,value)) return false; if (name==":status") _status = atoi(value.c_str()); }
         else { uint32_t n=0; std::string name,value; uint8_t first=*bp; if ((first & 0x0f)==0){ ++bp; if (!hp_read_str(bp,be,name)) return false; } else { if (!hp_read_int(bp,be,4,n)) return false; if (n==0) return false; if (n>=8 && n<=14) name=":status"; }

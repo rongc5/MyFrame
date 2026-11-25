@@ -401,33 +401,111 @@ class base_connect:public base_net_obj
             if (_recv_buf_len > 0 || flag)
             {
                 PDEBUG("process_recv_buf _recv_buf_len[%zu] fd[%d], flag[%d]", _recv_buf_len, _fd, flag);
-                p_ret = _process->process_recv_buf(_recv_buf.data(), _recv_buf_len);
-                if (p_ret && p_ret <= _recv_buf_len)
+                recv_dispatch_guard guard(_in_recv_dispatch);
+                p_ret = dispatch_recv_buf();
+                // Keep feeding bytes that are already buffered (pipelined
+                // requests, frames that followed a protocol handoff) while the
+                // process makes progress and is ready for more input. Without
+                // this, under EPOLLET the tail would wait for a new read event
+                // that may never come.
+                int rounds = 0;
+                while (p_ret > 0 && !_recv_buf.empty() && _fd >= 0 && _process &&
+                       !_process->is_closing() &&
+                       _process->can_process_buffered_input() &&
+                       ++rounds < kMaxRecvRedriveRounds)
                 {
-                    _recv_buf.erase(0, p_ret); 
-                }
-                else if (p_ret > _recv_buf_len)
-                {
-                    _recv_buf.erase(0, _recv_buf_len); 
-                }
-                if (p_ret > 0 && _peek_drain_backlog > 0) {
-                    if (_codec) {
-                        // A TLS probe installs SslCodec while handling bytes read
-                        // with MSG_PEEK.  Those bytes must remain in the socket so
-                        // SSL_accept() can consume the complete ClientHello.
-                        _peek_drain_backlog = 0;
-                    } else {
-                        size_t need = std::min(_peek_drain_backlog, static_cast<size_t>(p_ret));
-                        size_t flushed = drain_peek_bytes(need);
-                        _peek_drain_backlog -= flushed;
-                    }
+                    p_ret = dispatch_recv_buf();
                 }
             }        
 
             PDEBUG("process_recv_buf _recv_buf[%zu] ip[%s] flag[%d]", _recv_buf.length(), _peer_net.ip.c_str(), flag);
         }
 
+        // RAII flag marking that the receive path is currently dispatching
+        // _recv_buf, so a nested real_send() does not re-enter it.
+        struct recv_dispatch_guard {
+            bool& flag;
+            bool prev;
+            explicit recv_dispatch_guard(bool& f) : flag(f), prev(f) { flag = true; }
+            ~recv_dispatch_guard() { flag = prev; }
+        };
+
+        // Feed the whole of _recv_buf to the process once, erase what it
+        // consumed and drain matching peeked bytes. Returns the consumed count.
+        size_t dispatch_recv_buf()
+        {
+            const size_t buf_len = _recv_buf.length();
+            size_t p_ret = _process->process_recv_buf(_recv_buf.data(), buf_len);
+            if (p_ret && p_ret <= buf_len)
+            {
+                _recv_buf.erase(0, p_ret);
+            }
+            else if (p_ret > buf_len)
+            {
+                _recv_buf.erase(0, buf_len);
+            }
+            if (p_ret > 0 && _peek_drain_backlog > 0) {
+                if (_codec) {
+                    // A TLS probe installs SslCodec while handling bytes read
+                    // with MSG_PEEK.  Those bytes must remain in the socket so
+                    // SSL_accept() can consume the complete ClientHello.
+                    _peek_drain_backlog = 0;
+                } else {
+                    size_t need = std::min(_peek_drain_backlog, static_cast<size_t>(p_ret));
+                    size_t flushed = drain_peek_bytes(need);
+                    _peek_drain_backlog -= flushed;
+                }
+            }
+            return p_ret;
+        }
+
+        // After an asynchronous response completed, parse requests that were
+        // pipelined behind it and are still waiting in _recv_buf.
+        void redrive_buffered_input()
+        {
+            if (_in_recv_dispatch || _recv_buf.empty() || _fd < 0 || !_process) {
+                return;
+            }
+            recv_dispatch_guard guard(_in_recv_dispatch);
+            int rounds = 0;
+            while (!_recv_buf.empty() && _fd >= 0 && _process &&
+                   !_process->is_closing() &&
+                   _process->can_process_buffered_input() &&
+                   rounds++ < kMaxRecvRedriveRounds)
+            {
+                if (dispatch_recv_buf() == 0) break;
+            }
+        }
+
+        // Buffered input is never parsed synchronously from inside a send
+        // (the caller may still be finishing the previous request); queue it
+        // to the owner thread instead.
+        void schedule_buffered_redrive()
+        {
+            if (_in_recv_dispatch || _redrive_posted || _recv_buf.empty() || _fd < 0 ||
+                !_process || _process->is_closing() ||
+                !_process->can_process_buffered_input()) {
+                return;
+            }
+            _redrive_posted = true;
+            bool ok = post_to_owner([](base_net_obj & o) {
+                base_connect * self = dynamic_cast<base_connect *>(&o);
+                if (!self) return;
+                self->_redrive_posted = false;
+                self->redrive_buffered_input();
+            });
+            if (!ok) {
+                _redrive_posted = false;
+            }
+        }
+
         void real_send()
+        {
+            real_send_impl();
+            schedule_buffered_redrive();
+        }
+
+        void real_send_impl()
         {
             // notice_send() may originate in an application worker while the
             // epoll thread is already draining this connection. Serialize the
@@ -635,6 +713,11 @@ class base_connect:public base_net_obj
             return flushed;
         }
         std::string _recv_buf;
+        // Upper bound of back-to-back dispatches of already-buffered input in
+        // one receive event (fairness across connections).
+        static const int kMaxRecvRedriveRounds = 1024;
+        bool _in_recv_dispatch{false};
+        bool _redrive_posted{false};
         using send_buf_ptr = myframe::pooled_string_ptr;
         send_buf_ptr _p_send_buf;
         // Byte offset of the first unsent byte inside _p_send_buf.

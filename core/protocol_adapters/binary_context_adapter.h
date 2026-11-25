@@ -91,6 +91,10 @@ private:
 
 class BinaryContextAdapter : public ::base_data_process {
 public:
+    // Maximum accepted TLV payload length (10 MiB); larger frames close the
+    // connection instead of being buffered.
+    static const size_t kMaxBinaryContextFrameLen = 10u * 1024u * 1024u;
+
     BinaryContextAdapter(
         std::shared_ptr<base_net_obj> conn,
         IProtocolHandler* handler);

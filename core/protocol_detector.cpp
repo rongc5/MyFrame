@@ -29,8 +29,10 @@ ProtocolDetector::~ProtocolDetector() {
 bool ProtocolDetector::handoff_to_protocol(const UnifiedProtocolFactory::ProtocolEntry& proto,
                                            base_connect<base_data_process>* holder,
                                            const char* data,
-                                           size_t len)
+                                           size_t len,
+                                           size_t& consumed)
 {
+    consumed = 0;
     std::unique_ptr<::base_data_process> next = proto.create(get_base_net());
     if (!next) {
         PDEBUG("[ProtocolDetector] Failed to create handler for '%s'", proto.name.c_str());
@@ -42,14 +44,16 @@ bool ProtocolDetector::handoff_to_protocol(const UnifiedProtocolFactory::Protoco
         net->set_protocol_tag(proto.name, proto.terminal);
     }
 
-    auto* raw = next.release();
+    ::base_data_process* raw = next.release();
     // CRITICAL: set_process() deletes the previous process (i.e. this);
     // no member variable may be accessed afterwards!
     holder->set_process(raw);
-    // 'this' has been freed: only locals and the raw pointer may be used
+    // 'this' has been freed: only locals and the raw pointer may be used.
     if (len > 0) {
-        size_t consumed = raw->process_recv_buf(data, len);
-        (void)consumed;
+        consumed = raw->process_recv_buf(data, len);
+        if (consumed > len) {
+            consumed = len;
+        }
     }
     // Do not write _detected = true; (use-after-free!)
     return true;
@@ -85,52 +89,34 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
         return len;
     }
 
-    // Try detection on incoming data directly before buffering.
-    // This avoids rejecting large payloads (e.g. HTTP POST with body > 4KB)
-    // that can be identified from the first few bytes.
-    if (_buffer.empty()) {
-        for (const auto& proto : _protocols) {
-            if (proto.detect(buf, len)) {
-                bool ok = handoff_to_protocol(proto, holder, buf, len);
-                if (!ok) {
-                    notify_peer_close();
-                }
-                // After a successful handoff 'this' is deleted: do not touch members
-                return len;
+    // base_connect re-presents every byte received since the connection was
+    // accepted until we report them consumed, so buf always holds the whole
+    // undetected prefix.
+    for (size_t i = 0; i < _protocols.size(); ++i) {
+        const UnifiedProtocolFactory::ProtocolEntry& proto = _protocols[i];
+        if (proto.detect(buf, len)) {
+            size_t consumed = 0;
+            bool ok = handoff_to_protocol(proto, holder, buf, len, consumed);
+            if (!ok) {
+                notify_peer_close();
+                THROW_COMMON_EXCEPT("protocol handler creation failed for '" << proto.name.c_str() << "'");
             }
+            // After a successful handoff 'this' is deleted: do not touch members.
+            return consumed;
         }
     }
 
-    // Buffer the data for multi-packet detection
-    size_t remaining = (MAX_DETECT_BUFFER_SIZE > _buffer.size())
-                           ? (MAX_DETECT_BUFFER_SIZE - _buffer.size())
-                           : 0;
-    if (remaining == 0 || len > remaining) {
-        PDEBUG("[ProtocolDetector] Buffer overflow attempt (current=%zu, incoming=%zu, cap=%zu). Closing.",
-               _buffer.size(), static_cast<size_t>(len), static_cast<size_t>(MAX_DETECT_BUFFER_SIZE));
+    // Nothing matched yet: bound how much undetected input may accumulate.
+    if (len >= MAX_DETECT_BUFFER_SIZE) {
+        PDEBUG("[ProtocolDetector] Detection buffer limit reached (%zu >= %zu). Closing.",
+               static_cast<size_t>(len), static_cast<size_t>(MAX_DETECT_BUFFER_SIZE));
         notify_peer_close();
         // notify_peer_close() only flags the process; throw so the container
         // tears the connection down instead of sniffing unbounded input.
-        THROW_COMMON_EXCEPT("protocol detect buffer overflow (" << (_buffer.size() + len) << ")");
+        THROW_COMMON_EXCEPT("protocol detect buffer overflow (" << len << ")");
     }
 
-    _buffer.append(buf, len);
-
-    for (const auto& proto : _protocols) {
-        if (proto.detect(_buffer.data(), _buffer.size())) {
-            std::string buffered;
-            buffered.swap(_buffer);
-            bool ok = handoff_to_protocol(proto, holder,
-                                          buffered.data(), buffered.size());
-            if (!ok) {
-                notify_peer_close();
-            }
-            // After a successful handoff 'this' is deleted: do not touch members
-            return len;
-        }
-    }
-
-    return len;
+    return 0;  // keep the bytes in base_connect::_recv_buf and wait for more
 }
 
 std::string* ProtocolDetector::get_send_buf() { return nullptr; }

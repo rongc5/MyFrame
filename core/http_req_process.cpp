@@ -7,6 +7,7 @@
 
 #include "http_base_data_process.h"
 #include "common_util.h"
+#include "protocol_limits.h"
 
 http_req_process::http_req_process(std::shared_ptr<base_net_obj> p):http_base_process(p)
 {
@@ -74,7 +75,20 @@ void http_req_process::parse_header(std::string & recv_head)
             std::vector<std::string> tmp_vec;
             SplitString(strList[i].c_str(), ":", &tmp_vec, SPLIT_MODE_ONE);
             if (2 == tmp_vec.size()) {
-                //THROW_COMMON_EXCEPT("http headers parms error");
+                // Conflicting duplicate Content-Length values (in any letter
+                // case) make the response framing ambiguous: reject them.
+                if (strcasecmp(tmp_vec[0].c_str(), "Content-Length") == 0) {
+                    std::string* prev = _res_head_para.get_header("Content-Length");
+                    if (prev) {
+                        std::string pv = *prev, nv = tmp_vec[1];
+                        StringTrim(pv);
+                        StringTrim(nv);
+                        if (pv != nv) {
+                            THROW_COMMON_EXCEPT("conflicting content-length headers in http response");
+                        }
+                        continue;
+                    }
+                }
                 _res_head_para._headers.insert(make_pair(tmp_vec[0], tmp_vec[1]));
                 PDEBUG("%s: %s", tmp_vec[0].c_str(), tmp_vec[1].c_str());
             }
@@ -99,7 +113,16 @@ size_t http_req_process::process_recv_body(const char *buf, size_t len, int &res
     std::string *tmp_str = _res_head_para.get_header("Content-Length");
     if (tmp_str)
     {
-        content_length = strtoull(tmp_str->c_str(), 0, 10);
+        // Strict framing: the value (optional whitespace aside) must be
+        // plain ASCII digits; negative or garbage lengths close the connection.
+        std::string v = *tmp_str;
+        size_t a = v.find_first_not_of(" \t");
+        size_t b = v.find_last_not_of(" \t");
+        v = (a == std::string::npos) ? std::string() : v.substr(a, b - a + 1);
+        if (!myframe::parse_strict_decimal_u64(v, content_length))
+        {
+            THROW_COMMON_EXCEPT("invalid content-length value in http response");
+        }
     }
     if (_res_head_para._chunked == "chunked")
     {
@@ -144,11 +167,22 @@ size_t http_req_process::get_chuncked(const char *buf, size_t len, int &result)
             int nRet= GetStringByLabel(_chunked_body, "", "\r\n", sTmp, 0, 1);            
             if (nRet != -1)
             {
-                _cur_chunked_len=strtoul(sTmp.c_str(), 0, 16);
+                // Strict chunk-size: hex digits only (extensions stripped),
+                // bounded so the signed length arithmetic below cannot wrap.
+                std::string size_line = sTmp;
+                size_t semi = size_line.find(';');
+                if (semi != std::string::npos) size_line.erase(semi);
+                StringTrim(size_line);
+                uint64_t chunk_sz = 0;
+                if (!myframe::parse_strict_hex_u64(size_line, chunk_sz) ||
+                    chunk_sz > static_cast<uint64_t>(MAX_RECV_SIZE)) {
+                    THROW_COMMON_EXCEPT("invalid chunk size in http response");
+                }
+                _cur_chunked_len = static_cast<int64_t>(chunk_sz);
                 _cur_chunked_rec_len = nRet;
                 if(_cur_chunked_len == 0)
                 {         
-                    result = 1; //������
+                    result = 1; // last chunk
                     break;
                 }
 
@@ -172,7 +206,7 @@ size_t http_req_process::get_chuncked(const char *buf, size_t len, int &result)
                 break;
             }
         }
-        else //�Ѿ���ȡ���ȵ���û�л�ȡ����
+        else // chunk length known, waiting for the rest of the chunk data
         {          
             if (_cur_chunked_len+2+_cur_chunked_rec_len > (int)_chunked_body.length())
             {

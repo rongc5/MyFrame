@@ -22,7 +22,7 @@ class web_socket_process: public base_data_process
         
         void set_process(web_socket_data_process * data_process);
 
-		//�������յ�����
+		// Process received bytes
 		size_t process_recv_buf(const char *buf, const size_t len);
 
         virtual void handle_msg(std::shared_ptr<normal_msg> & p_msg);
@@ -75,6 +75,14 @@ class web_socket_process: public base_data_process
 		WEB_SOCKET_STATUS _wb_status;
 		web_socket_data_process*  _p_data_process;
 		bool _if_send_mask;		
+		// Server side: every received frame must be masked (RFC 6455 5.1).
+		bool _require_recv_mask;
+
+	public:
+		// Upper bound of queued control frames (PONG/CLOSE) waiting to be
+		// sent; a peer that floods PINGs without reading is disconnected.
+		static const size_t kMaxPendingControlFrames = 16;
+	protected:
 
         std::string _ping_data;
         std::list<std::string*> _p_tmp_str;

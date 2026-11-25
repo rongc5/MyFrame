@@ -139,3 +139,15 @@ if(TARGET test_large_transfer_and_stress)
     add_test(NAME large_transfer_and_stress COMMAND test_large_transfer_and_stress)
     set_tests_properties(large_transfer_and_stress PROPERTIES TIMEOUT 180)
 endif()
+
+# Batch 1 security / framing regression suite (HTTP smuggling, chunked
+# overflow, keep-alive status line, detector handoff, binary TLV, WebSocket
+# hardening, TLS protocol range, HTTP/2 split frames, event-loop mutation).
+maybe_add_exe(test_security_and_framing ${CMAKE_CURRENT_SOURCE_DIR}/test_security_and_framing.cpp)
+if(TARGET test_security_and_framing)
+    target_compile_definitions(test_security_and_framing PRIVATE
+        MYFRAME_TEST_CERT="${CMAKE_SOURCE_DIR}/test_certs/server.crt"
+        MYFRAME_TEST_KEY="${CMAKE_SOURCE_DIR}/test_certs/server.key")
+    add_test(NAME security_and_framing COMMAND test_security_and_framing)
+    set_tests_properties(security_and_framing PROPERTIES TIMEOUT 120)
+endif()
