@@ -467,5 +467,5 @@ static inline int myframe_alpn_select_cb(SSL* ssl, const unsigned char** out,
     if (allow_h11 && find_proto(HTTP11, (unsigned int)(sizeof(HTTP11) - 1))) {
         *out = HTTP11; *outlen = (unsigned char)(sizeof(HTTP11) - 1); return SSL_TLSEXT_ERR_OK;
     }
-    return SSL_TLSEXT_ERR_NOACK;
+    return SSL_TLSEXT_ERR_ALERT_FATAL;
 }

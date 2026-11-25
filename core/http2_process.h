@@ -42,6 +42,8 @@ public:
         _dec_tbl_max = kDefaultHeaderTableSize;
         _enc_dyn.clear();
         _enc_tbl_size = 0;
+        _enc_tbl_max = kDefaultHeaderTableSize;
+        _enc_size_pending = false;
     }
     virtual void handle_msg(std::shared_ptr<normal_msg>& msg) override;
     virtual void handle_timeout(std::shared_ptr<timer_msg>& t_msg) override;
@@ -80,6 +82,8 @@ private:
         std::string authority;
         std::map<std::string,std::string> headers;
         std::string body;
+        bool has_content_length{false};
+        uint64_t content_length{0};
         bool headers_received{false};
         bool end_stream_received{false};
         // Priority & flow control
@@ -124,6 +128,8 @@ private:
     std::vector<DynHdr> _enc_dyn;
     size_t _enc_tbl_size{0};
     size_t _enc_tbl_max{kDefaultHeaderTableSize};
+    bool _enc_size_pending{false};
+    size_t _enc_pending_min{kDefaultHeaderTableSize};
     void enc_dyn_evict();
     void enc_dyn_add(const std::string& name, const std::string& value);
     uint32_t enc_dyn_find_pair(const std::string& name, const std::string& value) const;

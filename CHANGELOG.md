@@ -5,6 +5,26 @@
 
 版本号见根目录 `VERSION` 文件(第一行 `myframe <版本>`,供 `scripts/pack_myframe.sh` 解析)。
 
+## [Unreleased]
+
+### Fixed
+
+- HTTP/2 responses encode pending HPACK table-size updates. Decoded request
+  headers are limited to 100 KiB including field overhead and 256 fields.
+  Split Cookie fields are joined and Content-Length is checked against the body.
+- WebSocket text is validated by the protocol layer before delivery. Its temporary
+  buffer is released after delivery, validation failure, or receipt of Close.
+  Data following Close is discarded.
+
+### Changed
+
+- Custom WebSocket adapters receive text through one `process_recv_buf` call
+  after the complete message passes UTF-8 validation.
+- TLS clients offering ALPN must share an enabled protocol with the endpoint.
+  No overlap now terminates the handshake with `no_application_protocol`.
+  HTTP/1.1 and WSS clients offering only `http/1.1` require it to be enabled.
+  Unified endpoints also require a registered HTTP/2 handler to negotiate `h2`.
+
 ## [1.0.0] - 2026-06-22
 
 首个带版本号的发布。确立 `VERSION` / `CHANGELOG.md` / `scripts/pack_myframe.sh` 版本与打包流程。

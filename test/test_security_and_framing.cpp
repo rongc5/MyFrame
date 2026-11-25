@@ -885,6 +885,70 @@ public:
     std::string message;
 };
 
+
+static void test_ws_adapter_validation() {
+    struct Process : web_socket_res_process {
+        Process() : web_socket_res_process(std::shared_ptr<base_net_obj>()) {
+            _wb_status = WB_HANDSHAKE_OK;
+        }
+        size_t pending_capacity() const { return _pending_text.capacity(); }
+    };
+    struct Receiver : web_socket_data_process {
+        std::string bytes;
+        int completed = 0;
+        explicit Receiver(web_socket_process* process) : web_socket_data_process(process) {}
+        size_t process_recv_buf(const char* data, size_t len) override {
+            bytes.append(data, len);
+            return len;
+        }
+        void msg_recv_finish() override { ++completed; }
+    };
+    {
+        Process process;
+        Receiver* receiver = new Receiver(&process);
+        process.set_process(receiver);
+        const size_t empty_capacity = process.pending_capacity();
+        const std::string payload(65536, 'x');
+        std::string frame = wstest::Client::build_frame(1, payload, true, true);
+        process.process_recv_buf(frame.data(), frame.size());
+        CHECK(receiver->bytes == payload && receiver->completed == 1);
+        CHECK(process.pending_capacity() == empty_capacity);
+        frame = wstest::Client::build_frame(1, payload, false, true);
+        process.process_recv_buf(frame.data(), frame.size());
+        CHECK(process.pending_capacity() >= payload.size());
+        frame = wstest::Client::build_frame(8, "", true, true);
+        process.process_recv_buf(frame.data(), frame.size());
+        CHECK(process.pending_capacity() == empty_capacity);
+        CHECK(receiver->bytes == payload && receiver->completed == 1);
+    }
+    {
+        Process process;
+        Receiver* receiver = new Receiver(&process);
+        process.set_process(receiver);
+        std::string first = wstest::Client::build_frame(1, "\xe2", false, true);
+        process.process_recv_buf(first.data(), first.size());
+        CHECK(receiver->bytes.empty());
+        std::string rest = wstest::Client::build_frame(9, "ping", true, true) +
+                           wstest::Client::build_frame(0, "\x82\xac", true, true);
+        CHECK(feed_chunks_exact(process, rest, 1));
+        CHECK(receiver->bytes == "\xe2\x82\xac" && receiver->completed == 1);
+        std::string close_tail = wstest::Client::build_frame(8, "", true, true) +
+                                 wstest::Client::build_frame(2, "after-close", true, true);
+        process.process_recv_buf(close_tail.data(), close_tail.size());
+        CHECK(receiver->bytes == "\xe2\x82\xac" && receiver->completed == 1);
+    }
+    {
+        Process process;
+        Receiver* receiver = new Receiver(&process);
+        process.set_process(receiver);
+        std::string invalid = wstest::Client::build_frame(1, "\xff", true, true);
+        bool rejected = false;
+        try { process.process_recv_buf(invalid.data(), invalid.size()); }
+        catch (const std::exception&) { rejected = true; }
+        CHECK(rejected && receiver->bytes.empty() && receiver->completed == 0);
+    }
+}
+
 static void test_ws_upgrade_tail() {
     web_socket_req_process client{std::shared_ptr<base_net_obj>()};
     WelcomeReceiver* receiver = new WelcomeReceiver(&client);
@@ -1237,6 +1301,121 @@ public:
     std::shared_ptr<TickChild> victim;
     std::vector<std::shared_ptr<TickChild> > children;
 };
+
+
+static std::string review_h2_headers(const std::vector<std::pair<std::string, std::string> >& fields) {
+    std::string block("\x82\x86\x84", 3);
+    for (const auto& field : fields) {
+        block.push_back(0);
+        hpack::encode_string(block, field.first, false);
+        hpack::encode_string(block, field.second, false);
+    }
+    return block;
+}
+
+static std::string review_h2_output(http2_process& server) {
+    std::string output;
+    while (std::string* part = server.get_send_buf()) {
+        output += *part;
+        delete part;
+    }
+    return output;
+}
+
+static void test_review_protocol_boundaries() {
+    section("HPACK settings, decoded limits, cookies and content length");
+    struct App : myframe::IApplicationHandler {
+        int calls = 0;
+        std::string cookie;
+        void on_http(const myframe::HttpRequest& req, myframe::HttpResponse& res) override {
+            ++calls;
+            auto it = req.headers.find("cookie");
+            if (it != req.headers.end()) cookie = it->second;
+            res.status = 200;
+        }
+    };
+    const std::string preface = std::string(h2::CONNECTION_PREFACE, h2::CONNECTION_PREFACE_LEN);
+    {
+        App app;
+        http2_process server(std::shared_ptr<base_net_obj>(), &app);
+        std::string setting;
+        setting.push_back(0); setting.push_back(1); h2::write32(setting, 0);
+        std::string wire = preface + h2_frame(4, 0, 0, setting);
+        wire += h2_frame(1, 5, 1, review_h2_headers({{"cookie", "a=1"}, {"cookie", "b=2"}}));
+        server.process_recv_buf(wire.data(), wire.size());
+        CHECK(app.calls == 1 && app.cookie == "a=1; b=2");
+        std::string out = review_h2_output(server);
+        bool found = false;
+        for (size_t off = 0; off + 9 <= out.size();) {
+            const unsigned char* f = reinterpret_cast<const unsigned char*>(out.data() + off);
+            size_t length = (size_t(f[0]) << 16) | (size_t(f[1]) << 8) | f[2];
+            if (f[3] == 1 && length >= 2) {
+                CHECK(f[9] == 0x20 && f[10] == 0x88);
+                found = true;
+            }
+            off += 9 + length;
+        }
+        CHECK(found);
+    }
+    const std::vector<std::vector<std::pair<std::string, std::string> > > cases = {
+        {{"content-length", "2"}}, {{"content-length", "-1"}},
+        {{"content-length", "1x"}}, {{"content-length", "18446744073709551616"}},
+        {{"content-length", "1"}, {"content-length", "2"}},
+        {{"content-length", "0"}}, {{"content-length", "1"}, {"content-length", "1"}}
+    };
+    for (size_t i = 0; i < cases.size(); ++i) {
+        App app;
+        http2_process server(std::shared_ptr<base_net_obj>(), &app);
+        std::string wire = preface + h2_frame(4, 0, 0, "");
+        wire += h2_frame(1, 4, 1, review_h2_headers(cases[i]));
+        wire += h2_frame(0, 1, 1, "x");
+        server.process_recv_buf(wire.data(), wire.size());
+        CHECK(app.calls == (i == 6 ? 1 : 0));
+        CHECK(server.active_stream_count() == 0);
+    }
+    for (int mode = 0; mode < 2; ++mode) {
+        App app;
+        http2_process server(std::shared_ptr<base_net_obj>(), &app);
+        std::vector<std::pair<std::string, std::string> > fields(
+            mode == 0 ? 254 : 40, {"x-test", std::string(mode == 0 ? 1 : 3000, 'a')});
+        std::string wire = preface + h2_frame(4, 0, 0, "");
+        // Repeated dynamic references must count every decoded field's bytes.
+        std::string compressed("\x82\x86\x84", 3);
+        for (size_t index = 0; index < fields.size(); ++index) {
+            if (mode == 1 && index != 0) {
+                compressed.push_back(static_cast<char>(0xbe));
+            } else {
+                compressed.push_back(mode == 1 ? 0x40 : 0);
+                hpack::encode_string(compressed, fields[index].first, true);
+                hpack::encode_string(compressed, fields[index].second, true);
+            }
+        }
+        for (size_t off = 0; off < compressed.size(); off += 16000) {
+            const bool last = off + 16000 >= compressed.size();
+            wire += h2_frame(off == 0 ? 1 : 9, (off == 0 ? 1 : 0) | (last ? 4 : 0),
+                             1, compressed.substr(off, 16000));
+        }
+        bool rejected = false;
+        try { server.process_recv_buf(wire.data(), wire.size()); }
+        catch (const std::exception&) { rejected = true; }
+        CHECK(rejected && app.calls == 0);
+    }
+    ssl_context context;
+    const unsigned char offered[] = {2, 'h', '2'};
+    const unsigned char* selected = nullptr;
+    unsigned char selected_length = 0;
+    context._allow_h2 = false;
+    CHECK(myframe_alpn_select_cb(nullptr, &selected, &selected_length,
+                                offered, sizeof(offered), &context) == SSL_TLSEXT_ERR_ALERT_FATAL);
+    const unsigned char http11[] = {8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+    context._allow_h11 = true;
+    CHECK(myframe_alpn_select_cb(nullptr, &selected, &selected_length,
+                                http11, sizeof(http11), &context) == SSL_TLSEXT_ERR_OK);
+    CHECK(std::string(reinterpret_cast<const char*>(selected), selected_length) == "http/1.1");
+    context._allow_h11 = false;
+    CHECK(myframe_alpn_select_cb(nullptr, &selected, &selected_length,
+                                http11, sizeof(http11), &context) == SSL_TLSEXT_ERR_ALERT_FATAL);
+}
 
 static void test_http2_and_container() {
     section("8. HTTP/2 split frames, :status mapping, tick mutation [N3, N21, N10]");
@@ -1683,7 +1862,9 @@ int main() {
     test_binary_adapters();
     test_ws_header_parse_speed();
     test_ws_upgrade_tail();
+    test_ws_adapter_validation();
     test_http2_and_container();
+    test_review_protocol_boundaries();
 
     // TLS configured as exactly TLS 1.3 (leave _alpn empty so N23 verifies
     // UnifiedProtocolFactory restricts ALPN to http/1.1 when no h2 handler exists).

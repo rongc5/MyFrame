@@ -104,6 +104,9 @@ bool http2_process::parse_frames(size_t& consumed) {
                         }
                         _peer_max_frame_size = val;
                     } else if (id == SETTINGS_HEADER_TABLE_SIZE) {
+                        if (!_enc_size_pending) _enc_pending_min = val;
+                        else _enc_pending_min = std::min(_enc_pending_min, static_cast<size_t>(val));
+                        _enc_size_pending = true;
                         _enc_tbl_max = val;
                         enc_dyn_evict();
                     }
@@ -375,6 +378,7 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
     const unsigned char* end = p + block.size();
     std::vector<std::pair<std::string, std::string> > headers;
     bool allow_size_update = true;
+    size_t header_bytes = 0;
     while (p < end) {
         uint8_t b = *p;
         if (b & 0x80u) {
@@ -384,6 +388,12 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
             if (!decode_integer(p, end, 7, idx)) return false;
             std::string name, value;
             if (!dec_lookup(idx, name, value)) return false;
+            const size_t field_bytes = name.size() + value.size() + 32;
+            if (field_bytes > MAX_HTTP_HEAD_LEN - header_bytes ||
+                headers.size() >= myframe::MAX_HTTP_HEADER_COUNT) {
+                send_goaway_and_throw(ENHANCE_YOUR_CALM, "http2: decoded header list exceeds limit");
+            }
+            header_bytes += field_bytes;
             headers.emplace_back(std::move(name), std::move(value));
         } else if ((b & 0xC0u) == 0x40u) {
             // Literal Header Field with Incremental Indexing (RFC 7541 6.2.1)
@@ -399,6 +409,12 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
             }
             if (!decode_string(p, end, value)) return false;
             dec_dyn_add(name, value);
+            const size_t field_bytes = name.size() + value.size() + 32;
+            if (field_bytes > MAX_HTTP_HEAD_LEN - header_bytes ||
+                headers.size() >= myframe::MAX_HTTP_HEADER_COUNT) {
+                send_goaway_and_throw(ENHANCE_YOUR_CALM, "http2: decoded header list exceeds limit");
+            }
+            header_bytes += field_bytes;
             headers.emplace_back(std::move(name), std::move(value));
         } else if ((b & 0xE0u) == 0x20u) {
             // Dynamic Table Size Update (RFC 7541 6.3): only valid before any header field.
@@ -421,6 +437,12 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
                 if (!decode_string(p, end, name)) return false;
             }
             if (!decode_string(p, end, value)) return false;
+            const size_t field_bytes = name.size() + value.size() + 32;
+            if (field_bytes > MAX_HTTP_HEAD_LEN - header_bytes ||
+                headers.size() >= myframe::MAX_HTTP_HEADER_COUNT) {
+                send_goaway_and_throw(ENHANCE_YOUR_CALM, "http2: decoded header list exceeds limit");
+            }
+            header_bytes += field_bytes;
             headers.emplace_back(std::move(name), std::move(value));
         } else {
             return false;
@@ -502,7 +524,22 @@ bool http2_process::handle_headers_block(uint32_t stream_id, const std::string& 
             _streams.erase(stream_id);
             return true;
         } else {
-            st.headers[kv.first] = kv.second;
+            if (kv.first == "content-length") {
+                uint64_t length = 0;
+                if (is_trailers || !myframe::parse_strict_decimal_u64(kv.second, length) ||
+                    (st.has_content_length && length != st.content_length)) {
+                    put_send_move(make_rst_stream(stream_id, PROTOCOL_ERROR));
+                    _streams.erase(stream_id);
+                    return true;
+                }
+                st.has_content_length = true;
+                st.content_length = length;
+            }
+            if (kv.first == "cookie" && st.headers.count("cookie")) {
+                st.headers["cookie"] += "; " + kv.second;
+            } else {
+                st.headers[kv.first] = kv.second;
+            }
         }
     }
 
@@ -600,6 +637,13 @@ void http2_process::send_response(uint32_t stream_id, const myframe::HttpRespons
     if (suppress_body) body.clear();
 
     std::string block;
+    if (_enc_size_pending) {
+        encode_integer(block, static_cast<uint32_t>(_enc_pending_min), 5, 0x20);
+        if (_enc_pending_min != _enc_tbl_max) {
+            encode_integer(block, static_cast<uint32_t>(_enc_tbl_max), 5, 0x20);
+        }
+        _enc_size_pending = false;
+    }
     // :status — use RFC 7541 static index for common codes, else literal without indexing.
     {
         uint32_t sidx = h2_static_status_index(rsp.status);
@@ -690,6 +734,13 @@ void http2_process::send_response(uint32_t stream_id, const myframe::HttpRespons
 void http2_process::on_data(uint32_t stream_id, const unsigned char* p, uint32_t len, bool end_stream) {
     auto it = _streams.find(stream_id);
     if (it == _streams.end()) return;
+    if (it->second.has_content_length &&
+        (it->second.body.size() > it->second.content_length ||
+         len > it->second.content_length - it->second.body.size())) {
+        put_send_move(h2::make_rst_stream(stream_id, h2::PROTOCOL_ERROR));
+        _streams.erase(it);
+        return;
+    }
     if (len) it->second.body.append(reinterpret_cast<const char*>(p), static_cast<size_t>(len));
     if (end_stream) {
         it->second.end_stream_received = true;
@@ -700,6 +751,12 @@ void http2_process::on_data(uint32_t stream_id, const unsigned char* p, uint32_t
 void http2_process::finish_stream(uint32_t stream_id) {
     auto it = _streams.find(stream_id);
     if (it == _streams.end()) { return; }
+    if (it->second.has_content_length &&
+        it->second.content_length != it->second.body.size()) {
+        put_send_move(h2::make_rst_stream(stream_id, h2::PROTOCOL_ERROR));
+        _streams.erase(it);
+        return;
+    }
     StreamState st = std::move(it->second);
     _streams.erase(it);
 

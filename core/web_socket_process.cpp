@@ -6,6 +6,7 @@
 #include "common_exception.h"
 #include "mybase64.h"
 #include "common_util.h"
+#include "protocol_limits.h"
 
 
 namespace {
@@ -400,14 +401,28 @@ size_t web_socket_process::RECV_WB_HANDSHAKE_OK_PROCESS(const char *buf, const s
                 // completes a fragmented message) or for headers received without
                 // their body yet. if_finish() decides whether the frame is done.
                 size_t chunk = left_len - tmp_left;
+                const bool text_message = tmp_code == 0x1 ||
+                    (tmp_code == 0x0 && _recent_recv_web_header._message_op_code == 0x1);
+                std::string unmasked;
+                const char* payload = left_buf;
                 if (_recent_recv_web_header._mask_flag == 1)
                 {
-                    std::string tmp_ret = _recent_recv_web_header.mask_code(left_buf, chunk);
-                    _p_data_process->process_recv_buf(tmp_ret.c_str(), tmp_ret.length());
+                    unmasked = _recent_recv_web_header.mask_code(left_buf, chunk);
+                    payload = unmasked.data();
                 }
-                else
+                if (!_close_received)
                 {
-                    _p_data_process->process_recv_buf(left_buf, chunk);
+                    if (text_message)
+                    {
+                        const size_t limit = myframe::max_ws_message_bytes();
+                        if (_pending_text.size() > limit || chunk > limit - _pending_text.size())
+                            THROW_COMMON_EXCEPT("websocket text message exceeds limit");
+                        _pending_text.append(payload, chunk);
+                    }
+                    else
+                    {
+                        _p_data_process->process_recv_buf(payload, chunk);
+                    }
                 }
 
                 left_buf = left_buf + chunk;
@@ -417,11 +432,13 @@ size_t web_socket_process::RECV_WB_HANDSHAKE_OK_PROCESS(const char *buf, const s
                 {
                     if (!_close_received)
                     {
-                        if (_recent_recv_web_header._completed_op_code == 0x1 &&
-                            !ws_is_valid_utf8(_p_data_process->recent_msg().data(),
-                                              _p_data_process->recent_msg().size()))
+                        if (_recent_recv_web_header._completed_op_code == 0x1)
                         {
-                            THROW_COMMON_EXCEPT("websocket invalid UTF-8 in text message");
+                            std::string text;
+                            text.swap(_pending_text);
+                            if (!ws_is_valid_utf8(text.data(), text.size()))
+                                THROW_COMMON_EXCEPT("websocket invalid UTF-8 in text message");
+                            _p_data_process->process_recv_buf(text.data(), text.size());
                         }
                         _p_data_process->msg_recv_finish();
                     }
@@ -459,6 +476,7 @@ size_t web_socket_process::RECV_WB_HANDSHAKE_OK_PROCESS(const char *buf, const s
                             }
                         }
                         _close_received = true;
+                        std::string().swap(_pending_text);
                         send_close(_ping_data);
                         _p_data_process->notify_peer_close();
                         request_close_after(50);
