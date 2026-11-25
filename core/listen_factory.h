@@ -95,7 +95,8 @@ private:
     std::shared_ptr<IFactory> _biz_factory;    // 业务工厂（如 MultiProtocolFactory）
     std::vector<uint32_t> _worker_indices;     // 监听侧保存的 worker 列表
 
-    // 保存 listen 的连接对象，防止被容器析构
-    std::shared_ptr< listen_connect<listen_process> > _listen_conn;
+    // The network container owns the listener. Keeping a strong reference here
+    // could destroy it after its container/epoll was freed during server shutdown.
+    std::weak_ptr< listen_connect<listen_process> > _listen_conn;
     listen_process*                                  _listen_proc{nullptr};
 };

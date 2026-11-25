@@ -250,6 +250,10 @@ int main(int argc, char** argv) {
         size_t he1 = std::string::npos;
         while ((he1 = buf.find("\r\n\r\n")) == std::string::npos) { char t[4096]; ssize_t n = ::recv(fd, t, sizeof(t), 0); if (n <= 0) break; buf.append(t, (size_t)n); }
         CHECK(he1 != std::string::npos);
+        if (he1 == std::string::npos) { ::close(fd); srv.stop(); srv.join(); return 1; }
+        CHECK(buf.substr(0, he1).find("Connection: keep-alive") != std::string::npos);
+        // Exceed the deferred-close delay: a mistakenly scheduled close must fail here.
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
         CHECK(status_of(buf) == 200);
         CHECK(buf.substr(0, he1).find("Content-Length: 6") != std::string::npos);
         buf.erase(0, he1 + 4);                                    // 消费 HEAD 响应（无 body）
@@ -258,6 +262,7 @@ int main(int argc, char** argv) {
         size_t he2 = std::string::npos;
         while ((he2 = buf.find("\r\n\r\n")) == std::string::npos) { char t[4096]; ssize_t n = ::recv(fd, t, sizeof(t), 0); if (n <= 0) break; buf.append(t, (size_t)n); }
         CHECK(he2 != std::string::npos);
+        if (he2 == std::string::npos) { ::close(fd); srv.stop(); srv.join(); return 1; }
         size_t cl = 0, p = buf.find("Content-Length:"); if (p != std::string::npos) cl = (size_t)std::atol(buf.c_str() + p + 15);
         size_t bs = he2 + 4;
         while (buf.size() - bs < cl) { char t[4096]; ssize_t n = ::recv(fd, t, sizeof(t), 0); if (n <= 0) break; buf.append(t, (size_t)n); }

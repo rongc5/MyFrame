@@ -123,3 +123,19 @@ if(TARGET test_p1_core)
     add_test(NAME p1_core COMMAND test_p1_core)
     set_tests_properties(p1_core PROPERTIES TIMEOUT 400)
 endif()
+
+maybe_add_exe(test_http_persistence ${CMAKE_CURRENT_SOURCE_DIR}/test_http_persistence.cpp)
+if(TARGET test_http_persistence)
+    add_test(NAME http_persistence COMMAND test_http_persistence)
+    set_tests_properties(http_persistence PROPERTIES TIMEOUT 15)
+endif()
+
+# Large-transfer, TLS, header-guard and concurrency stress regression.
+maybe_add_exe(test_large_transfer_and_stress ${CMAKE_CURRENT_SOURCE_DIR}/test_large_transfer_and_stress.cpp)
+if(TARGET test_large_transfer_and_stress)
+    target_compile_definitions(test_large_transfer_and_stress PRIVATE
+        MYFRAME_TEST_CERT="${CMAKE_SOURCE_DIR}/test_certs/server.crt"
+        MYFRAME_TEST_KEY="${CMAKE_SOURCE_DIR}/test_certs/server.key")
+    add_test(NAME large_transfer_and_stress COMMAND test_large_transfer_and_stress)
+    set_tests_properties(large_transfer_and_stress PROPERTIES TIMEOUT 180)
+endif()

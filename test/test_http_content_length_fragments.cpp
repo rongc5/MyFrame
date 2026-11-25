@@ -69,6 +69,21 @@ int main() {
         return 1;
     }
 
+    // Adjacent bodyless requests must not be swallowed as a GET/HEAD body.
+    for (const std::string method : {"GET", "HEAD"}) {
+        ProbeServer pipeline;
+        const std::string first = method + " /first HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        const std::string second = "GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        const std::string wire = first + second;
+        const auto consumed = pipeline.process_recv_buf(wire.data(), wire.size());
+        if (consumed != first.size() || pipeline.consumer->finishes != 1) return 1;
+        pipeline.reset();
+        if (pipeline.process_recv_buf(wire.data() + consumed, wire.size() - consumed) != second.size() ||
+            pipeline.consumer->finishes != 2) return 1;
+        ProbeServer body;
+        if (!check_fragments(body, method + " /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 11\r\n\r\n")) return 1;
+    }
+
     ProbeClient client;
     if (!check_fragments(client,
             "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n")) {

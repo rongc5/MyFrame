@@ -38,6 +38,7 @@ class base_connect:public base_net_obj
             int bReuseAddr = 1;
             setsockopt(_fd, IPPROTO_TCP, TCP_NODELAY, &bReuseAddr, sizeof(bReuseAddr));
             _p_send_buf.reset();
+            _send_offset = 0;
             _process.reset();
             get_peer_addr();
         }
@@ -46,6 +47,7 @@ class base_connect:public base_net_obj
             : _peek_drain_backlog(0)
         {
             _p_send_buf.reset();
+            _send_offset = 0;
             _process.reset();
         }
 
@@ -72,13 +74,13 @@ class base_connect:public base_net_obj
             peer_closed = peer_closed || (event & EPOLLRDHUP) == EPOLLRDHUP;
 #endif
 
-            if ((event & EPOLLIN) == EPOLLIN) //读
+            if ((event & EPOLLIN) == EPOLLIN) // readable
             {
                 touch_active(GetMonotonicMilliSecond());
                 real_recv();
             }
 
-            if ((event & EPOLLOUT) == EPOLLOUT ) //写
+            if ((event & EPOLLOUT) == EPOLLOUT) // writable
             {
                 if (_codec) { _codec->on_writable_event(); }
                 touch_active(GetMonotonicMilliSecond());
@@ -102,7 +104,7 @@ class base_connect:public base_net_obj
 
             if ((get_event() & EPOLLIN) == EPOLLIN) {
                 PDEBUG("real_net_process real_recv");
-                // Only force process when codec explicitly needs it (e.g., TLS handshake write→read)
+                // Only force process when codec explicitly needs it (e.g., TLS handshake write->read)
                 bool force = (_codec && _codec->poll_events_hint() != 0);
                 real_recv(force);
             }
@@ -139,6 +141,16 @@ class base_connect:public base_net_obj
                 if (auto* ep = _p_net_container->get_epoll()) {
                     try { ep->del_from_epoll(this); } catch (...) {}
                 }
+            }
+            // Release the codec while this object still owns the descriptor.
+            // SslCodec's destructor calls SSL_shutdown() on the fd bound with
+            // SSL_set_fd(); running it after ::close() lets the stale SSL write a
+            // close_notify into whatever connection the kernel hands that fd
+            // number to next (observed as "unexpected message" handshake
+            // failures on fresh TLS clients).
+            {
+                std::lock_guard<std::recursive_mutex> lock(_send_mutex);
+                _codec.reset();
             }
             if (_fd >= 0) { ::close(_fd); _fd = kInvalidFd; }
         }
@@ -338,10 +350,14 @@ class base_connect:public base_net_obj
                 return;
             }
             size_t _recv_buf_len = _recv_buf.length();
-            size_t tmp_len = MAX_RECV_SIZE - _recv_buf_len; 	
+            // Guard against size_t underflow when the receive buffer already
+            // holds MAX_RECV_SIZE bytes or more (e.g. a large pipelined burst).
+            size_t tmp_len = (_recv_buf_len < static_cast<size_t>(MAX_RECV_SIZE))
+                                 ? (static_cast<size_t>(MAX_RECV_SIZE) - _recv_buf_len)
+                                 : 0;
             ssize_t ret = 0;
             size_t p_ret = 0;
-            if (tmp_len > 0) //接收缓冲满了也可以先不接收
+            if (tmp_len > 0) // skip receiving while the receive buffer is full
             {
                 char t_buf[SIZE_LEN_32768];
                 int r_len = tmp_len <= sizeof(t_buf) ? (int)tmp_len:(int)sizeof(t_buf);
@@ -351,17 +367,24 @@ class base_connect:public base_net_obj
                 bool did_peek = false;
                 size_t peek_len = 0;
                 if (!_codec && _process && _process->want_peek()) {
+                    // Peek mode must never fall back to a consuming read: if the
+                    // peek sees EAGAIN and the ClientHello arrives right after, a
+                    // plain recv() would swallow it and SSL_accept() would then
+                    // wait forever for bytes that are already gone.
                     ssize_t pr = ::recv(_fd, t_buf, r_len, MSG_DONTWAIT | MSG_PEEK);
                     if (pr > 0) {
                         ret = pr;
                         did_peek = true;
                         peek_len = static_cast<size_t>(pr);
+                    } else if (pr == 0) {
+                        _process->notify_peer_close();
+                        THROW_COMMON_EXCEPT("the client close the socket(" << _fd << ")");
+                    } else if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                        ret = 0;
                     } else {
-                        ret = pr; // pass through errors/EAGAIN handling below
+                        THROW_COMMON_EXCEPT("this socket occur fatal error " << strError(errno).c_str());
                     }
-                }
-
-                if (!did_peek) {
+                } else {
                     ret = RECV(t_buf, r_len);
                 }
 
@@ -416,28 +439,52 @@ class base_connect:public base_net_obj
             }
             // If SSL or custom codec is installed, fall back to single-buffer SEND path
             if (_codec) {
+                // Cap each SSL_write() call: SSL_write() takes an int length,
+                // so multi-gigabyte buffers must never be passed in one call.
+                const size_t kMaxTlsWriteChunk = 1024 * 1024;
                 int i = 0;
-                while (1) {
-                    if (i >= MAX_SEND_NUM) break;
+                while (i < MAX_SEND_NUM) {
+                    i++;
                     if (!_p_send_buf) {
                         std::string* next = _process->get_send_buf();
-                        if (next) _p_send_buf.reset(next);
+                        if (!next) break;
+                        _p_send_buf.reset(next);
+                        _send_offset = 0;
                     }
-                    if (!_p_send_buf) {
-                        update_event(get_event() & ~EPOLLOUT);
-                        if (_close_when_drained) {
-                            THROW_COMMON_EXCEPT("the connect obj delay close after drain");
-                        }
+                    if (_send_offset >= _p_send_buf->size()) {
+                        _p_send_buf.reset();
+                        _send_offset = 0;
+                        continue;
+                    }
+                    const size_t remaining = _p_send_buf->size() - _send_offset;
+                    const size_t chunk = std::min(remaining, kMaxTlsWriteChunk);
+                    ssize_t ret = SEND(_p_send_buf->data() + _send_offset, chunk);
+                    if (ret <= 0) {
+                        // EAGAIN / SSL_ERROR_WANT_WRITE / SSL_ERROR_WANT_READ:
+                        // wait for the next EPOLLOUT instead of spinning.
                         break;
                     }
-                    i++;
-                    size_t len = _p_send_buf->length();
-                    if (len) {
-                        ssize_t ret = SEND(_p_send_buf->c_str(), len);
-                        if (ret == (ssize_t)len) { _p_send_buf.reset(); }
-                        else if (ret > 0) { _p_send_buf->erase(0, ret); PDEBUG("_p_send_buf erase %zd", ret); }
+                    // Actively draining: keep the connection alive so large
+                    // HTTPS Connection: close responses do not trip the
+                    // close-drain idle limit.
+                    touch_active(GetMonotonicMilliSecond());
+                    _send_offset += static_cast<size_t>(ret);
+                    if (_send_offset >= _p_send_buf->size()) {
+                        _p_send_buf.reset();
+                        _send_offset = 0;
                     }
-                    if (_p_send_buf && !_p_send_buf->length()) { _p_send_buf.reset(); }
+                }
+                if (!_p_send_buf) {
+                    if (std::string* more = _process->get_send_buf()) {
+                        _p_send_buf.reset(more);
+                        _send_offset = 0;
+                    }
+                }
+                if (!_p_send_buf) {
+                    update_event(get_event() & ~EPOLLOUT);
+                    if (_close_when_drained) {
+                        THROW_COMMON_EXCEPT("the connect obj delay close after drain");
+                    }
                 }
                 return;
             }
@@ -449,6 +496,7 @@ class base_connect:public base_net_obj
             if (!_p_send_buf) {
                 if (auto* next = _process->get_send_buf()) {
                     _p_send_buf.reset(next);
+                    _send_offset = 0;
                 }
             }
             if (!_p_send_buf && _pending_send.empty()) {
@@ -468,9 +516,9 @@ class base_connect:public base_net_obj
 
             // Build iovec array
             struct iovec iov[MAX_IOV]; int iovcnt = 0; size_t total = 0;
-            if (_p_send_buf && !_p_send_buf->empty()) {
-                iov[iovcnt].iov_base = (void*)_p_send_buf->data();
-                iov[iovcnt].iov_len  = _p_send_buf->size();
+            if (_p_send_buf && _send_offset < _p_send_buf->size()) {
+                iov[iovcnt].iov_base = (void*)(_p_send_buf->data() + _send_offset);
+                iov[iovcnt].iov_len  = _p_send_buf->size() - _send_offset;
                 total += iov[iovcnt].iov_len; iovcnt++;
             }
             for (size_t i=0; i<_pending_send.size() && iovcnt < MAX_IOV; ++i) {
@@ -480,7 +528,18 @@ class base_connect:public base_net_obj
                 total += iov[iovcnt].iov_len; iovcnt++;
                 if (total >= MAX_BATCH) break;
             }
-            if (iovcnt == 0) { update_event(get_event() & ~EPOLLOUT); return; }
+            if (iovcnt == 0) {
+                // Only empty buffers were queued: drop them so the cursor state
+                // stays consistent, then finish exactly like a drained queue.
+                _p_send_buf.reset();
+                _send_offset = 0;
+                _pending_send.clear();
+                update_event(get_event() & ~EPOLLOUT);
+                if (_close_when_drained) {
+                    THROW_COMMON_EXCEPT("the connect obj delay close after drain");
+                }
+                return;
+            }
 
             ssize_t wr = ::writev(_fd, iov, iovcnt);
             if (wr < 0) {
@@ -492,30 +551,52 @@ class base_connect:public base_net_obj
             }
             size_t left = (size_t)wr;
             if (left > 0) touch_active(GetMonotonicMilliSecond());
-            // Consume from _p_send_buf then pending
-            if (_p_send_buf && left > 0) {
-                size_t blen = _p_send_buf->size();
-                if (left >= blen) { left -= blen; _p_send_buf.reset(); }
-                else { _p_send_buf->erase(0, left); left = 0; }
+            // Consume from _p_send_buf then pending. Partial writes only move
+            // the _send_offset cursor; buffers are never erased from the front,
+            // which would cost O(N^2) memmove work on multi-megabyte bodies.
+            if (_p_send_buf) {
+                const size_t remaining = _send_offset < _p_send_buf->size()
+                                             ? _p_send_buf->size() - _send_offset
+                                             : 0;
+                if (left >= remaining) {
+                    left -= remaining;
+                    _p_send_buf.reset();
+                    _send_offset = 0;
+                } else {
+                    _send_offset += left;
+                    left = 0;
+                }
             }
             // consume from pending deque
             while (left > 0 && !_pending_send.empty()) {
                 auto& front = _pending_send.front();
-                size_t blen = front->size();
-                if (left >= blen) { left -= blen; _pending_send.pop_front(); }
-                else { front->erase(0, left); left = 0; }
-            }
-            // Move partially-consumed first pending to _p_send_buf if needed
-            if (!_p_send_buf && !_pending_send.empty()) {
-                if (!_pending_send.front()->empty()) {
-                    _p_send_buf = std::move(_pending_send.front());
+                size_t blen = front ? front->size() : 0;
+                if (left >= blen) {
+                    left -= blen;
+                    _pending_send.pop_front();
+                } else {
+                    // _p_send_buf is necessarily empty here: it was fully
+                    // consumed above before any pending byte could be written.
+                    _p_send_buf = std::move(front);
+                    _send_offset = left;
+                    _pending_send.pop_front();
+                    left = 0;
                 }
+            }
+            // Promote the next pending buffer so the cursor always tracks it.
+            while (!_p_send_buf && !_pending_send.empty()) {
+                auto front = std::move(_pending_send.front());
                 _pending_send.pop_front();
+                if (front && !front->empty()) {
+                    _p_send_buf = std::move(front);
+                    _send_offset = 0;
+                }
             }
             // If nothing left in local buffers, probe process once more before clearing EPOLLOUT
             if (!_p_send_buf && _pending_send.empty()) {
                 if (std::string* more = _process->get_send_buf()) {
                     _p_send_buf.reset(more);
+                    _send_offset = 0;
                 }
             }
             if (!_p_send_buf && _pending_send.empty()) {
@@ -528,7 +609,7 @@ class base_connect:public base_net_obj
 
     protected:
         bool has_unsent_outbound() const {
-            return (_p_send_buf && !_p_send_buf->empty()) ||
+            return (_p_send_buf && _send_offset < _p_send_buf->size()) ||
                    !_pending_send.empty() ||
                    ((_epoll_event & EPOLLOUT) == EPOLLOUT);
         }
@@ -556,6 +637,8 @@ class base_connect:public base_net_obj
         std::string _recv_buf;
         using send_buf_ptr = myframe::pooled_string_ptr;
         send_buf_ptr _p_send_buf;
+        // Byte offset of the first unsent byte inside _p_send_buf.
+        size_t _send_offset{0};
         std::unique_ptr<PROCESS> _process;
         std::unique_ptr<ICodec> _codec;
         std::deque<send_buf_ptr> _pending_send;

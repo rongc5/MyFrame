@@ -28,10 +28,12 @@ test/test_*
 !test/test_http_middleware.cpp
 !test/test_http_json.cpp
 !test/test_http_routing.cpp
+!test/test_http_persistence.cpp
 !test/test_fd_sentinel.cpp
 !test/test_ws_broadcast_churn.cpp
 !test/test_ws_slow_consumer.cpp
 !test/test_p1_core.cpp
+!test/test_large_transfer_and_stress.cpp
 build_test/
 test/simple_*
 test/https_*

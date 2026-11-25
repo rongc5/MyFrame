@@ -50,12 +50,8 @@ size_t http_res_process::process_recv_body(const char *buf, size_t len, int &res
     {
         return process_chunked(buf, len, result);
     }
-    if (strcasecmp(_req_head_para._method.c_str(), "GET") == 0 || strcasecmp(_req_head_para._method.c_str(), "HEAD") == 0)
-    {
-        result = 1;
-        ret = len;
-    }
-    else
+    // Message framing is independent of the method. A bodyless GET/HEAD must
+    // consume zero body bytes; the remaining buffer can contain the next request.
     {
         if (_boundary_para._boundary_str.length() == 0)
         {

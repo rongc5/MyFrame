@@ -12,6 +12,51 @@
 
 namespace myframe {
 
+namespace {
+bool connection_token(const std::string& value, const char* wanted) {
+    size_t begin = 0;
+    while (begin <= value.size()) {
+        const auto end = value.find(',', begin);
+        std::string token = value.substr(begin, end == std::string::npos ? end : end - begin);
+        const auto first = token.find_first_not_of(" \t");
+        if (first != std::string::npos) {
+            token = token.substr(first, token.find_last_not_of(" \t") - first + 1);
+            if (strcasecmp(token.c_str(), wanted) == 0) return true;
+        }
+        if (end == std::string::npos) break;
+        begin = end + 1;
+    }
+    return false;
+}
+
+// Apply the same persistence policy to synchronous and asynchronous responses.
+// A peer's close token always wins; HTTP/1.0 requires explicit keep-alive.
+void set_connection_policy(const HttpRequest& request, http_res_head_para& response) {
+    std::string requested, selected;
+    for (const auto& h : request.headers) {
+        if (strcasecmp(h.first.c_str(), "Connection") == 0) requested += h.second + ",";
+    }
+    for (auto it = response._headers.begin(); it != response._headers.end();) {
+        if (strcasecmp(it->first.c_str(), "Connection") == 0) {
+            selected += it->second + ",";
+            it = response._headers.erase(it);
+        } else ++it;
+    }
+    const bool persistent = !connection_token(requested, "close") &&
+        (request.version == "HTTP/1.1" ||
+         (request.version == "HTTP/1.0" && connection_token(requested, "keep-alive")));
+    if (!persistent || connection_token(selected, "close")) {
+        response._headers["Connection"] = "close";
+    } else if (!selected.empty()) {
+        selected.pop_back();
+        response._headers["Connection"] = selected;
+    } else {
+        response._headers["Connection"] = "keep-alive";
+    }
+}
+} // namespace
+
+
 // ============================================================================
 // HttpContextImpl Implementation
 // ============================================================================
@@ -410,9 +455,7 @@ void HttpContextDataProcess::msg_recv_finish() {
         if (_context->suppress_body()) _send_body.clear();
 
         // ȷ���� Connection ͷ
-        if (res_head._headers.find("Connection") == res_head._headers.end()) {
-            res_head._headers["Connection"] = "close";
-        }
+        set_connection_policy(ctx_req, res_head);
     } catch (const std::exception& e) {
         // ������
         if (_handler) {
@@ -464,6 +507,7 @@ void HttpContextDataProcess::complete_async_response() {
         }
         // HEAD：抑制 body（保留上面已算的 Content-Length，不发送实体）
         if (_context->suppress_body()) _send_body.clear();
+        set_connection_policy(_context->request(), res_head);
 
         PDEBUG("[HttpContextDataProcess] Async response completed: status=%d, body_size=%zu",
                res_head._response_code, _send_body.size());

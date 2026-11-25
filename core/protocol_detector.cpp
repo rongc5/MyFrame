@@ -2,6 +2,7 @@
 #include "protocol_detector.h"
 #include "base_net_obj.h"
 #include "common_def.h"
+#include "common_exception.h"
 #include <algorithm>
 
 namespace myframe {
@@ -42,15 +43,15 @@ bool ProtocolDetector::handoff_to_protocol(const UnifiedProtocolFactory::Protoco
     }
 
     auto* raw = next.release();
-    // CRITICAL: set_process() 会 delete 旧的 process（即 this），
-    // 之后绝对不能访问任何成员变量！
+    // CRITICAL: set_process() deletes the previous process (i.e. this);
+    // no member variable may be accessed afterwards!
     holder->set_process(raw);
-    // 'this' 已被释放 —— 只能操作局部变量和 raw 指针
+    // 'this' has been freed: only locals and the raw pointer may be used
     if (len > 0) {
         size_t consumed = raw->process_recv_buf(data, len);
         (void)consumed;
     }
-    // 不要写 _detected = true; （use-after-free！）
+    // Do not write _detected = true; (use-after-free!)
     return true;
 }
 
@@ -94,7 +95,7 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
                 if (!ok) {
                     notify_peer_close();
                 }
-                // handoff 成功后 'this' 已被 delete，不能访问成员
+                // After a successful handoff 'this' is deleted: do not touch members
                 return len;
             }
         }
@@ -108,7 +109,9 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
         PDEBUG("[ProtocolDetector] Buffer overflow attempt (current=%zu, incoming=%zu, cap=%zu). Closing.",
                _buffer.size(), static_cast<size_t>(len), static_cast<size_t>(MAX_DETECT_BUFFER_SIZE));
         notify_peer_close();
-        return len;
+        // notify_peer_close() only flags the process; throw so the container
+        // tears the connection down instead of sniffing unbounded input.
+        THROW_COMMON_EXCEPT("protocol detect buffer overflow (" << (_buffer.size() + len) << ")");
     }
 
     _buffer.append(buf, len);
@@ -122,7 +125,7 @@ size_t ProtocolDetector::process_recv_buf(const char* buf, size_t len) {
             if (!ok) {
                 notify_peer_close();
             }
-            // handoff 成功后 'this' 已被 delete，不能访问成员
+            // After a successful handoff 'this' is deleted: do not touch members
             return len;
         }
     }
@@ -137,6 +140,7 @@ void ProtocolDetector::handle_timeout(std::shared_ptr<::timer_msg>& t_msg) {
     if (t_msg && t_msg->_timer_id == _timer_id && !_detected) {
         PDEBUG("[ProtocolDetector] Detection timeout");
         notify_peer_close();
+        THROW_COMMON_EXCEPT("protocol detect timeout");
     }
 }
 

@@ -3,6 +3,8 @@
 #include "common_exception.h"
 #include "http_base_data_process.h"
 
+#include <algorithm>
+
 
 http_base_process::http_base_process(std::shared_ptr<base_net_obj> p):base_data_process(p)
 {
@@ -47,33 +49,33 @@ size_t http_base_process::process_recv_buf(const char *buf, size_t len)
         THROW_COMMON_EXCEPT("http recv status not correct " << _http_status);
     }
 
-
     size_t ret = 0;
-    bool staus_change = false;
-    std::string left_str, recv_head;
+    size_t head_len = 0;
+    bool status_change = false;
     // Network buffers are length-delimited and are not guaranteed to be NUL
-    // terminated. A bounded search prevents fragmented headers from being
-    // completed by stale bytes beyond `len`.
-    if (_http_status == RECV_HEAD &&
-        std::string(buf, len).find(CRLF2) != std::string::npos)
+    // terminated. check_head_finish() performs a bounded, copy-free search so
+    // fragmented headers cannot be completed by stale bytes beyond `len`.
+    if (_http_status == RECV_HEAD)
     {
-        recv_head.append(buf, len);
-        check_head_finish(recv_head, left_str);
-        staus_change = true;
+        if (!check_head_finish(buf, len, head_len))
+        {
+            return 0;  // header still incomplete: keep accumulating
+        }
+        status_change = true;
     }
 
-    //PDEBUG("%s\n", buf);
-
-    if (_http_status == RECV_BODY) //ݲ
+    if (_http_status == RECV_BODY)
     {
         int result = 0;
-        if (staus_change)
+        if (status_change)
         {
-            ret = len - left_str.length();
-            ret += process_recv_body((char*)left_str.c_str(), left_str.length(), result);
+            ret = head_len;
+            ret += process_recv_body(buf + head_len, len - head_len, result);
         }
         else
+        {
             ret = process_recv_body(buf, len, result);
+        }
 
         if (result == 1)
         {
@@ -133,7 +135,7 @@ void http_base_process::peer_close()
     if (_data_process) _data_process->notify_peer_close();
 }
 
-/****************************ӣǹײ********************************************/
+/**************************** Internal helpers ****************************/
 
 void http_base_process::change_http_status(HTTP_STATUS status, bool if_change_send)
 {
@@ -155,27 +157,38 @@ http_base_data_process * http_base_process::get_process()
     return _data_process;
 }
 
-void http_base_process::check_head_finish(std::string & recv_head, std::string &left_str)
+bool http_base_process::check_head_finish(const char *buf, size_t len, size_t &head_len)
 {
-    size_t pos =  recv_head.find(CRLF2);
-    if (pos != std::string::npos)
-    {
-        left_str = recv_head.substr(pos + 4);
-        recv_head.erase(pos + 4);				
-        //_http_status = RECV_BODY;
-        change_http_status(RECV_BODY);
-        parse_header(recv_head);
+    static const char kCrlf2[] = CRLF2;
+    const size_t kCrlf2Len = sizeof(kCrlf2) - 1;
+    head_len = 0;
 
-        _data_process->header_recv_finish();
-    }
-    else
+    const char *end = buf + len;
+    const char *hit = (buf && len >= kCrlf2Len)
+                          ? std::search(buf, end, kCrlf2, kCrlf2 + kCrlf2Len)
+                          : end;
+    if (hit == end)
     {
-        if (recv_head.length() > MAX_HTTP_HEAD_LEN) //httpͷҪ10k
+        // No terminator yet: reject as soon as the partial header exceeds the
+        // limit instead of buffering an unbounded header block.
+        if (len > MAX_HTTP_HEAD_LEN)
         {
-            THROW_COMMON_EXCEPT("http head too long (" << recv_head.length() << ")");
+            THROW_COMMON_EXCEPT("http head too long (" << len << ")");
         }
-    }			
+        return false;
+    }
+
+    const size_t pos = static_cast<size_t>(hit - buf);
+    if (pos + kCrlf2Len > MAX_HTTP_HEAD_LEN)
+    {
+        THROW_COMMON_EXCEPT("http head too long (" << (pos + kCrlf2Len) << ")");
+    }
+
+    head_len = pos + kCrlf2Len;
+    std::string recv_head(buf, head_len);
+    change_http_status(RECV_BODY);
+    parse_header(recv_head);
+
+    _data_process->header_recv_finish();
+    return true;
 }
-
-
-

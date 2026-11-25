@@ -58,6 +58,8 @@ public:
             if (hs == SSL_HANDSHAKE_WANT_READ || hs == SSL_HANDSHAKE_WANT_WRITE) { errno = EAGAIN; return -1; }
             if (hs == SSL_HANDSHAKE_ERROR) { errno = EIO; return -1; }
         }
+        // Clear stale thread-local errors so SSL_get_error() reports this call.
+        ERR_clear_error();
         int ret = SSL_read(_ssl, buf, (int)len);
         if (ret > 0) return ret;
         int ssl_error = SSL_get_error(_ssl, ret);
@@ -74,6 +76,8 @@ public:
             if (hs == SSL_HANDSHAKE_WANT_READ || hs == SSL_HANDSHAKE_WANT_WRITE) { errno = EAGAIN; return -1; }
             if (hs == SSL_HANDSHAKE_ERROR) { errno = EIO; return -1; }
         }
+        // Clear stale thread-local errors so SSL_get_error() reports this call.
+        ERR_clear_error();
         int ret = SSL_write(_ssl, data, (int)len);
         if (ret > 0) return ret;
         int ssl_error = SSL_get_error(_ssl, ret);

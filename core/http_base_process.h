@@ -32,7 +32,7 @@ class http_base_process: public base_data_process
         virtual void peer_close();
 
 		
-		/****************************以上是五个口子，以下是供底层调用********************************************/
+		/**************************** Accessors and state helpers ****************************/
 
         http_req_head_para &get_req_head_para();
 
@@ -55,7 +55,11 @@ class http_base_process: public base_data_process
         virtual void recv_finish() = 0;
         virtual void send_finish() = 0;
 
-        void check_head_finish(std::string & recv_head, std::string &left_str);
+        // Searches buf[0..len) for the end of the header block without copying.
+        // Returns false while the header is incomplete, true once it has been
+        // parsed (head_len receives the header size including CRLF2). Throws
+        // when the header exceeds MAX_HTTP_HEAD_LEN.
+        bool check_head_finish(const char *buf, size_t len, size_t &head_len);
 
         HTTP_STATUS _http_status;
         http_base_data_process *_data_process;

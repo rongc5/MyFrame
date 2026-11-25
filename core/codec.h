@@ -52,7 +52,12 @@ enum SSL_HANDSHAKE_STATUS
 
 class SslCodec : public ICodec {
 public:
-    SslCodec(SSL* ssl) : _ssl(ssl), _handshake_done(false), _last_hs(SSL_HANDSHAKE_NONE) {}
+    SslCodec(SSL* ssl) : _ssl(ssl), _handshake_done(false), _last_hs(SSL_HANDSHAKE_NONE) {
+        // Partial writes let large responses drain incrementally, and a moving
+        // write buffer is required because the caller advances a cursor into
+        // its send buffer between SSL_write() retries.
+        if (_ssl) SSL_set_mode(_ssl, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+    }
     virtual ~SslCodec() {
         if (_ssl) {
             SSL_shutdown(_ssl);
@@ -117,6 +122,8 @@ public:
             if (hs == SSL_HANDSHAKE_WANT_READ || hs == SSL_HANDSHAKE_WANT_WRITE) { errno = EAGAIN; return -1; }
             if (hs == SSL_HANDSHAKE_ERROR) { errno = EIO; return -1; }
         }
+        // Clear stale thread-local errors so SSL_get_error() reports this call.
+        ERR_clear_error();
         int ret = SSL_read(_ssl, buf, (int)len);
         if (ret > 0) return ret;
         int ssl_error = SSL_get_error(_ssl, ret);
@@ -133,6 +140,8 @@ public:
             if (hs == SSL_HANDSHAKE_WANT_READ || hs == SSL_HANDSHAKE_WANT_WRITE) { errno = EAGAIN; return -1; }
             if (hs == SSL_HANDSHAKE_ERROR) { errno = EIO; return -1; }
         }
+        // Clear stale thread-local errors so SSL_get_error() reports this call.
+        ERR_clear_error();
         int ret = SSL_write(_ssl, data, (int)len);
         if (ret > 0) return ret;
         int ssl_error = SSL_get_error(_ssl, ret);
