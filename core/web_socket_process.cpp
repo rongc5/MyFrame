@@ -91,6 +91,9 @@ void web_socket_process::set_process(web_socket_data_process * data_process)
         delete _p_data_process;
         _p_data_process = NULL;
     }
+    if (_p_data_process != data_process) {
+        std::string().swap(_pending_text);
+    }
 
     _p_data_process = data_process;
 }

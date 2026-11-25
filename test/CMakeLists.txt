@@ -163,3 +163,11 @@ if(TARGET test_security_and_framing)
     add_test(NAME security_and_framing COMMAND test_security_and_framing)
     set_tests_properties(security_and_framing PROPERTIES TIMEOUT 120)
 endif()
+
+# Cryptography wrapper suite (NIST/RFC vectors for AES-GCM/CBC/CTR, SHA/HMAC,
+# HKDF/PBKDF2, Base64/Hex, CSPRNG, RSA-OAEP/PSS, ECDSA-P256, Ed25519).
+maybe_add_exe(test_crypto ${CMAKE_CURRENT_SOURCE_DIR}/test_crypto.cpp)
+if(TARGET test_crypto)
+    add_test(NAME crypto COMMAND test_crypto)
+    set_tests_properties(crypto PROPERTIES TIMEOUT 60)
+endif()

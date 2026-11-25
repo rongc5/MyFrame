@@ -82,6 +82,7 @@ option(MYFRAME_LEGACY_UTILS_COPY "Copy libencode.a/libsign.a and headers into ut
 file(GLOB CORE_SOURCES
     "core/*.cpp"
     "core/protocol_adapters/*.cpp"
+    "crypto/*.cpp"
 )
 # Exclude legacy logging modules that require additional infra
 ## Exclude legacy log modules; provide stubs instead
@@ -98,6 +99,7 @@ list(REMOVE_ITEM CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/core/connection_manag
 
 # Create library
 add_library(myframe STATIC ${CORE_SOURCES})
+target_include_directories(myframe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(myframe
     myframe_encode
     ${CMAKE_THREAD_LIBS_INIT}
@@ -140,7 +142,10 @@ endif()
 # Copy headers to include directory in build folder
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/protocol_adapters)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/crypto)
 file(COPY core/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include
+     FILES_MATCHING PATTERN "*.h")
+file(COPY crypto/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include/crypto
      FILES_MATCHING PATTERN "*.h")
 file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/include/app_handler.h")
 if (HAVE_SIGN_LIB)
