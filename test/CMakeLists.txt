@@ -198,3 +198,13 @@ if(TARGET test_search_and_ads_utils)
     add_test(NAME search_and_ads_utils COMMAND test_search_and_ads_utils)
     set_tests_properties(search_and_ads_utils PROPERTIES TIMEOUT 180)
 endif()
+
+# Data-loading & parallel map-reduce pipeline suite (StringView, strict numeric
+# parsers, atomic file I/O, BufferedLineReader, parallel_parse_file,
+# parallel_map_reduce, and TaskExecutor integration).
+maybe_add_exe(test_pipeline ${CMAKE_CURRENT_SOURCE_DIR}/test_pipeline.cpp)
+if(TARGET test_pipeline)
+    target_compile_options(test_pipeline PRIVATE -Wall -Wextra -Werror -Wpedantic -Wshadow)
+    add_test(NAME pipeline COMMAND test_pipeline)
+    set_tests_properties(pipeline PROPERTIES TIMEOUT 180)
+endif()

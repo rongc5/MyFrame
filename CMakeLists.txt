@@ -151,6 +151,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/crypto)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/lockfree)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/containers)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/search)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/pipeline)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/stx)
 file(COPY core/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include
      FILES_MATCHING PATTERN "*.h")
@@ -161,6 +162,8 @@ file(COPY utils/lockfree/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include/lockfr
 file(COPY utils/containers/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include/containers
      FILES_MATCHING PATTERN "*.h")
 file(COPY utils/search/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include/search
+     FILES_MATCHING PATTERN "*.h")
+file(COPY utils/pipeline/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include/pipeline
      FILES_MATCHING PATTERN "*.h")
 file(COPY utils/btree/stx/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/include/stx)
 file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/include/app_handler.h")
