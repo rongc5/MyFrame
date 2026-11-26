@@ -2041,6 +2041,196 @@ void test_review_growth_and_remove_rollback() {
     CHECK(failures > 1);
 }
 
+void test_claude_audit_p1_p2_regressions() {
+    // 1. P1: Moved-from BloomFilter must be safe (no OOB on add/query/merge/serialize)
+    {
+        BloomFilter a(1000, 0.01);
+        a.add("hello");
+        a.add_u64(0x0102030405060708ULL);
+
+        BloomFilter b(std::move(a));
+        CHECK(b.possibly_contains("hello"));
+        CHECK(b.possibly_contains_u64(0x0102030405060708ULL));
+        CHECK(a.bit_count() == 0 && a.hash_count() == 0);
+        // Operations on moved-from `a` must not crash/OOB under ASan/UBSan
+        a.add("should_noop");
+        CHECK(!a.possibly_contains("should_noop"));
+        CHECK(!b.merge_from(a));
+        CHECK(!a.merge_from(b));
+        CHECK(a.serialize().empty());
+
+        // Move assignment also resets source
+        BloomFilter c = BloomFilter::with_exact_size(128, 2);
+        c = std::move(b);
+        CHECK(b.bit_count() == 0);
+        CHECK(!b.possibly_contains("hello"));
+        CHECK(c.possibly_contains("hello"));
+    }
+
+    // 2. P1: ShardedRateLimiter eviction hardening + relative epsilon (no 1e-13 bypass)
+    {
+        FakeClock::set_ms(100000);
+        TokenBucket<FakeClock> tb(10.0, 5.0, 0.0);
+        CHECK(!tb.try_acquire(1e-13)); // Must NOT bypass empty bucket via absolute epsilon!
+        CHECK(tb.try_acquire(0.0));    // 0.0 permits allowed
+
+        // 1 shard of capacity 4, burst 50: drain abuser, evict via spoofed keys,
+        // abuser must NOT get reset to burst=50 when re-admitted under eviction pressure.
+        ShardedRateLimiter<std::string, std::hash<std::string>,
+                           std::equal_to<std::string>, FakeClock>
+            rl(1.0, 50.0, 4, 1);
+        for (int i = 0; i < 50; ++i) {
+            CHECK(rl.try_acquire("abuser", 1.0));
+        }
+        CHECK(!rl.try_acquire("abuser", 1.0));
+        // Evict "abuser" with 4 distinct spoofed keys
+        for (int i = 0; i < 4; ++i) {
+            CHECK(rl.try_acquire("spoof_" + std::to_string(i), 1.0));
+        }
+        // Under eviction pressure, multi-permit burst fails immediately
+        CHECK(!rl.try_acquire("abuser", 2.0));
+        // At most 1 request passes, then immediately 0 tokens (NOT 49!)
+        CHECK(rl.try_acquire("abuser", 1.0));
+        CHECK(!rl.try_acquire("abuser", 1.0));
+    }
+
+    // 3. P2: Moved-from AhoCorasick is safe to rebuild and reuse
+    {
+        AhoCorasick a;
+        a.add_pattern("alpha", 1);
+        a.build();
+        CHECK(a.built());
+
+        AhoCorasick b(std::move(a));
+        CHECK(b.built() && b.contains_any("xxalphayy"));
+        CHECK(!a.built());
+        bool threw = false;
+        try {
+            (void)a.contains_any("alpha");
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        CHECK(threw);
+        // Reusing moved-from `a` must not OOB on nodes_[0]
+        a.add_pattern("beta", 2);
+        a.build();
+        CHECK(a.built() && a.contains_any("beta") && !a.contains_any("alpha"));
+    }
+
+    // 4. P2: RadixTree iterative prefix_scan on deep 2000-level chain + matched_len=0 on miss
+    {
+        RadixTree<int> deep;
+        std::string key;
+        for (int i = 1; i <= 2000; ++i) {
+            key.push_back('a');
+            CHECK(deep.insert(key, i));
+        }
+        std::size_t visited = 0;
+        std::size_t last_len = 0;
+        deep.prefix_scan("a", [&](const std::string& k, const int& v) {
+            ++visited;
+            CHECK(k.size() == static_cast<std::size_t>(v));
+            CHECK(k.size() > last_len);
+            last_len = k.size();
+        });
+        CHECK(visited == 2000);
+
+        std::size_t mlen = 777;
+        CHECK(deep.longest_prefix_match("zzz", &mlen) == nullptr);
+        CHECK(mlen == 0);
+
+        SuffixMatcher<int> sm;
+        sm.insert(".com", 1);
+        mlen = 888;
+        CHECK(sm.longest_suffix_match("nope.org", &mlen) == nullptr);
+        CHECK(mlen == 0);
+    }
+
+    // 5. P2: ConsistentHash max_total_vnodes safety cap + small-count get_nodes linear scan
+    {
+        ConsistentHash<std::string> capped(100, myframe::containers::DefaultNodeHash<std::string>(),
+                                           std::equal_to<std::string>(), 250);
+        CHECK(capped.add_node("n1", 2)); // 200 vnodes <= 250
+        bool threw_len = false;
+        try {
+            (void)capped.add_node("n2", 1); // +100 -> 300 > 250
+        } catch (const std::length_error&) {
+            threw_len = true;
+        }
+        CHECK(threw_len);
+        CHECK(capped.node_count() == 1 && capped.vnode_count() == 200);
+    }
+
+    // 6. P2: ShardedTtlCache bounded purge_expired
+    {
+        FakeClock::set_ms(1000);
+        ShardedTtlCache<int, int, std::hash<int>, std::equal_to<int>, FakeClock>
+            cache(20, 1);
+        for (int i = 0; i < 10; ++i) {
+            CHECK(cache.put(i, i, 100)); // all expire at 1100
+        }
+        FakeClock::set_ms(2000);
+        // Bounded sweep of 4 entries per shard removes only 4 entries (bounded lock hold)
+        CHECK(cache.purge_expired(4) == 4);
+        CHECK(cache.size() == 6);
+        CHECK(cache.purge_expired(0) == 6);
+        CHECK(cache.size() == 0);
+    }
+
+    // 7. P2/P3: DoubleBuffer ReadGuard::version() exact snapshot match + InvertedIndex dedup
+    {
+        DoubleBuffer<int> db(10);
+        DoubleBuffer<int>::ReadGuard g1 = db.read();
+        CHECK(g1.version() == 1 && *g1 == 10);
+        // Move guard out while publishing from another thread
+        std::thread writer([&]() { db.publish(20); });
+        // Give writer a brief moment to flip before releasing g1
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        CHECK(g1.version() == 1 && *g1 == 10);
+        g1 = DoubleBuffer<int>::ReadGuard(); // release g1 -> unblocks writer
+        writer.join();
+        DoubleBuffer<int>::ReadGuard g2 = db.read();
+        CHECK(g2.version() == 2 && *g2 == 20);
+    }
+
+    {
+        InvertedIndex<std::string, std::uint64_t> idx;
+        idx.add("a", 1);
+        idx.add("a", 2);
+        idx.add("b", 2);
+        idx.add("b", 3);
+        // Equal-size terms with duplicate "a": {a, b, a}
+        std::vector<std::uint64_t> res = idx.query_and({"a", "b", "a"});
+        CHECK(res.size() == 1 && res[0] == 2);
+    }
+}
+
+struct CoarseSecondsClock {
+    typedef std::chrono::seconds duration;
+    typedef duration::rep rep;
+    typedef duration::period period;
+    typedef std::chrono::time_point<CoarseSecondsClock, duration> time_point;
+    static const bool is_steady = true;
+    static std::atomic<std::int64_t> now_s;
+    static time_point now() noexcept {
+        return time_point(duration(now_s.load(std::memory_order_acquire)));
+    }
+};
+std::atomic<std::int64_t> CoarseSecondsClock::now_s(100);
+
+void test_coarse_clock_ttl_ceil() {
+    CoarseSecondsClock::now_s.store(100, std::memory_order_release);
+    ShardedTtlCache<std::string, int, std::hash<std::string>,
+                    std::equal_to<std::string>, CoarseSecondsClock>
+        cache(16, 2);
+    // 500ms TTL on a 1-second clock rounds UP to 1 second (not 0 -> immediate expiry!)
+    CHECK(cache.put("subtick", 42, 500));
+    int v = 0;
+    CHECK(cache.get("subtick", v) && v == 42);
+    CoarseSecondsClock::now_s.store(101, std::memory_order_release);
+    CHECK(!cache.get("subtick", v));
+}
+
 } // namespace
 
 int main() {
@@ -2058,6 +2248,8 @@ int main() {
     test_sharded_ttl_cache_extremes();
     test_consistent_hash_hardening();
     test_review_growth_and_remove_rollback();
+    test_claude_audit_p1_p2_regressions();
+    test_coarse_clock_ttl_ceil();
     std::cout << "[PASS] test_search_and_ads_utils (" << g_checks.load()
               << " checks passed)" << std::endl;
     return 0;

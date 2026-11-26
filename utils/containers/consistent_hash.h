@@ -121,11 +121,14 @@ template <typename Node = std::string,
 class ConsistentHash {
 public:
     typedef Node node_type;
+    static const std::size_t kDefaultMaxTotalVnodes = 4194304; // 4M virtual nodes safety cap
 
     explicit ConsistentHash(std::size_t virtual_nodes_per_weight = 160,
                             const Hash& node_hash = Hash(),
-                            const KeyEqual& node_eq = KeyEqual())
+                            const KeyEqual& node_eq = KeyEqual(),
+                            std::size_t max_total_vnodes = kDefaultMaxTotalVnodes)
         : vnodes_per_weight_(validate_vnodes(virtual_nodes_per_weight)),
+          max_total_vnodes_(validate_max_vnodes(max_total_vnodes)),
           node_hash_(node_hash),
           node_eq_(node_eq),
           ring_(),
@@ -134,7 +137,8 @@ public:
     // Adds a node with the given positive weight, or updates its weight if it
     // already exists. Returns true if newly added, false if updated.
     // Throws std::invalid_argument if weight == 0, std::overflow_error if
-    // weight * virtual_nodes_per_weight overflows std::size_t.
+    // weight * virtual_nodes_per_weight overflows std::size_t, or
+    // std::length_error if total virtual nodes would exceed max_total_vnodes.
     // Strong exception guarantee: on any exception, existing ring/node state is
     // completely preserved with no orphan ring points.
     bool add_node(const Node& node, std::size_t weight = 1) {
@@ -177,6 +181,11 @@ public:
         // before mutating ring_ or node_points_.
         const std::size_t add_begin = old_count;
         const std::size_t add_count = count - old_count;
+        if (add_count > max_total_vnodes_ ||
+            ring_.size() > max_total_vnodes_ - add_count) {
+            throw std::length_error(
+                "ConsistentHash total virtual nodes exceeds configured limit");
+        }
 
         std::vector<std::uint64_t> new_points;
         new_points.reserve(count);
@@ -282,6 +291,7 @@ public:
 
     // Walks clockwise from hash(key) and returns up to min(count, node_count())
     // DISTINCT physical nodes (primary + replicas).
+    // Uses zero-allocation linear deduplication for small replica counts (<= 16).
     std::vector<Node> get_nodes(const void* data,
                                 std::size_t len,
                                 std::size_t count) const {
@@ -293,8 +303,6 @@ public:
             (count < node_points_.size()) ? count : node_points_.size();
         result.reserve(target);
 
-        std::unordered_set<Node, Hash, KeyEqual> seen(0, node_hash_, node_eq_);
-        seen.reserve(target);
         const std::uint64_t h = hash_bytes(data, len);
         typename RingMap::const_iterator it = ring_.lower_bound(h);
         if (it == ring_.end()) {
@@ -302,6 +310,28 @@ public:
         }
 
         const std::size_t max_steps = ring_.size();
+        if (target <= 16) {
+            for (std::size_t step = 0; step < max_steps && result.size() < target; ++step) {
+                bool dup = false;
+                for (std::size_t j = 0; j < result.size(); ++j) {
+                    if (node_eq_(result[j], it->second)) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup) {
+                    result.push_back(it->second);
+                }
+                ++it;
+                if (it == ring_.end()) {
+                    it = ring_.begin();
+                }
+            }
+            return result;
+        }
+
+        std::unordered_set<Node, Hash, KeyEqual> seen(0, node_hash_, node_eq_);
+        seen.reserve(target);
         for (std::size_t step = 0; step < max_steps && result.size() < target; ++step) {
             if (seen.insert(it->second).second) {
                 result.push_back(it->second);
@@ -338,6 +368,14 @@ private:
                 "ConsistentHash virtual_nodes_per_weight must be > 0");
         }
         return v;
+    }
+
+    static std::size_t validate_max_vnodes(std::size_t m) {
+        if (m == 0) {
+            throw std::invalid_argument(
+                "ConsistentHash max_total_vnodes must be > 0");
+        }
+        return m;
     }
 
     static std::uint64_t mix64(std::uint64_t x) noexcept {
@@ -393,6 +431,7 @@ private:
     }
 
     std::size_t vnodes_per_weight_;
+    std::size_t max_total_vnodes_;
     Hash node_hash_;
     KeyEqual node_eq_;
     RingMap ring_;

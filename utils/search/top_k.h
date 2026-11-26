@@ -18,7 +18,9 @@ namespace search {
 //   - Zero heap allocations after construction (storage reserved up front)
 //
 // Comparator convention (matches std::priority_queue):
-//   `Compare(a, b)` returns true if `a` is strictly WORSE than `b`.
+//   `Compare(a, b)` must be a strict weak ordering returning true if `a` is
+//   strictly WORSE than `b` (NaN floating-point keys violate strict weak
+//   ordering and must be filtered out or handled in a custom comparator).
 //   - Default `std::less<T>`: retains the K LARGEST elements (best = largest);
 //     extract_sorted() returns them in descending order (best first).
 //   - `std::greater<T>`: retains the K SMALLEST elements (best = smallest);
@@ -40,6 +42,7 @@ public:
         if (capacity_ == 0) {
             return false;
         }
+        assert(!comp_(item, item)); // Catch invalid/NaN strict-weak-order violations
         if (heap_.size() < capacity_) {
             heap_.push_back(item);
             sift_up(heap_.size() - 1);
@@ -57,6 +60,7 @@ public:
         if (capacity_ == 0) {
             return false;
         }
+        assert(!comp_(item, item)); // Catch invalid/NaN strict-weak-order violations
         if (heap_.size() < capacity_) {
             heap_.push_back(std::move(item));
             sift_up(heap_.size() - 1);
@@ -86,10 +90,12 @@ public:
     }
 
     // Moves elements out in best-first sorted order and clears this collector.
+    // Pre-reserves the fresh backing vector before swapping so a reserve
+    // allocation failure leaves the existing elements untouched.
     std::vector<T> extract_sorted() {
         std::vector<T> out;
+        out.reserve(capacity_);
         out.swap(heap_);
-        heap_.reserve(capacity_);
         sort_best_first(out);
         return out;
     }
@@ -111,10 +117,11 @@ private:
     // Internal heap invariant: parent is WORSE than or equal to children
     // (i.e. !comp_(child, parent)), so heap_[0] is always the worst element.
     void sift_up(std::size_t idx) {
+        using std::swap;
         while (idx > 0) {
             const std::size_t parent = (idx - 1) / 2;
             if (comp_(heap_[idx], heap_[parent])) {
-                std::swap(heap_[idx], heap_[parent]);
+                swap(heap_[idx], heap_[parent]);
                 idx = parent;
             } else {
                 break;
@@ -123,6 +130,7 @@ private:
     }
 
     void sift_down(std::size_t idx) {
+        using std::swap;
         const std::size_t n = heap_.size();
         for (;;) {
             const std::size_t left = idx * 2 + 1;
@@ -135,7 +143,7 @@ private:
                 worst_child = right;
             }
             if (comp_(heap_[worst_child], heap_[idx])) {
-                std::swap(heap_[idx], heap_[worst_child]);
+                swap(heap_[idx], heap_[worst_child]);
                 idx = worst_child;
             } else {
                 break;

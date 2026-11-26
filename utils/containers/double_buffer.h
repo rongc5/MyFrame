@@ -1,6 +1,9 @@
 #pragma once
 
+#include "../lockfree/detail/cache_line.h"
+
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -11,10 +14,6 @@
 
 namespace myframe {
 namespace containers {
-
-#ifndef MYFRAME_CACHE_LINE_SIZE
-#define MYFRAME_CACHE_LINE_SIZE 128
-#endif
 
 // Lock-free-read double-buffered snapshot container for hot-reloading read-mostly
 // data structures in ads and search servers.
@@ -36,6 +35,10 @@ namespace containers {
 // Preconditions:
 //   - A thread must NOT call publish()/update_copy() while holding a ReadGuard
 //     on the same DoubleBuffer instance (would wait for its own guard).
+//   - `fn` passed to update_copy() runs under writer_mu_ and must NOT call
+//     publish()/update_copy() on the same DoubleBuffer.
+//   - T's copy constructor (for update_copy) and const methods must be thread-safe
+//     against concurrent readers (no unsynchronized mutable lazy caches).
 //   - Destruction (~DoubleBuffer) must occur after all readers and writers exit.
 template <typename T>
 class DoubleBuffer {
@@ -59,7 +62,8 @@ public:
 
     class ReadGuard {
     public:
-        ReadGuard() noexcept : stripe_(nullptr), slot_(0), ptr_(nullptr) {}
+        ReadGuard() noexcept
+            : stripe_(nullptr), slot_(0), ptr_(nullptr), version_(0) {}
 
         ~ReadGuard() noexcept {
             release();
@@ -69,9 +73,13 @@ public:
         ReadGuard& operator=(const ReadGuard&) = delete;
 
         ReadGuard(ReadGuard&& other) noexcept
-            : stripe_(other.stripe_), slot_(other.slot_), ptr_(other.ptr_) {
+            : stripe_(other.stripe_),
+              slot_(other.slot_),
+              ptr_(other.ptr_),
+              version_(other.version_) {
             other.stripe_ = nullptr;
             other.ptr_ = nullptr;
+            other.version_ = 0;
         }
 
         ReadGuard& operator=(ReadGuard&& other) noexcept {
@@ -80,8 +88,10 @@ public:
                 stripe_ = other.stripe_;
                 slot_ = other.slot_;
                 ptr_ = other.ptr_;
+                version_ = other.version_;
                 other.stripe_ = nullptr;
                 other.ptr_ = nullptr;
+                other.version_ = 0;
             }
             return *this;
         }
@@ -89,25 +99,31 @@ public:
         const T* get() const noexcept { return ptr_; }
         const T& operator*() const noexcept { return *ptr_; }
         const T* operator->() const noexcept { return ptr_; }
+        std::uint64_t version() const noexcept { return version_; }
         explicit operator bool() const noexcept { return ptr_ != nullptr; }
 
     private:
         friend class DoubleBuffer<T>;
 
-        ReadGuard(const ReaderStripe* stripe, int slot, const T* ptr) noexcept
-            : stripe_(stripe), slot_(slot), ptr_(ptr) {}
+        ReadGuard(const ReaderStripe* stripe,
+                  int slot,
+                  const T* ptr,
+                  std::uint64_t ver) noexcept
+            : stripe_(stripe), slot_(slot), ptr_(ptr), version_(ver) {}
 
         void release() noexcept {
             if (stripe_ != nullptr) {
                 stripe_->readers[slot_].fetch_sub(1, std::memory_order_release);
                 stripe_ = nullptr;
                 ptr_ = nullptr;
+                version_ = 0;
             }
         }
 
         const ReaderStripe* stripe_;
         int slot_;
         const T* ptr_;
+        std::uint64_t version_;
     };
 
     DoubleBuffer()
@@ -124,6 +140,8 @@ public:
             throw std::invalid_argument("DoubleBuffer initial pointer must be non-null");
         }
         slots_[0] = std::move(initial);
+        slot_versions_[0] = 1;
+        slot_versions_[1] = 0;
     }
 
     explicit DoubleBuffer(const T& initial)
@@ -143,20 +161,23 @@ public:
             const int idx = active_index_.load(std::memory_order_acquire);
             stripe.readers[idx].fetch_add(1, std::memory_order_seq_cst);
             if (active_index_.load(std::memory_order_seq_cst) == idx) {
-                return ReadGuard(&stripe, idx, slots_[idx].get());
+                return ReadGuard(&stripe, idx, slots_[idx].get(), slot_versions_[idx]);
             }
             stripe.readers[idx].fetch_sub(1, std::memory_order_release);
         }
     }
 
-    // Atomically publishes a freshly built snapshot and waits for readers of the
-    // retired snapshot to finish before destroying the old object.
+    // Atomically publishes a freshly built snapshot, waits for readers of the
+    // retired snapshot to finish, and destroys the retired snapshot outside writer_mu_.
     void publish(std::unique_ptr<T> next) {
         if (!next) {
             throw std::invalid_argument("DoubleBuffer::publish pointer must be non-null");
         }
-        std::lock_guard<std::mutex> lk(writer_mu_);
-        publish_locked(std::move(next));
+        std::unique_ptr<T> retired;
+        {
+            std::lock_guard<std::mutex> lk(writer_mu_);
+            retired = publish_locked(std::move(next));
+        }
     }
 
     void publish(const T& next) {
@@ -171,11 +192,14 @@ public:
     // on the clone, and atomically publishes it. Strong exception guarantee.
     template <typename Fn>
     void update_copy(Fn&& fn) {
-        std::lock_guard<std::mutex> lk(writer_mu_);
-        const int cur = active_index_.load(std::memory_order_relaxed);
-        std::unique_ptr<T> copy(new T(*slots_[cur]));
-        fn(*copy);
-        publish_locked(std::move(copy));
+        std::unique_ptr<T> retired;
+        {
+            std::lock_guard<std::mutex> lk(writer_mu_);
+            const int cur = active_index_.load(std::memory_order_relaxed);
+            std::unique_ptr<T> copy(new T(*slots_[cur]));
+            fn(*copy);
+            retired = publish_locked(std::move(copy));
+        }
     }
 
     std::uint64_t version() const noexcept {
@@ -190,23 +214,33 @@ private:
         return my_stripe;
     }
 
-    void publish_locked(std::unique_ptr<T> next) noexcept {
+    std::unique_ptr<T> publish_locked(std::unique_ptr<T> next) noexcept {
         const int cur = active_index_.load(std::memory_order_relaxed);
         const int bg = 1 - cur;
+        const std::uint64_t next_ver = version_.load(std::memory_order_relaxed) + 1;
         slots_[bg] = std::move(next);
+        slot_versions_[bg] = next_ver;
         active_index_.store(bg, std::memory_order_seq_cst);
-        version_.fetch_add(1, std::memory_order_release);
+        version_.store(next_ver, std::memory_order_release);
         wait_for_readers_to_drain(cur);
-        slots_[cur].reset();
+        return std::move(slots_[cur]);
     }
 
     void wait_for_readers_to_drain(int slot) const noexcept {
         for (std::size_t s = 0; s < kStripes; ++s) {
             int spins = 0;
+            int backoff_us = 50;
             while (stripes_[s].readers[slot].load(std::memory_order_seq_cst) != 0) {
-                if (++spins >= 64) {
+                if (spins < 64) {
+                    ++spins;
+                } else if (spins < 128) {
+                    ++spins;
                     std::this_thread::yield();
-                    spins = 0;
+                } else {
+                    std::this_thread::sleep_for(std::chrono::microseconds(backoff_us));
+                    if (backoff_us < 1000) {
+                        backoff_us <<= 1;
+                    }
                 }
             }
         }
@@ -218,6 +252,7 @@ private:
     char pad_mid_[kPad];
     std::mutex writer_mu_;
     std::unique_ptr<T> slots_[2];
+    std::uint64_t slot_versions_[2];
     std::unique_ptr<ReaderStripe[]> stripes_;
 };
 

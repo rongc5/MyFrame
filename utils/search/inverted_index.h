@@ -33,7 +33,9 @@ public:
     typedef DocId doc_id_type;
     typedef std::vector<DocId> PostingList;
 
-    InvertedIndex() : postings_(), finalized_(true) {}
+    explicit InvertedIndex(const Hash& hash = Hash(),
+                           const KeyEqual& eq = KeyEqual())
+        : postings_(0, hash, eq), finalized_(true) {}
 
     // -------------------------------------------------------------------------
     // Bulk build API (fastest for offline/background index construction)
@@ -64,7 +66,14 @@ public:
     // Returns true if (term, doc_id) was newly added, false if already present.
     bool add(const Term& term, DocId doc_id) {
         ensure_finalized();
-        PostingList& list = postings_[term];
+        typename MapType::iterator map_it = postings_.find(term);
+        if (map_it == postings_.end()) {
+            PostingList fresh;
+            fresh.push_back(doc_id);
+            postings_.emplace(term, std::move(fresh));
+            return true;
+        }
+        PostingList& list = map_it->second;
         if (list.empty() || list.back() < doc_id) {
             list.push_back(doc_id);
             return true;
@@ -238,14 +247,15 @@ public:
 
         std::sort(lists.begin(), lists.end(),
                   [](const PostingList* a, const PostingList* b) {
-                      return a->size() < b->size();
+                      if (a->size() != b->size()) {
+                          return a->size() < b->size();
+                      }
+                      return std::less<const PostingList*>()(a, b);
                   });
+        lists.erase(std::unique(lists.begin(), lists.end()), lists.end());
 
         PostingList acc = *lists[0];
         for (std::size_t i = 1; i < lists.size() && !acc.empty(); ++i) {
-            if (lists[i] == lists[i - 1]) {
-                continue; // Duplicate term in query
-            }
             acc = intersect_lists(acc, *lists[i]);
         }
 
@@ -319,9 +329,6 @@ private:
             lo = bound;
             step <<= 1;
             bound = (step < hi - lo) ? (lo + step) : hi;
-        }
-        if (bound > hi) {
-            bound = hi;
         }
         // Binary search in (lo, bound]
         std::size_t left = lo + 1;

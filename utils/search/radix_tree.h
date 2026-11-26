@@ -236,14 +236,15 @@ public:
             }
         }
 
-        if (best_val != nullptr && matched_len != nullptr) {
-            *matched_len = best_len;
+        if (matched_len != nullptr) {
+            *matched_len = (best_val != nullptr) ? best_len : 0;
         }
         return best_val;
     }
 
     // Visits up to `limit` entries whose key starts with `prefix`, in unsigned-byte
     // lexicographical order. Calls `fn(const std::string& key, const V& value)`.
+    // Precondition: `fn` must NOT mutate this RadixTree during traversal.
     // Returns number of visited entries.
     template <typename Fn>
     std::size_t prefix_scan(
@@ -580,14 +581,16 @@ private:
             }
         }
 
-        if (best_val != nullptr && matched_len != nullptr) {
-            *matched_len = best_len;
+        if (matched_len != nullptr) {
+            *matched_len = (best_val != nullptr) ? best_len : 0;
         }
         return best_val;
     }
 
+    // Iterative pre-order DFS prevents call-stack overflow on deep trees
+    // (including small coroutine/fiber stacks) and passes a const key reference.
     template <typename Fn>
-    void dfs_collect(const Node* node,
+    void dfs_collect(const Node* start,
                      std::string& key_buf,
                      Fn& fn,
                      std::size_t limit,
@@ -595,19 +598,53 @@ private:
         if (visited >= limit) {
             return;
         }
-        if (node->value) {
-            fn(key_buf, *node->value);
+        if (start->value) {
+            fn(static_cast<const std::string&>(key_buf), *start->value);
             ++visited;
             if (visited >= limit) {
                 return;
             }
         }
-        for (std::size_t i = 0; i < node->children.size() && visited < limit; ++i) {
-            const Node* child = node->children[i].get();
+        if (start->children.empty()) {
+            return;
+        }
+
+        struct DfsFrame {
+            const Node* node;
+            std::size_t child_idx;
+            std::size_t parent_key_len;
+        };
+
+        std::vector<DfsFrame> stack;
+        stack.push_back(DfsFrame{start, 0, key_buf.size()});
+
+        while (!stack.empty() && visited < limit) {
+            DfsFrame& top = stack.back();
+            if (top.child_idx >= top.node->children.size()) {
+                const std::size_t restore_len = top.parent_key_len;
+                stack.pop_back();
+                key_buf.resize(restore_len);
+                continue;
+            }
+
+            const Node* child = top.node->children[top.child_idx++].get();
             const std::size_t prev_len = key_buf.size();
             key_buf.append(child->edge);
-            dfs_collect(child, key_buf, fn, limit, visited);
-            key_buf.resize(prev_len);
+
+            if (child->value) {
+                fn(static_cast<const std::string&>(key_buf), *child->value);
+                ++visited;
+                if (visited >= limit) {
+                    key_buf.resize(prev_len);
+                    break;
+                }
+            }
+
+            if (!child->children.empty()) {
+                stack.push_back(DfsFrame{child, 0, prev_len});
+            } else {
+                key_buf.resize(prev_len);
+            }
         }
     }
 
@@ -618,7 +655,8 @@ private:
 // Reverse-key RadixTree for O(L) suffix lookup and longest-suffix matching.
 //
 // Common ads/search uses:
-//   - Domain suffix targeting / routing (e.g. ".example.com" matching "ads.us.example.com")
+//   - Domain suffix targeting / routing (include a leading dot such as ".example.com"
+//     to enforce label boundaries and avoid matching "badexample.com")
 //   - File extension rules (".tar.gz", ".json", ".png")
 //   - Reverse-string suffix dictionary scans
 template <typename V>

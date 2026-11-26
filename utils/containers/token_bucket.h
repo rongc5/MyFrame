@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../lockfree/detail/cache_line.h"
 #include "lru_cache.h"
 
 #include <chrono>
@@ -15,10 +16,6 @@
 
 namespace myframe {
 namespace containers {
-
-#ifndef MYFRAME_CACHE_LINE_SIZE
-#define MYFRAME_CACHE_LINE_SIZE 128
-#endif
 
 // Thread-safe monotonic-clock token bucket rate limiter.
 //
@@ -48,7 +45,9 @@ public:
     TokenBucket& operator=(const TokenBucket&) = delete;
 
     // Attempts to acquire `permits` tokens immediately without blocking.
-    // Returns true if granted, false if insufficient tokens (or invalid permits).
+    // Returns true if granted, false if insufficient tokens, non-finite/negative
+    // `permits`, or `permits > burst_capacity_` (which can never succeed unless
+    // update_rate raises burst_capacity_). Note: `try_acquire(0.0)` succeeds.
     bool try_acquire(double permits = 1.0) {
         if (!std::isfinite(permits) || permits < 0.0) {
             return false;
@@ -58,7 +57,8 @@ public:
             return false;
         }
         refill_locked(Clock::now());
-        if (tokens_ + 1e-12 < permits) {
+        const double eps = permits * 1e-12;
+        if (tokens_ + eps < permits) {
             return false;
         }
         tokens_ -= permits;
@@ -168,24 +168,38 @@ public:
     ShardedRateLimiter(const ShardedRateLimiter&) = delete;
     ShardedRateLimiter& operator=(const ShardedRateLimiter&) = delete;
 
+    // Attempts to acquire `permits` for `key`.
+    // Eviction hardening: when a shard's LRU is already at capacity (e.g. under
+    // high-cardinality / spoofed-IP traffic), newly admitted or evicted keys do
+    // NOT receive a full `burst_capacity_` reset; they are capped to at most 1.0
+    // initial permit and stored at 0 tokens afterward, preventing burst-bypass
+    // via forced LRU eviction.
     bool try_acquire(const Key& key, double permits = 1.0) {
         if (!std::isfinite(permits) || permits < 0.0 || permits > burst_capacity_) {
             return false;
         }
+        const double eps = permits * 1e-12;
         const time_point now = Clock::now();
         Shard& shard = shard_for(key);
         std::lock_guard<std::mutex> lk(shard.mu);
 
         BucketState* st = shard.cache.get_ptr(key);
         if (st == nullptr) {
-            BucketState fresh = {burst_capacity_, now};
-            if (fresh.tokens + 1e-12 < permits) {
+            const bool under_eviction_pressure =
+                (shard.cache.size() >= shard.cache.capacity());
+            const double initial_budget =
+                under_eviction_pressure
+                    ? ((burst_capacity_ < 1.0) ? burst_capacity_ : 1.0)
+                    : burst_capacity_;
+            if (initial_budget + eps < permits) {
                 return false;
             }
-            fresh.tokens -= permits;
-            if (fresh.tokens < 0.0) {
-                fresh.tokens = 0.0;
+            double remaining =
+                under_eviction_pressure ? 0.0 : (initial_budget - permits);
+            if (remaining < 0.0) {
+                remaining = 0.0;
             }
+            BucketState fresh = {remaining, now};
             shard.cache.put(key, fresh);
             return true;
         }
@@ -199,7 +213,7 @@ public:
             }
             st->last_refill = now;
         }
-        if (st->tokens + 1e-12 < permits) {
+        if (st->tokens + eps < permits) {
             return false;
         }
         st->tokens -= permits;

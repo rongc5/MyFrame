@@ -11,6 +11,16 @@
 #include <utility>
 #include <vector>
 
+#if defined(__cplusplus) && __cplusplus >= 201703L
+#define MYFRAME_BF_FALLTHROUGH [[fallthrough]]
+#elif defined(__clang__)
+#define MYFRAME_BF_FALLTHROUGH [[clang::fallthrough]]
+#elif defined(__GNUC__) && __GNUC__ >= 7
+#define MYFRAME_BF_FALLTHROUGH __attribute__((fallthrough))
+#else
+#define MYFRAME_BF_FALLTHROUGH ((void)0)
+#endif
+
 namespace myframe {
 namespace search {
 
@@ -69,6 +79,28 @@ public:
         words_.assign(num_bits_ / 64, 0ULL);
     }
 
+    BloomFilter(const BloomFilter&) = default;
+    BloomFilter& operator=(const BloomFilter&) = default;
+
+    BloomFilter(BloomFilter&& other) noexcept
+        : words_(std::move(other.words_)),
+          num_bits_(other.num_bits_),
+          num_hashes_(other.num_hashes_) {
+        other.num_bits_ = 0;
+        other.num_hashes_ = 0;
+    }
+
+    BloomFilter& operator=(BloomFilter&& other) noexcept {
+        if (this != &other) {
+            words_ = std::move(other.words_);
+            num_bits_ = other.num_bits_;
+            num_hashes_ = other.num_hashes_;
+            other.num_bits_ = 0;
+            other.num_hashes_ = 0;
+        }
+        return *this;
+    }
+
     // Explicit-size constructor for fixed memory budgets.
     static BloomFilter with_exact_size(std::size_t num_bits, std::size_t num_hashes) {
         if (num_bits == 0 || num_hashes == 0 || num_hashes > 32) {
@@ -85,6 +117,9 @@ public:
     }
 
     void add(const void* data, std::size_t len) noexcept {
+        if (num_bits_ == 0 || words_.empty()) {
+            return;
+        }
         const HashPair hp = hash128(data, len);
         const std::uint64_t h1 = hp.first;
         const std::uint64_t h2 = hp.second | 1ULL; // Odd stride prevents degenerate cycles
@@ -98,11 +133,17 @@ public:
         add(key.data(), key.size());
     }
 
+    // Endian-independent 64-bit integer insertion (always hashed in little-endian).
     void add_u64(std::uint64_t key) noexcept {
-        add(&key, sizeof(key));
+        unsigned char buf[8];
+        write_le64(buf, key);
+        add(buf, sizeof(buf));
     }
 
     bool possibly_contains(const void* data, std::size_t len) const noexcept {
+        if (num_bits_ == 0 || words_.empty()) {
+            return false;
+        }
         const HashPair hp = hash128(data, len);
         const std::uint64_t h1 = hp.first;
         const std::uint64_t h2 = hp.second | 1ULL;
@@ -120,13 +161,18 @@ public:
     }
 
     bool possibly_contains_u64(std::uint64_t key) const noexcept {
-        return possibly_contains(&key, sizeof(key));
+        unsigned char buf[8];
+        write_le64(buf, key);
+        return possibly_contains(buf, sizeof(buf));
     }
 
     // Bitwise-OR union from another filter with identical (num_bits, num_hashes).
-    // Returns false if parameters are incompatible.
+    // Returns false if parameters are incompatible or either filter is empty/moved-from.
     bool merge_from(const BloomFilter& other) noexcept {
-        if (num_bits_ != other.num_bits_ || num_hashes_ != other.num_hashes_) {
+        if (num_bits_ == 0 ||
+            num_bits_ != other.num_bits_ ||
+            num_hashes_ != other.num_hashes_ ||
+            words_.size() != other.words_.size()) {
             return false;
         }
         for (std::size_t i = 0; i < words_.size(); ++i) {
@@ -141,7 +187,11 @@ public:
 
     // Portable little-endian binary snapshot:
     //   [4B magic "BF01" | 8B num_bits | 4B num_hashes | words in little-endian]
+    // Returns an empty string for a moved-from/empty filter.
     std::string serialize() const {
+        if (num_bits_ == 0 || words_.empty()) {
+            return std::string();
+        }
         std::string out;
         out.resize(16 + words_.size() * 8);
         unsigned char* p = reinterpret_cast<unsigned char*>(&out[0]);
@@ -167,7 +217,11 @@ public:
         }
         const std::uint64_t bits64 = read_le64(p + 4);
         const std::uint32_t hashes = read_le32(p + 12);
-        if (bits64 == 0 || (bits64 % 64) != 0 || hashes == 0 || hashes > 32) {
+        if (bits64 == 0 ||
+            (bits64 % 64) != 0 ||
+            bits64 > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()) ||
+            hashes == 0 ||
+            hashes > 32) {
             return false;
         }
         const std::uint64_t word_count64 = bits64 / 64;
@@ -273,26 +327,26 @@ private:
         std::uint64_t k1 = 0;
         std::uint64_t k2 = 0;
         switch (len & 15) {
-            case 15: k2 ^= static_cast<std::uint64_t>(tail[14]) << 48; /* fallthrough */
-            case 14: k2 ^= static_cast<std::uint64_t>(tail[13]) << 40; /* fallthrough */
-            case 13: k2 ^= static_cast<std::uint64_t>(tail[12]) << 32; /* fallthrough */
-            case 12: k2 ^= static_cast<std::uint64_t>(tail[11]) << 24; /* fallthrough */
-            case 11: k2 ^= static_cast<std::uint64_t>(tail[10]) << 16; /* fallthrough */
-            case 10: k2 ^= static_cast<std::uint64_t>(tail[9]) << 8;   /* fallthrough */
+            case 15: k2 ^= static_cast<std::uint64_t>(tail[14]) << 48; MYFRAME_BF_FALLTHROUGH;
+            case 14: k2 ^= static_cast<std::uint64_t>(tail[13]) << 40; MYFRAME_BF_FALLTHROUGH;
+            case 13: k2 ^= static_cast<std::uint64_t>(tail[12]) << 32; MYFRAME_BF_FALLTHROUGH;
+            case 12: k2 ^= static_cast<std::uint64_t>(tail[11]) << 24; MYFRAME_BF_FALLTHROUGH;
+            case 11: k2 ^= static_cast<std::uint64_t>(tail[10]) << 16; MYFRAME_BF_FALLTHROUGH;
+            case 10: k2 ^= static_cast<std::uint64_t>(tail[9]) << 8;   MYFRAME_BF_FALLTHROUGH;
             case 9:
                 k2 ^= static_cast<std::uint64_t>(tail[8]);
                 k2 *= c2;
                 k2 = rotl64(k2, 33);
                 k2 *= c1;
                 h2 ^= k2;
-                /* fallthrough */
-            case 8: k1 ^= static_cast<std::uint64_t>(tail[7]) << 56; /* fallthrough */
-            case 7: k1 ^= static_cast<std::uint64_t>(tail[6]) << 48; /* fallthrough */
-            case 6: k1 ^= static_cast<std::uint64_t>(tail[5]) << 40; /* fallthrough */
-            case 5: k1 ^= static_cast<std::uint64_t>(tail[4]) << 32; /* fallthrough */
-            case 4: k1 ^= static_cast<std::uint64_t>(tail[3]) << 24; /* fallthrough */
-            case 3: k1 ^= static_cast<std::uint64_t>(tail[2]) << 16; /* fallthrough */
-            case 2: k1 ^= static_cast<std::uint64_t>(tail[1]) << 8;  /* fallthrough */
+                MYFRAME_BF_FALLTHROUGH;
+            case 8: k1 ^= static_cast<std::uint64_t>(tail[7]) << 56; MYFRAME_BF_FALLTHROUGH;
+            case 7: k1 ^= static_cast<std::uint64_t>(tail[6]) << 48; MYFRAME_BF_FALLTHROUGH;
+            case 6: k1 ^= static_cast<std::uint64_t>(tail[5]) << 40; MYFRAME_BF_FALLTHROUGH;
+            case 5: k1 ^= static_cast<std::uint64_t>(tail[4]) << 32; MYFRAME_BF_FALLTHROUGH;
+            case 4: k1 ^= static_cast<std::uint64_t>(tail[3]) << 24; MYFRAME_BF_FALLTHROUGH;
+            case 3: k1 ^= static_cast<std::uint64_t>(tail[2]) << 16; MYFRAME_BF_FALLTHROUGH;
+            case 2: k1 ^= static_cast<std::uint64_t>(tail[1]) << 8;  MYFRAME_BF_FALLTHROUGH;
             case 1:
                 k1 ^= static_cast<std::uint64_t>(tail[0]);
                 k1 *= c1;

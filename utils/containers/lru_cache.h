@@ -141,19 +141,25 @@ public:
         return true;
     }
 
-    // Removes all entries for which `pred(const Key&, const Value&)` returns true.
+    // Removes entries for which `pred(const Key&, const Value&)` returns true.
+    // Scans from the LRU tail (oldest entries first). If `max_scan > 0`, inspects
+    // at most `max_scan` entries to bound worst-case work per call; `max_scan == 0`
+    // scans all entries.
+    // Precondition: `pred` must NOT re-entrantly mutate this LruCache.
     // Returns number of removed entries.
     template <typename Pred>
-    std::size_t erase_if(Pred&& pred) {
+    std::size_t erase_if(Pred&& pred, std::size_t max_scan = 0) {
         std::size_t removed = 0;
-        for (typename ListType::iterator it = list_.begin(); it != list_.end(); ) {
+        std::size_t scanned = 0;
+        typename ListType::iterator it = list_.end();
+        while (it != list_.begin() && (max_scan == 0 || scanned < max_scan)) {
+            --it;
+            ++scanned;
             if (pred(it->first, it->second)) {
-                typename ListType::iterator victim = it++;
+                typename ListType::iterator victim = it;
                 map_.erase(&victim->first);
-                list_.erase(victim);
+                it = list_.erase(victim);
                 ++removed;
-            } else {
-                ++it;
             }
         }
         return removed;

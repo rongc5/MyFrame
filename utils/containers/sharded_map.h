@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../lockfree/detail/cache_line.h"
+
 #include <climits>
 #include <cstddef>
 #include <functional>
@@ -12,10 +14,6 @@
 
 namespace myframe {
 namespace containers {
-
-#ifndef MYFRAME_CACHE_LINE_SIZE
-#define MYFRAME_CACHE_LINE_SIZE 128
-#endif
 
 // Thread-safe sharded concurrent hash map.
 //

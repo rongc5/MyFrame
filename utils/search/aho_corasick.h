@@ -40,13 +40,47 @@ public:
         reset_root_table();
     }
 
+    AhoCorasick(const AhoCorasick&) = default;
+    AhoCorasick& operator=(const AhoCorasick&) = default;
+
+    AhoCorasick(AhoCorasick&& other) noexcept
+        : nodes_(std::move(other.nodes_)),
+          patterns_(std::move(other.patterns_)),
+          built_(other.built_) {
+        for (std::size_t i = 0; i < 256; ++i) {
+            root_next_[i] = other.root_next_[i];
+            other.root_next_[i] = 0;
+        }
+        other.built_ = false;
+    }
+
+    AhoCorasick& operator=(AhoCorasick&& other) noexcept {
+        if (this != &other) {
+            nodes_ = std::move(other.nodes_);
+            patterns_ = std::move(other.patterns_);
+            built_ = other.built_;
+            for (std::size_t i = 0; i < 256; ++i) {
+                root_next_[i] = other.root_next_[i];
+                other.root_next_[i] = 0;
+            }
+            other.built_ = false;
+        }
+        return *this;
+    }
+
     // Adds a non-empty pattern and returns its assigned 0-based pattern_id.
+    // Duplicate patterns receive distinct pattern_ids and are each reported on match.
     // Must call build() after adding patterns before scanning.
     // If an allocation fails, `built_` is invalidated, partial trie/pattern changes
     // are rolled back, and a subsequent build() recovers the prior pattern set.
     std::uint32_t add_pattern(const std::string& pattern, std::uint64_t tag = 0) {
         if (pattern.empty()) {
             throw std::invalid_argument("AhoCorasick pattern must be non-empty");
+        }
+        if (nodes_.empty()) {
+            nodes_.resize(1);
+            reset_root_table();
+            built_ = false;
         }
 
         // Walk existing prefix read-only before mutating any state.
@@ -140,6 +174,9 @@ public:
     // Safe to call again if more patterns were added or to recover after a failed build().
     void build() {
         built_ = false;
+        if (nodes_.empty()) {
+            nodes_.resize(1);
+        }
 
         // Pre-allocate the BFS queue before mutating root_next_ or failure links:
         // every non-root trie node is enqueued at most once, so nodes_.size() - 1
@@ -150,9 +187,6 @@ public:
         }
 
         reset_root_table();
-        if (nodes_.empty()) {
-            return;
-        }
         nodes_[0].fail = 0;
         nodes_[0].dict_link = 0;
 

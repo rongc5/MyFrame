@@ -1,9 +1,11 @@
 #pragma once
 
+#include "../lockfree/detail/cache_line.h"
 #include "lru_cache.h"
 
 #include <chrono>
 #include <climits>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -18,10 +20,6 @@
 
 namespace myframe {
 namespace containers {
-
-#ifndef MYFRAME_CACHE_LINE_SIZE
-#define MYFRAME_CACHE_LINE_SIZE 128
-#endif
 
 // Thread-safe sharded LRU cache with per-entry monotonic TTL expiration.
 //
@@ -91,6 +89,7 @@ public:
 
     // Copies the value into `out` if present and unexpired (promoting to MRU).
     // Expired entries are evicted on lookup and treated as a miss.
+    // Note: for non-default-constructible Value types, use visit().
     bool get(const Key& key, Value& out) {
         Shard& shard = shard_for(key);
         std::lock_guard<std::mutex> lk(shard.mu);
@@ -107,6 +106,7 @@ public:
     }
 
     // Atomically visits an unexpired entry under the shard lock (`fn(Value&)`).
+    // Precondition: `fn` must NOT re-entrantly call methods on this cache.
     template <typename Fn>
     bool visit(const Key& key, Fn&& fn) {
         Shard& shard = shard_for(key);
@@ -129,9 +129,12 @@ public:
         return shard.cache.erase(key);
     }
 
-    // Sweeps all shards one at a time and removes expired entries.
+    // Sweeps all shards one at a time (starting from each shard's LRU tail) and
+    // removes expired entries. If `max_per_shard > 0`, inspects at most
+    // `max_per_shard` entries per shard to bound lock hold time on large caches;
+    // `max_per_shard == 0` performs a full sweep.
     // Returns total number of purged entries.
-    std::size_t purge_expired() {
+    std::size_t purge_expired(std::size_t max_per_shard = 0) {
         const time_point now = Clock::now();
         std::size_t purged = 0;
         for (std::size_t i = 0; i < shard_count_; ++i) {
@@ -139,7 +142,8 @@ public:
             purged += shards_[i]->cache.erase_if(
                 [&now](const Key&, const Entry& e) {
                     return is_expired(e, now);
-                });
+                },
+                max_per_shard);
         }
         return purged;
     }
@@ -242,12 +246,16 @@ private:
             return false;
         }
         const std::uint64_t p1 = q * kNum;
+        // Round fractional sub-tick TTL UP (ceil) so coarse custom clocks
+        // (period > 1ms) do not truncate sub-tick TTLs to 0 (immediate expiry).
         const std::uint64_t p2 =
-            (r <= std::numeric_limits<std::uint64_t>::max() / kNum)
-                ? ((r * kNum) / kDen)
-                : static_cast<std::uint64_t>(
-                      (static_cast<long double>(r) * static_cast<long double>(kNum)) /
-                      static_cast<long double>(kDen));
+            (r == 0)
+                ? 0
+                : ((r <= (std::numeric_limits<std::uint64_t>::max() - (kDen - 1)) / kNum)
+                       ? ((r * kNum + (kDen - 1)) / kDen)
+                       : static_cast<std::uint64_t>(std::ceil(
+                             (static_cast<long double>(r) * static_cast<long double>(kNum)) /
+                             static_cast<long double>(kDen))));
         if (p1 > std::numeric_limits<std::uint64_t>::max() - p2) {
             return false;
         }
