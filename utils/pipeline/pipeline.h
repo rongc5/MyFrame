@@ -5,3 +5,4 @@
 #include "str_view.h"
 #include "file_util.h"
 #include "parallel_pipeline.h"
+#include "dag.h"

@@ -6,3 +6,4 @@
 #include "bloom_filter.h"
 #include "inverted_index.h"
 #include "top_k.h"
+#include "graph.h"

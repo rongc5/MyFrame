@@ -208,3 +208,13 @@ if(TARGET test_pipeline)
     add_test(NAME pipeline COMMAND test_pipeline)
     set_tests_properties(pipeline PROPERTIES TIMEOUT 180)
 endif()
+
+# Graph & DAG orchestration suite (DisjointSet, CsrGraph, WeightedCsrGraph,
+# iterative BFS/DFS, shortest paths, Dijkstra, TraversalWorkspace, DoubleBuffer
+# hot-reload, and Dag topological layers / cycle detection / parallel execution).
+maybe_add_exe(test_graph ${CMAKE_CURRENT_SOURCE_DIR}/test_graph.cpp)
+if(TARGET test_graph)
+    target_compile_options(test_graph PRIVATE -Wall -Wextra -Werror -Wpedantic -Wshadow)
+    add_test(NAME graph COMMAND test_graph)
+    set_tests_properties(graph PROPERTIES TIMEOUT 180)
+endif()

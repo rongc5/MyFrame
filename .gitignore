@@ -40,6 +40,7 @@ test/test_*
 !test/test_utils_containers.cpp
 !test/test_search_and_ads_utils.cpp
 !test/test_pipeline.cpp
+!test/test_graph.cpp
 build_test/
 test/simple_*
 test/https_*
